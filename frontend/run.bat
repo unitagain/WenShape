@@ -6,6 +6,20 @@ echo   NOVIX Frontend
 echo ========================================
 echo.
 
+REM Check Node.js installation
+node --version >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: Node.js is not installed or not in PATH.
+    echo.
+    echo Please install Node.js 18+ from:
+    echo   https://nodejs.org/
+    echo.
+    echo Download the LTS version and run the installer.
+    echo.
+    pause
+    exit /b 1
+)
+
 REM Check if node_modules exists
 if not exist "node_modules\" (
     echo [1/2] Installing dependencies...
@@ -13,7 +27,6 @@ if not exist "node_modules\" (
     if errorlevel 1 (
         echo.
         echo ERROR: npm install failed.
-        echo Please make sure Node.js 18+ is installed.
         pause
         exit /b 1
     )
