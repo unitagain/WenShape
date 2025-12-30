@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { projectsAPI } from '../api';
-import { Button } from '../components/ui/Button';
-import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card';
-import { Plus, FolderOpen, Clock, ChevronRight, Terminal, Command } from 'lucide-react';
+import { Button, Input, Card } from '../components/ui/core';
+import { Plus, Book, Clock, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 function ProjectList({ onSelectProject }) {
@@ -46,60 +45,51 @@ function ProjectList({ onSelectProject }) {
   };
 
   return (
-    <div className="min-h-full p-8 max-w-7xl mx-auto flex flex-col gap-8">
-      <div className="flex justify-between items-end border-b border-white/10 pb-6">
+    <div className="min-h-full p-8 max-w-5xl mx-auto flex flex-col gap-10">
+      <div className="flex justify-between items-end pb-4 border-b border-border">
         <div>
-          <div className="flex items-center gap-3 text-primary mb-2">
-            <Terminal size={24} />
-            <span className="text-xs font-mono uppercase tracking-[0.2em] opacity-70">Novix 系统</span>
-          </div>
-          <h2 className="text-4xl font-bold text-white tracking-tight">项目索引</h2>
-          <p className="text-muted-foreground mt-2 font-mono text-sm">选择项目以初始化工作区</p>
+          <h2 className="text-3xl font-serif font-bold text-ink-900 tracking-tight">我的作品</h2>
+          <p className="text-ink-500 mt-2 text-sm">选择一部小说继续创作，或开启新的篇章。</p>
         </div>
         <Button
           onClick={() => setShowCreateForm(true)}
-          className="font-mono text-xs"
         >
           <Plus size={16} className="mr-2" />
-          新建项目
+          新建作品
         </Button>
       </div>
 
       {/* Create Form */}
       {showCreateForm && (
-        <Card className="border-primary/50 relative overflow-hidden animate-in fade-in slide-in-from-top-4 duration-300">
-          <div className="absolute top-0 left-0 w-1 h-full bg-primary" />
-          <CardHeader>
-            <CardTitle className="text-primary">
-              <Command size={18} /> 初始化新项目
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+        <Card className="animate-fade-in mb-6 bg-surface">
+          <div className="p-6">
+            <h3 className="text-lg font-medium text-ink-900 mb-4 flex items-center">
+              <Book size={18} className="mr-2 text-ink-500" /> 初始化新书
+            </h3>
             <form onSubmit={handleCreate} className="space-y-4 max-w-lg">
               <div className="space-y-1">
-                <label className="text-xs font-mono text-muted-foreground uppercase">项目名称</label>
-                <input
+                <label className="text-xs font-medium text-ink-500 uppercase">书名</label>
+                <Input
                   type="text"
                   value={newProject.name}
                   onChange={(e) => setNewProject({ ...newProject, name: e.target.value })}
-                  className="w-full px-4 py-2 bg-black/50 border border-border rounded-md focus:outline-none focus:border-primary text-white font-mono placeholder:text-gray-700"
-                  placeholder="例如: 赛博朋克舞者"
+                  placeholder="例如: 此时此刻"
                   required
+                  className="bg-background"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-mono text-muted-foreground uppercase">项目描述</label>
+                <label className="text-xs font-medium text-ink-500 uppercase">简介</label>
                 <textarea
                   value={newProject.description}
                   onChange={(e) => setNewProject({ ...newProject, description: e.target.value })}
-                  className="w-full px-4 py-2 bg-black/50 border border-border rounded-md focus:outline-none focus:border-primary text-white font-sans placeholder:text-gray-700 resize-none"
-                  rows="3"
-                  placeholder="简要项目概述..."
+                  className="flex min-h-[80px] w-full rounded-md border-b border-border bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-ink-400 focus-visible:outline-none focus-visible:border-ink-900 disabled:cursor-not-allowed disabled:opacity-50"
+                  placeholder="简要描述..."
                 />
               </div>
               <div className="flex space-x-3 pt-2">
-                <Button type="submit" isLoading={loading} className="font-bold">
-                  初始化
+                <Button type="submit" disabled={loading}>
+                  创建
                 </Button>
                 <Button
                   type="button"
@@ -110,18 +100,18 @@ function ProjectList({ onSelectProject }) {
                 </Button>
               </div>
             </form>
-          </CardContent>
+          </div>
         </Card>
       )}
 
       {/* Projects Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {projects.length === 0 ? (
-          <div className="col-span-full flex flex-col items-center justify-center py-24 border border-dashed border-border rounded-lg bg-card/10">
-            <FolderOpen className="h-12 w-12 text-muted-foreground mb-4 opacity-50" />
-            <p className="text-muted-foreground font-mono">暂无项目</p>
-            <Button variant="ghost" onClick={() => setShowCreateForm(true)} className="mt-2 text-primary hover:text-primary">
-              创建第一个项目
+          <div className="col-span-full flex flex-col items-center justify-center py-24 border border-dashed border-border rounded-lg bg-surface/50">
+            <Book className="h-12 w-12 text-ink-400 mb-4 opacity-50" />
+            <p className="text-ink-500">暂无作品</p>
+            <Button variant="link" onClick={() => setShowCreateForm(true)} className="mt-2 text-ink-900">
+              开始创作
             </Button>
           </div>
         ) : (
@@ -129,24 +119,24 @@ function ProjectList({ onSelectProject }) {
             <Card
               key={project.id}
               onClick={() => onSelectProject ? onSelectProject(project) : navigate(`/project/${project.id}`)}
-              className="group cursor-pointer hover:border-primary/50 transition-all duration-300 hover:shadow-[0_0_20px_rgba(0,255,148,0.05)]"
+              className="group cursor-pointer hover:shadow-paper-hover transition-all duration-300 bg-surface border-border/50 hover:border-transparent"
             >
-              <CardContent className="p-6 h-full flex flex-col relative">
-                 <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity -translate-x-2 group-hover:translate-x-0 duration-300">
-                  <ChevronRight className="text-primary" />
-                </div>
-                
-                <h3 className="text-xl font-bold text-white mb-2 group-hover:text-primary transition-colors pr-6">
+              <div className="p-6 h-full flex flex-col relative">
+                <h3 className="text-xl font-serif font-bold text-ink-900 mb-2 group-hover:text-primary transition-colors pr-6">
                   {project.name}
                 </h3>
-                <p className="text-sm text-muted-foreground mb-6 line-clamp-2 flex-1">
-                  {project.description || '暂无描述'}
+                <p className="text-sm text-ink-500 mb-6 line-clamp-2 flex-1">
+                  {project.description || '暂无简介'}
                 </p>
-                <div className="flex items-center text-xs text-zinc-500 font-mono mt-auto pt-4 border-t border-white/5">
+                <div className="flex items-center text-xs text-ink-400 mt-auto pt-4 border-t border-border/30">
                   <Clock size={12} className="mr-2" />
                   {new Date(project.created_at).toLocaleDateString('zh-CN')}
                 </div>
-              </CardContent>
+
+                <div className="absolute top-6 right-6 opacity-0 group-hover:opacity-100 transition-opacity transform translate-x-2 group-hover:translate-x-0 duration-300">
+                  <ChevronRight className="text-ink-400 h-5 w-5" />
+                </div>
+              </div>
             </Card>
           ))
         )}

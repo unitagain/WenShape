@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { draftsAPI } from '../../api';
-import { Button } from '../ui/Button';
-import { Card, CardHeader, CardTitle, CardContent } from '../ui/Card';
-import { FileText, Trash2, Eye, EyeOff, BookOpen, Clock } from 'lucide-react';
+import { Button, Card } from '../ui/core'; // Card is now in ui/core
+import { FileText, Trash2, Eye, EyeOff, BookOpen, Clock, ChevronRight } from 'lucide-react';
 
 export function DraftsView({ projectId }) {
   const [chapters, setChapters] = useState([]);
@@ -68,20 +67,20 @@ export function DraftsView({ projectId }) {
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-140px)]">
       {/* Sidebar List */}
       <div className="lg:col-span-3 flex flex-col gap-4 overflow-hidden">
-        <h3 className="text-lg font-bold text-white px-1">内容管理</h3>
+        <h3 className="text-lg font-bold text-ink-900 px-1">内容管理</h3>
         <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-          {chapters.length === 0 && <div className="text-sm text-muted-foreground p-2">暂无章节</div>}
+          {chapters.length === 0 && <div className="text-sm text-ink-400 p-2 italic">暂无章节</div>}
           {chapters.map((ch) => (
             <div
               key={ch}
               onClick={() => setSelectedChapter(ch)}
-              className={`p-3 rounded-md border cursor-pointer transition-colors font-mono text-sm ${
-                selectedChapter === ch
-                  ? 'bg-primary/10 border-primary text-primary'
-                  : 'bg-card border-border text-muted-foreground hover:text-white hover:border-white/20'
-              }`}
+              className={`p-3 rounded-md border cursor-pointer transition-all font-mono text-sm flex items-center justify-between ${selectedChapter === ch
+                  ? 'bg-primary text-white border-primary shadow-sm'
+                  : 'bg-surface border-border text-ink-600 hover:text-ink-900 hover:border-primary/30'
+                }`}
             >
-              {ch}
+              <span>{ch}</span>
+              {selectedChapter === ch && <ChevronRight size={14} />}
             </div>
           ))}
         </div>
@@ -90,60 +89,69 @@ export function DraftsView({ projectId }) {
       {/* Main Content */}
       <div className="lg:col-span-9 flex flex-col gap-6 overflow-hidden">
         {!selectedChapter ? (
-           <div className="flex-1 flex items-center justify-center text-muted-foreground border border-dashed border-border rounded-lg">
-             选择章节查看详情
-           </div>
+          <div className="flex-1 flex items-center justify-center text-ink-400 border border-dashed border-border rounded-lg bg-surface/50">
+            <div className="flex flex-col items-center">
+              <FileText size={48} className="mb-4 opacity-20" />
+              <span className="font-serif">选择章节查看详情</span>
+            </div>
+          </div>
         ) : (
           <>
             {/* Top Meta */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-               <Card className="md:col-span-2">
-                 <CardHeader className="py-3">
-                   <CardTitle className="text-sm"><BookOpen size={14} /> 摘要</CardTitle>
-                 </CardHeader>
-                 <CardContent className="py-4">
-                   {summary ? (
-                     <div className="space-y-2">
-                       <div className="font-bold text-white">{summary.title}</div>
-                       <div className="text-sm text-muted-foreground line-clamp-2">{summary.brief_summary}</div>
-                     </div>
-                   ) : (
-                     <span className="text-xs text-muted-foreground">暂无摘要</span>
-                   )}
-                 </CardContent>
-               </Card>
-               
-               <Card>
-                 <CardHeader className="py-3">
-                   <CardTitle className="text-sm"><Clock size={14} /> 版本</CardTitle>
-                 </CardHeader>
-                 <CardContent className="py-4 space-y-3">
-                   <select 
-                     className="w-full bg-black/50 border border-border rounded p-2 text-sm text-white focus:outline-none focus:border-primary"
-                     value={selectedVersion}
-                     onChange={(e) => setSelectedVersion(e.target.value)}
-                   >
-                     {versions.map(v => <option key={v} value={v}>{v}</option>)}
-                   </select>
-                   <Button variant="destructive" size="sm" className="w-full text-xs">
-                     <Trash2 size={12} className="mr-2" /> 删除章节
-                   </Button>
-                 </CardContent>
-               </Card>
+              <Card className="md:col-span-2 bg-surface">
+                <div className="p-4 border-b border-border bg-gray-50/50">
+                  <h4 className="text-sm font-bold text-ink-900 flex items-center gap-2">
+                    <BookOpen size={14} className="text-primary" /> 章节摘要
+                  </h4>
+                </div>
+                <div className="p-4">
+                  {summary ? (
+                    <div className="space-y-2">
+                      <div className="font-bold text-ink-900">{summary.title}</div>
+                      <div className="text-sm text-ink-600 line-clamp-2 leading-relaxed">{summary.brief_summary}</div>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-ink-400 italic">暂无摘要信息</span>
+                  )}
+                </div>
+              </Card>
+
+              <Card className="bg-surface">
+                <div className="p-4 border-b border-border bg-gray-50/50">
+                  <h4 className="text-sm font-bold text-ink-900 flex items-center gap-2">
+                    <Clock size={14} className="text-primary" /> 版本历史
+                  </h4>
+                </div>
+                <div className="p-4 space-y-3">
+                  <select
+                    className="w-full bg-background border border-border rounded p-2 text-sm text-ink-900 focus:outline-none focus:border-primary transition-colors cursor-pointer"
+                    value={selectedVersion}
+                    onChange={(e) => setSelectedVersion(e.target.value)}
+                  >
+                    {versions.map(v => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                  <Button variant="outline" size="sm" className="w-full text-xs text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200">
+                    <Trash2 size={12} className="mr-2" /> 删除章节
+                  </Button>
+                </div>
+              </Card>
             </div>
 
             {/* Content Viewer */}
-            <Card className="flex-1 overflow-hidden flex flex-col">
-              <CardHeader className="py-3 flex flex-row justify-between items-center">
-                <CardTitle className="text-sm">内容预览: {selectedVersion}</CardTitle>
-                <div className="text-xs font-mono text-muted-foreground">
+            <Card className="flex-1 overflow-hidden flex flex-col bg-surface shadow-paper">
+              <div className="p-4 border-b border-border flex flex-row justify-between items-center bg-gray-50/30">
+                <h4 className="text-sm font-bold text-ink-900">内容预览: <span className="font-mono font-normal ml-2 text-ink-500">{selectedVersion}</span></h4>
+                <div className="text-xs font-mono text-ink-400">
                   {loading ? '加载中...' : `${draftContent.length} 字符`}
                 </div>
-              </CardHeader>
-              <div className="flex-1 overflow-y-auto p-6 custom-scrollbar bg-black/20">
-                 <pre className="whitespace-pre-wrap font-sans text-gray-300 leading-relaxed max-w-none">
-                   {draftContent}
-                 </pre>
+              </div>
+              <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-white">
+                <div className="prose prose-slate max-w-none font-serif text-ink-900 leading-loose">
+                  <pre className="whitespace-pre-wrap font-serif text-ink-900 bg-transparent p-0 border-0">
+                    {draftContent}
+                  </pre>
+                </div>
               </div>
             </Card>
           </>

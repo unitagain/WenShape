@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Cpu, Key, Shield, Save, RefreshCw } from 'lucide-react';
-import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card';
-import { Button } from '../components/ui/Button';
+import { Cpu, Key, Shield, Save, RefreshCw, Bot } from 'lucide-react';
+import { Card, Button, Input } from '../components/ui/core';
 import { configAPI } from '../api';
 
 function Agents() {
@@ -128,171 +127,182 @@ function Agents() {
   };
 
   return (
-    <div className="p-6">
-      <Card className="border-primary/20 bg-card/60 backdrop-blur-sm">
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>
-            <Cpu size={18} /> 智能体 · 模型配置
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={load} disabled={loading}>
-              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-            </Button>
+    <div className="p-8 max-w-5xl mx-auto space-y-8">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-3xl font-serif font-bold text-ink-900 tracking-tight flex items-center gap-3">
+            <Cpu className="text-primary" /> 智能体系统配置
+          </h2>
+          <p className="text-ink-500 mt-2">配置大语言模型 (LLM) 提供商及各智能体角色的调用策略。</p>
+        </div>
+        <Button variant="ghost" onClick={load} disabled={loading}>
+          <RefreshCw size={16} className={loading ? 'animate-spin mr-2' : 'mr-2'} /> 刷新配置
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+        {/* Provider Selection */}
+        <Card className="bg-surface">
+          <div className="p-6 border-b border-border">
+            <h3 className="text-lg font-bold text-ink-900 flex items-center gap-2">
+              <Shield size={18} className="text-primary" /> 默认模型提供商
+            </h3>
           </div>
-        </CardHeader>
-
-        <CardContent className="space-y-6">
-          <div className="text-sm text-muted-foreground">
-            为每个智能体选择默认模型提供商，并按需覆盖到单个角色。保存后会写入后端 <code>.env</code> 并热更新配置。
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="p-4 rounded-lg border border-border bg-black/20">
-              <div className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-                <Shield size={14} className="text-primary" /> 默认提供商
-              </div>
-              <div className="space-y-2">
-                {(providers.length ? providers : [
-                  { id: 'openai', label: 'OpenAI', requires_key: true },
-                  { id: 'anthropic', label: 'Anthropic (Claude)', requires_key: true },
-                  { id: 'deepseek', label: 'DeepSeek', requires_key: true },
-                  { id: 'mock', label: 'Mock (Demo)', requires_key: false },
-                ]).map((p) => (
-                  <label
-                    key={p.id}
-                    className={`flex items-center justify-between p-3 border rounded-md cursor-pointer transition-all ${
-                      defaultProvider === p.id
-                        ? 'bg-primary/10 border-primary text-white'
-                        : 'bg-black/20 border-border text-muted-foreground hover:border-white/20 hover:text-white'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="radio"
-                        name="defaultProvider"
-                        className="accent-primary"
-                        checked={defaultProvider === p.id}
-                        onChange={() => setDefaultProvider(p.id)}
-                      />
-                      <div>
-                        <div className="font-bold text-sm">{p.label}</div>
-                        <div className="text-xs font-mono opacity-70">{p.requires_key ? '需要密钥' : '无需密钥'}</div>
-                      </div>
-                    </div>
-                    <div className="text-xs font-mono opacity-60">
-                      {configured?.[p.id] ? '已配置' : p.requires_key ? '未配置' : '可用'}
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="p-4 rounded-lg border border-border bg-black/20">
-              <div className="text-sm font-bold text-white mb-3">角色覆盖（可选）</div>
-              <div className="space-y-3">
-                {[
-                  { id: 'archivist', title: '资料管理员' },
-                  { id: 'writer', title: '撰稿人' },
-                  { id: 'reviewer', title: '审稿人' },
-                  { id: 'editor', title: '编辑' },
-                ].map((row) => (
-                  <div key={row.id} className="grid grid-cols-3 gap-3 items-center">
-                    <div className="text-sm font-medium text-muted-foreground">{row.title}</div>
-                    <select
-                      value={agentOverrides[row.id]}
-                      onChange={(e) => setAgentOverrides((prev) => ({ ...prev, [row.id]: e.target.value }))}
-                      className="col-span-2 px-3 py-2 border border-border rounded bg-black/50 text-white text-sm focus:outline-none focus:border-primary"
-                    >
-                      <option value="">默认（{defaultProvider}）</option>
-                      {(providers.length ? providers : [
-                        { id: 'openai', label: 'OpenAI' },
-                        { id: 'anthropic', label: 'Anthropic (Claude)' },
-                        { id: 'deepseek', label: 'DeepSeek' },
-                        { id: 'mock', label: 'Mock (Demo)' },
-                      ]).map((p) => (
-                        <option key={p.id} value={p.id}>{p.label}</option>
-                      ))}
-                    </select>
+          <div className="p-6 space-y-4">
+            {(providers.length ? providers : [
+              { id: 'openai', label: 'OpenAI', requires_key: true },
+              { id: 'anthropic', label: 'Anthropic (Claude)', requires_key: true },
+              { id: 'deepseek', label: 'DeepSeek', requires_key: true },
+              { id: 'mock', label: 'Mock (Demo)', requires_key: false },
+            ]).map((p) => (
+              <label
+                key={p.id}
+                className={`flex items-center justify-between p-4 border rounded-lg cursor-pointer transition-all ${defaultProvider === p.id
+                    ? 'bg-primary/5 border-primary shadow-sm'
+                    : 'bg-background border-border hover:border-primary/30'
+                  }`}
+              >
+                <div className="flex items-center gap-4">
+                  <input
+                    type="radio"
+                    name="defaultProvider"
+                    className="accent-primary h-4 w-4"
+                    checked={defaultProvider === p.id}
+                    onChange={() => setDefaultProvider(p.id)}
+                  />
+                  <div>
+                    <div className="font-bold text-ink-900">{p.label}</div>
+                    <div className="text-xs text-ink-400 mt-0.5">{p.requires_key ? '需要 API 密钥' : '无需密钥'}</div>
                   </div>
-                ))}
-              </div>
-              <div className="mt-3 text-xs font-mono text-muted-foreground opacity-60 truncate">
-                Effective: {effectiveProviders.archivist} / {effectiveProviders.writer} / {effectiveProviders.reviewer} / {effectiveProviders.editor}
-              </div>
-            </div>
+                </div>
+                <div className="text-xs font-mono font-medium px-2 py-1 rounded bg-gray-100 text-ink-500">
+                  {configured?.[p.id] ? '已配置' : p.requires_key ? '未配置' : '可用'}
+                </div>
+              </label>
+            ))}
           </div>
+        </Card>
 
-          <div className="p-4 rounded-lg border border-border bg-black/20">
-            <div className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-              <Key size={14} className="text-primary" /> API 密钥
-            </div>
+        {/* Agent Overrides */}
+        <Card className="bg-surface">
+          <div className="p-6 border-b border-border">
+            <h3 className="text-lg font-bold text-ink-900 flex items-center gap-2">
+              <Bot size={18} className="text-primary" /> 角色模型覆盖
+            </h3>
+            <p className="text-sm text-ink-500 mt-1">为特定智能体指定不同的模型（可选）。默认使用全局设置。</p>
+          </div>
+          <div className="p-6 space-y-4">
+            {[
+              { id: 'archivist', title: '资料管理员 (Archivist)' },
+              { id: 'writer', title: '撰稿人 (Writer)' },
+              { id: 'reviewer', title: '审稿人 (Reviewer)' },
+              { id: 'editor', title: '编辑 (Editor)' },
+            ].map((row) => (
+              <div key={row.id} className="flex items-center justify-between p-3 bg-background rounded-md border border-border/50">
+                <span className="text-sm font-medium text-ink-700">{row.title}</span>
+                <select
+                  value={agentOverrides[row.id]}
+                  onChange={(e) => setAgentOverrides((prev) => ({ ...prev, [row.id]: e.target.value }))}
+                  className="px-3 py-1.5 border border-border rounded bg-surface text-ink-900 text-sm focus:outline-none focus:border-primary transition-colors cursor-pointer ml-4 w-48"
+                >
+                  <option value="">跟随默认 ({defaultProvider})</option>
+                  {(providers.length ? providers : [
+                    { id: 'openai', label: 'OpenAI' },
+                    { id: 'anthropic', label: 'Anthropic (Claude)' },
+                    { id: 'deepseek', label: 'DeepSeek' },
+                    { id: 'mock', label: 'Mock (Demo)' },
+                  ]).map((p) => (
+                    <option key={p.id} value={p.id}>{p.label}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        </Card>
 
+        {/* API Keys */}
+        <Card className="bg-surface lg:col-span-2">
+          <div className="p-6 border-b border-border">
+            <h3 className="text-lg font-bold text-ink-900 flex items-center gap-2">
+              <Key size={18} className="text-primary" /> API 密钥配置
+            </h3>
+          </div>
+          <div className="p-6">
             {!requiredKeyProviders.length ? (
-              <div className="text-sm text-muted-foreground bg-primary/5 p-3 rounded border border-primary/10">
-                当前选择无需 API 密钥（或已配置）。可用于演示/测试。
+              <div className="flex items-center justify-center p-8 bg-green-50 text-green-700 border border-green-200 rounded-lg">
+                <Shield className="mr-2" size={20} />
+                当前配置无需额外的 API 密钥。
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {requiredKeyProviders.includes('openai') && (
-                  <div>
-                    <label className="block text-xs font-mono text-muted-foreground uppercase mb-1">OpenAI API Key</label>
-                    <input
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-ink-500 uppercase">OpenAI API Key</label>
+                    <Input
                       type="password"
                       value={openaiKey}
                       onChange={(e) => setOpenaiKey(e.target.value)}
-                      className="w-full px-3 py-2 bg-black/50 border border-border rounded-md focus:outline-none focus:border-primary text-white text-sm"
-                      placeholder={configured?.openai ? '(已配置，留空则不修改)' : 'sk-...'}
+                      placeholder={configured?.openai ? '已配置 (保持空白以维持不变)' : 'sk-...'}
                     />
                   </div>
                 )}
                 {requiredKeyProviders.includes('anthropic') && (
-                  <div>
-                    <label className="block text-xs font-mono text-muted-foreground uppercase mb-1">Anthropic API Key</label>
-                    <input
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-ink-500 uppercase">Anthropic API Key</label>
+                    <Input
                       type="password"
                       value={anthropicKey}
                       onChange={(e) => setAnthropicKey(e.target.value)}
-                      className="w-full px-3 py-2 bg-black/50 border border-border rounded-md focus:outline-none focus:border-primary text-white text-sm"
-                      placeholder={configured?.anthropic ? '(已配置，留空则不修改)' : 'sk-ant-...'}
+                      placeholder={configured?.anthropic ? '已配置 (保持空白以维持不变)' : 'sk-ant-...'}
                     />
                   </div>
                 )}
                 {requiredKeyProviders.includes('deepseek') && (
-                  <div>
-                    <label className="block text-xs font-mono text-muted-foreground uppercase mb-1">DeepSeek API Key</label>
-                    <input
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-ink-500 uppercase">DeepSeek API Key</label>
+                    <Input
                       type="password"
                       value={deepseekKey}
                       onChange={(e) => setDeepseekKey(e.target.value)}
-                      className="w-full px-3 py-2 bg-black/50 border border-border rounded-md focus:outline-none focus:border-primary text-white text-sm"
-                      placeholder={configured?.deepseek ? '(已配置，留空则不修改)' : '...'}
+                      placeholder={configured?.deepseek ? '已配置 (保持空白以维持不变)' : '...'}
                     />
                   </div>
                 )}
               </div>
             )}
-          </div>
 
-          {error && (
-            <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded p-3 font-mono">
-              错误: {error}
+            {/* Status Messages */}
+            <div className="mt-6 space-y-3">
+              {error && (
+                <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-3 flex items-center">
+                  <Shield size={14} className="mr-2" /> {error}
+                </div>
+              )}
+              {success && (
+                <div className="text-sm text-green-600 bg-green-50 border border-green-200 rounded p-3 flex items-center">
+                  <Check size={14} className="mr-2" /> {success}
+                </div>
+              )}
             </div>
-          )}
-          {success && (
-            <div className="text-sm text-green-400 bg-green-500/10 border border-green-500/20 rounded p-3 font-mono">
-              {success}
-            </div>
-          )}
 
-          <div className="flex items-center justify-end gap-3">
-            <Button onClick={save} isLoading={saving} className="font-bold">
-              <Save size={16} className="mr-2" /> 保存配置
-            </Button>
+            <div className="mt-6 flex justify-end">
+              <Button onClick={save} disabled={saving} size="lg">
+                {saving ? <RefreshCw className="animate-spin mr-2" /> : <Save className="mr-2" />}
+                保存所有配置
+              </Button>
+            </div>
           </div>
-        </CardContent>
-      </Card>
+        </Card>
+
+      </div>
     </div>
   );
 }
+
+// Helper icon
+const Check = ({ size, className }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="20 6 9 17 4 12"></polyline></svg>
+)
 
 export default Agents;

@@ -3,41 +3,41 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  color-scheme: light; /* Default to light mode */
 }
 
-body {
-  @apply bg-background text-gray-100 antialiased selection:bg-primary selection:text-black;
-  font-family: 'Noto Sans SC', system-ui, sans-serif;
-  font-weight: 500;
+html, body {
+  @apply bg-background text-ink-900 antialiased;
+  font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif;
+  height: 100%;
+  overflow-x: hidden;
 }
 
-/* Geek Scrollbar */
+/* Elegant Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-background;
+  @apply bg-transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-zinc-800 rounded-full hover:bg-zinc-700 transition-colors;
+  @apply bg-gray-200 rounded-full hover:bg-gray-300 transition-colors;
 }
 
-/* Utility for grid background */
-.bg-grid-pattern {
-  background-size: 40px 40px;
-  background-image: linear-gradient(to right, #27272a 1px, transparent 1px),
-    linear-gradient(to bottom, #27272a 1px, transparent 1px);
-  mask-image: linear-gradient(to bottom, black 40%, transparent 100%);
+/* Typography Enhancements */
+h1, h2, h3, h4, h5, h6 {
+  @apply font-serif font-medium tracking-tight text-ink-900;
 }
 
-.glass-panel {
-  @apply bg-card/50 backdrop-blur-md border border-white/5;
+/* Selection */
+::selection {
+  @apply bg-accent-active/20 text-ink-900;
 }
 
-code, pre {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+/* Animation Utilities */
+.transition-smooth {
+  @apply transition-all duration-300 ease-out;
 }

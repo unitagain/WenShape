@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button } from './ui/Button';
-import { Card, CardHeader, CardTitle, CardContent } from './ui/Card';
+import { Button, Card, Input } from './ui/core';
 import { Settings, Shield, Key } from 'lucide-react';
 
 function LLMSetupModal({ open, status, onClose, onSave }) {
@@ -115,7 +114,7 @@ function LLMSetupModal({ open, status, onClose, onSave }) {
   const keyInput = () => {
     if (!requiredKeyProviders.length) {
       return (
-        <div className="text-sm text-muted-foreground bg-primary/5 p-3 rounded border border-primary/10">
+        <div className="text-sm text-ink-500 bg-primary/5 p-3 rounded border border-primary/10">
           当前提供商无需 API 密钥（或已配置）。可用于演示/测试。
         </div>
       );
@@ -125,36 +124,33 @@ function LLMSetupModal({ open, status, onClose, onSave }) {
       <div className="space-y-3">
         {requiredKeyProviders.includes('openai') && (
           <div>
-            <label className="block text-xs font-mono text-muted-foreground uppercase mb-1">OpenAI API Key</label>
-            <input
+            <label className="block text-xs font-bold text-ink-500 uppercase mb-1">OpenAI API Key</label>
+            <Input
               type="password"
               value={openaiKey}
               onChange={(e) => setOpenaiKey(e.target.value)}
-              className="w-full px-3 py-2 bg-black/50 border border-border rounded-md focus:outline-none focus:border-primary text-white text-sm"
               placeholder={configured?.openai ? '(已配置)' : 'sk-...'}
             />
           </div>
         )}
         {requiredKeyProviders.includes('anthropic') && (
           <div>
-            <label className="block text-xs font-mono text-muted-foreground uppercase mb-1">Anthropic API Key</label>
-            <input
+            <label className="block text-xs font-bold text-ink-500 uppercase mb-1">Anthropic API Key</label>
+            <Input
               type="password"
               value={anthropicKey}
               onChange={(e) => setAnthropicKey(e.target.value)}
-              className="w-full px-3 py-2 bg-black/50 border border-border rounded-md focus:outline-none focus:border-primary text-white text-sm"
               placeholder={configured?.anthropic ? '(已配置)' : 'sk-ant-...'}
             />
           </div>
         )}
         {requiredKeyProviders.includes('deepseek') && (
           <div>
-            <label className="block text-xs font-mono text-muted-foreground uppercase mb-1">DeepSeek API Key</label>
-            <input
+            <label className="block text-xs font-bold text-ink-500 uppercase mb-1">DeepSeek API Key</label>
+            <Input
               type="password"
               value={deepseekKey}
               onChange={(e) => setDeepseekKey(e.target.value)}
-              className="w-full px-3 py-2 bg-black/50 border border-border rounded-md focus:outline-none focus:border-primary text-white text-sm"
               placeholder={configured?.deepseek ? '(已配置)' : '...'}
             />
           </div>
@@ -164,19 +160,19 @@ function LLMSetupModal({ open, status, onClose, onSave }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-      <Card className="w-full max-w-lg border-primary/20 shadow-2xl bg-card">
-        <CardHeader className="border-b border-white/10 pb-4">
-          <CardTitle className="text-xl flex items-center gap-2">
-            <Settings className="text-primary" /> 
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+      <Card className="w-full max-w-lg border-primary/20 shadow-2xl bg-surface">
+        <div className="p-6 border-b border-border bg-gray-50/50">
+          <div className="text-xl flex items-center gap-2 font-bold text-ink-900">
+            <Settings className="text-primary" />
             <span>LLM 配置</span>
-          </CardTitle>
-          <p className="text-sm text-muted-foreground mt-1">为写作系统选择模型提供商</p>
-        </CardHeader>
+          </div>
+          <p className="text-sm text-ink-500 mt-1">为写作系统选择模型提供商</p>
+        </div>
 
-        <CardContent className="space-y-6 pt-6">
+        <div className="p-6 space-y-6">
           <div>
-            <div className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+            <div className="text-sm font-bold text-ink-900 mb-3 flex items-center gap-2">
               <Shield size={14} className="text-primary" /> 默认提供商
             </div>
             <div className="space-y-2">
@@ -186,16 +182,15 @@ function LLMSetupModal({ open, status, onClose, onSave }) {
                 { id: 'deepseek', label: 'DeepSeek', requires_key: true },
                 { id: 'mock', label: 'Mock (Demo)', requires_key: false },
               ]).map((p) => (
-                <label key={p.id} className={`flex items-center justify-between p-3 border rounded-md cursor-pointer transition-all ${
-                  defaultProvider === p.id 
-                    ? 'bg-primary/10 border-primary text-white' 
-                    : 'bg-black/20 border-border text-muted-foreground hover:border-white/20 hover:text-white'
-                }`}>
+                <label key={p.id} className={`flex items-center justify-between p-3 border rounded-md cursor-pointer transition-all ${defaultProvider === p.id
+                    ? 'bg-primary/5 border-primary text-primary shadow-sm'
+                    : 'bg-white border-border text-ink-500 hover:border-primary/30 hover:text-ink-900'
+                  }`}>
                   <div className="flex items-center gap-3">
                     <input
                       type="radio"
                       name="defaultProvider"
-                      className="accent-primary"
+                      className="accent-primary h-4 w-4"
                       checked={defaultProvider === p.id}
                       onChange={() => setDefaultProvider(p.id)}
                     />
@@ -210,8 +205,8 @@ function LLMSetupModal({ open, status, onClose, onSave }) {
           </div>
 
           <div>
-            <div className="text-sm font-bold text-white mb-3">智能体覆盖配置 (可选)</div>
-            <div className="space-y-3 bg-black/20 p-4 rounded-lg border border-white/5">
+            <div className="text-sm font-bold text-ink-900 mb-3">智能体覆盖配置 (可选)</div>
+            <div className="space-y-3 bg-gray-50 p-4 rounded-lg border border-border">
               {[
                 { id: 'archivist', title: '档案员' },
                 { id: 'writer', title: '作家' },
@@ -219,11 +214,11 @@ function LLMSetupModal({ open, status, onClose, onSave }) {
                 { id: 'editor', title: '编辑' },
               ].map((row) => (
                 <div key={row.id} className="grid grid-cols-3 gap-3 items-center">
-                  <div className="text-sm font-mono text-muted-foreground uppercase">{row.title}</div>
+                  <div className="text-sm font-bold text-ink-500 uppercase">{row.title}</div>
                   <select
                     value={agentOverrides[row.id]}
                     onChange={(e) => setAgentOverrides((prev) => ({ ...prev, [row.id]: e.target.value }))}
-                    className="col-span-2 px-3 py-1.5 border border-border rounded bg-black/50 text-white text-sm focus:outline-none focus:border-primary"
+                    className="col-span-2 px-3 py-1.5 border border-border rounded bg-white text-ink-900 text-sm focus:outline-none focus:border-primary transition-colors cursor-pointer"
                   >
                     <option value="">默认 ({defaultProvider})</option>
                     {(providers.length ? providers : [
@@ -238,25 +233,25 @@ function LLMSetupModal({ open, status, onClose, onSave }) {
                 </div>
               ))}
             </div>
-            <div className="mt-2 text-xs font-mono text-muted-foreground opacity-50 truncate">
-              Active: {effectiveProviders.archivist} / {effectiveProviders.writer} / {effectiveProviders.reviewer} / {effectiveProviders.editor}
-            </div>
           </div>
 
-          <div className="border-t border-white/10 pt-4">
-             <div className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+          <div className="border-t border-border pt-4">
+            <div className="text-sm font-bold text-ink-900 mb-3 flex items-center gap-2">
               <Key size={14} className="text-primary" /> API 密钥
             </div>
-             {keyInput()}
+            {keyInput()}
           </div>
 
           {error && (
-            <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded p-3 font-mono">
+            <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-3 font-mono">
               错误: {error}
             </div>
           )}
 
           <div className="flex items-center justify-end gap-3 pt-2">
+            <Button variant="ghost" onClick={onClose}>
+              取消
+            </Button>
             <Button
               onClick={submit}
               isLoading={saving}
@@ -265,7 +260,7 @@ function LLMSetupModal({ open, status, onClose, onSave }) {
               {saving ? '保存中...' : '保存配置'}
             </Button>
           </div>
-        </CardContent>
+        </div>
       </Card>
     </div>
   );

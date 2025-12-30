@@ -1,4 +1,4 @@
-import { Routes, Route, Link, useNavigate } from 'react-router-dom';
+import { Routes, Route, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import ProjectList from './pages/ProjectList';
 import ProjectDetail from './pages/ProjectDetail';
@@ -8,7 +8,7 @@ import System from './pages/System';
 import LLMSetupModal from './components/LLMSetupModal';
 import { configAPI } from './api';
 
-import { AppShell } from './components/layout/AppShell';
+import { Layout } from './components/Layout'; // Use the new Layout
 
 function App() {
   const [currentProject, setCurrentProject] = useState(null);
@@ -22,15 +22,22 @@ function App() {
   };
 
   const refreshLLMStatus = async () => {
-    const resp = await configAPI.getLLM();
-    setLlmStatus(resp.data);
-    return resp.data;
+    try {
+      const resp = await configAPI.getLLM();
+      setLlmStatus(resp.data);
+      return resp.data;
+    } catch (e) {
+      console.warn("Failed to fetch LLM status", e);
+      return null;
+    }
   };
 
   useEffect(() => {
     (async () => {
       try {
         const status = await refreshLLMStatus();
+        if (!status) return;
+
         const configuredMap = status?.configured || {};
         const providersMeta = status?.providers || [];
         const requiresKey = (p) => !!providersMeta.find(x => x.id === p)?.requires_key;
@@ -48,7 +55,7 @@ function App() {
   }, []);
 
   return (
-    <AppShell>
+    <Layout onOpenSettings={() => setShowLLMSetup(true)}>
       <Routes>
         <Route path="/" element={<ProjectList onSelectProject={selectProject} />} />
         <Route path="/project/:projectId" element={<ProjectDetail />} />
@@ -73,7 +80,7 @@ function App() {
           await refreshLLMStatus();
         }}
       />
-    </AppShell>
+    </Layout>
   );
 }
 
