@@ -4,7 +4,7 @@ Coordinates the multi-agent writing workflow
 协调多智能体写作工作流
 """
 
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, List
 from enum import Enum
 from app.llm_gateway import LLMGateway, get_gateway
 from app.storage import CardStorage, CanonStorage, DraftStorage
