@@ -54,28 +54,101 @@
 
 ## 🚀 快速开始 (Quick Start)
 
-### 环境要求
-*   **Python 3.10+**
-*   **Node.js 18+**
+### 前置要求
 
-### 1. 启动后端 (Backend)
+在开始之前，请确保您的系统已安装以下软件：
+
+| 软件 | 最低版本 | 下载地址 |
+| :--- | :--- | :--- |
+| **Python** | 3.10+ | [python.org/downloads](https://www.python.org/downloads/) |
+| **Node.js** | 18+ | [nodejs.org](https://nodejs.org/) |
+
+> **💡 提示**: 安装后请重启终端以确保环境变量生效。
+
+### 一键启动
+
+**1. 克隆仓库**
 
 ```bash
-cd backend
-# 自动创建虚拟环境并运行
-./run.bat
+git clone https://github.com/unitagain/NOVIX.git
+cd NOVIX
 ```
-会自动生成 `.env` 文件。请填入您的 API Key (OpenAI, Anthropic, 或 DeepSeek)，或使用 `mock` 模式体验。
 
-### 2. 启动前端 (Frontend)
+**2. 运行启动脚本**
 
 ```bash
-cd frontend
-# 自动安装依赖并运行
-./run.bat
+# Windows
+start.bat
+
+# macOS/Linux
+./start.sh
 ```
 
-访问: **http://localhost:3000**
+脚本会自动完成以下操作：
+- ✅ 检测 Python 和 Node.js 环境
+- ✅ 创建 Python 虚拟环境并安装后端依赖
+- ✅ 安装前端 npm 依赖
+- ✅ 启动后端服务 (`http://localhost:8000`)
+- ✅ 启动前端服务 (`http://localhost:3000`)
+
+**3. 访问应用**
+
+启动成功后，脚本会显示访问地址：
+
+- 🌐 **前端界面**: http://localhost:3000
+- 📡 **后端 API**: http://localhost:8000
+- 📖 **API 文档**: http://localhost:8000/docs
+
+### 配置 LLM (可选)
+
+首次运行会自动生成 `backend/.env` 配置文件。您可以：
+
+**选项 1: 使用真实 API**
+
+编辑 `backend/.env`，填入您的 API Key：
+
+```env
+OPENAI_API_KEY=sk-...
+# 或
+ANTHROPIC_API_KEY=sk-ant-...
+# 或
+DEEPSEEK_API_KEY=...
+```
+
+**选项 2: 使用 Mock 模式** (无需 API Key)
+
+```env
+NOVIX_LLM_PROVIDER=mock
+```
+
+也可以直接在前端界面的 **"LLM 设置"** 中配置，无需手动编辑文件。
+
+### 常见问题
+
+<details>
+<summary><b>Q: 提示找不到 Python 或 Node.js？</b></summary>
+
+请确认已正确安装并重启终端。验证方法：
+
+```bash
+python --version  # 应显示 3.10+ 
+node --version    # 应显示 18+
+```
+</details>
+
+<details>
+<summary><b>Q: 端口被占用怎么办？</b></summary>
+
+默认端口为 3000 (前端) 和 8000 (后端)。如需修改：
+- 前端: 编辑 `frontend/vite.config.js`
+- 后端: 编辑 `backend/.env` 添加 `PORT=8080`
+</details>
+
+<details>
+<summary><b>Q: 如何停止服务？</b></summary>
+
+关闭启动脚本打开的两个终端窗口即可。
+</details>
 
 ---
 
