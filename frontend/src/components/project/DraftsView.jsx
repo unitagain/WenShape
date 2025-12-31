@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { draftsAPI } from '../../api';
-import { Button, Card } from '../ui/core'; // Card is now in ui/core
-import { FileText, Trash2, Eye, EyeOff, BookOpen, Clock, ChevronRight } from 'lucide-react';
+import { Button, Card } from '../ui/core';
+import { FileText, Trash2, Eye, EyeOff, BookOpen, Clock, ChevronRight, Sparkles, Drama } from 'lucide-react';
 
 export function DraftsView({ projectId }) {
   const [chapters, setChapters] = useState([]);
@@ -27,10 +27,40 @@ export function DraftsView({ projectId }) {
   const loadChapters = async () => {
     try {
       const resp = await draftsAPI.listChapters(projectId);
-      setChapters(Array.isArray(resp.data) ? resp.data : []);
+      const chapterList = Array.isArray(resp.data) ? resp.data : [];
+      // Sort chapters by ID weight
+      const sorted = sortChapters(chapterList);
+      setChapters(sorted);
     } catch (e) {
       console.error(e);
     }
+  };
+
+  // Sort chapters using chapter ID rules
+  const sortChapters = (chapterIds) => {
+    const calculateWeight = (chapterId) => {
+      const match = chapterId.match(/^(?:V(\d+))?C(\d+)(?:([EI])(\d+))?$/);
+      if (!match) return 0;
+
+      const volume = parseInt(match[1]) || 0;
+      const chapter = parseInt(match[2]);
+      const type = match[3];
+      const seq = parseInt(match[4]) || 0;
+
+      let weight = volume * 1000 + chapter;
+      if (type && seq > 0) {
+        weight += 0.1 * seq;
+      }
+      return weight;
+    };
+
+    return [...chapterIds].sort((a, b) => calculateWeight(a) - calculateWeight(b));
+  };
+
+  const getChapterIcon = (chapterId) => {
+    if (chapterId.includes('E')) return <Sparkles size={14} className="text-amber-500" />;
+    if (chapterId.includes('I')) return <Drama size={14} className="text-blue-500" />;
+    return <BookOpen size={14} className="text-ink-600" />;
   };
 
   const loadChapterData = async () => {
@@ -67,19 +97,22 @@ export function DraftsView({ projectId }) {
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-140px)]">
       {/* Sidebar List */}
       <div className="lg:col-span-3 flex flex-col gap-4 overflow-hidden">
-        <h3 className="text-lg font-bold text-ink-900 px-1">内容管理</h3>
+        <div className="flex items-center justify-between px-1">
+          <h3 className="text-lg font-bold text-ink-900">内容管理</h3>
+        </div>
         <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
           {chapters.length === 0 && <div className="text-sm text-ink-400 p-2 italic">暂无章节</div>}
           {chapters.map((ch) => (
             <div
               key={ch}
               onClick={() => setSelectedChapter(ch)}
-              className={`p-3 rounded-md border cursor-pointer transition-all font-mono text-sm flex items-center justify-between ${selectedChapter === ch
-                  ? 'bg-primary text-white border-primary shadow-sm'
-                  : 'bg-surface border-border text-ink-600 hover:text-ink-900 hover:border-primary/30'
+              className={`p-3 rounded-md border cursor-pointer transition-all text-sm flex items-center gap-2 ${selectedChapter === ch
+                ? 'bg-primary text-white border-primary shadow-sm'
+                : 'bg-surface border-border text-ink-600 hover:text-ink-900 hover:border-primary/30'
                 }`}
             >
-              <span>{ch}</span>
+              {getChapterIcon(ch)}
+              <span className="font-mono flex-1">{ch}</span>
               {selectedChapter === ch && <ChevronRight size={14} />}
             </div>
           ))}

@@ -352,68 +352,8 @@ class Orchestrator:
                 content=draft.content,
             )
 
-            # Generate chapter summary (MVP-2 Week 5)
-            # 生成章节摘要（MVP-2 第5周）
-            try:
-                # Prefer title from scene brief / 优先从场景简报获取标题
-                scene_brief = await self.draft_storage.get_scene_brief(project_id, chapter)
-                chapter_title = scene_brief.title if scene_brief and scene_brief.title else chapter
-
-                summary = await self.archivist.generate_chapter_summary(
-                    project_id=project_id,
-                    chapter=chapter,
-                    chapter_title=chapter_title,
-                    final_draft=draft.content,
-                )
-
-                await self.draft_storage.save_chapter_summary(project_id, summary)
-            except Exception as e:
-                # Do not block finalization if summary fails
-                # 摘要失败不阻塞章节完成（保证流程可继续）
-                print(f"[Orchestrator] Failed to generate chapter summary: {e}")
-
-            # Extract canon updates (MVP-2 Week 5)
-            # 抽取并更新事实表（MVP-2 第5周）
-            try:
-                canon_updates = await self.archivist.extract_canon_updates(
-                    project_id=project_id,
-                    chapter=chapter,
-                    final_draft=draft.content,
-                )
-
-                for fact in canon_updates.get("facts", []) or []:
-                    await self.canon_storage.add_fact(project_id, fact)
-
-                for event in canon_updates.get("timeline_events", []) or []:
-                    await self.canon_storage.add_timeline_event(project_id, event)
-
-                for state in canon_updates.get("character_states", []) or []:
-                    await self.canon_storage.update_character_state(project_id, state)
-
-                # Detect conflicts (MVP-2 Week 6)
-                # 冲突检测（MVP-2 第6周）
-                try:
-                    report = await self.canon_storage.detect_conflicts(
-                        project_id=project_id,
-                        chapter=chapter,
-                        new_facts=canon_updates.get("facts", []) or [],
-                        new_timeline_events=canon_updates.get("timeline_events", []) or [],
-                        new_character_states=canon_updates.get("character_states", []) or [],
-                    )
-
-                    await self.draft_storage.save_conflict_report(
-                        project_id=project_id,
-                        chapter=chapter,
-                        report=report,
-                    )
-                except Exception as e:
-                    # Do not block finalization if conflict detection fails
-                    # 冲突检测失败不阻塞章节完成（保证流程可继续）
-                    print(f"[Orchestrator] Failed to detect conflicts: {e}")
-            except Exception as e:
-                # Do not block finalization if canon update fails
-                # Canon 更新失败不阻塞章节完成（保证流程可继续）
-                print(f"[Orchestrator] Failed to update canon: {e}")
+            # Run analysis / 运行分析
+            await self._analyze_content(project_id, chapter, draft.content)
 
             await self._update_status(SessionStatus.COMPLETED, "章节完成！")
 
@@ -488,3 +428,80 @@ class Orchestrator:
             "chapter": self.current_chapter,
             "iteration": self.iteration_count
         }
+
+    async def analyze_chapter(self, project_id: str, chapter: str) -> Dict[str, Any]:
+        """Manually trigger analysis for a chapter / 手动触发章节分析"""
+        try:
+            versions = await self.draft_storage.list_draft_versions(project_id, chapter)
+            if not versions:
+                return {"success": False, "error": "No draft found"}
+            
+            latest = versions[-1]
+            draft = await self.draft_storage.get_draft(project_id, chapter, latest)
+            
+            if not draft:
+                return {"success": False, "error": "Draft content missing"}
+
+            self.current_project_id = project_id
+            self.current_chapter = chapter
+            await self._update_status(SessionStatus.GENERATING_BRIEF, "管理员正在整理信息...") # Reusing status key for generic 'processing'
+
+            await self._analyze_content(project_id, chapter, draft.content)
+            
+            await self._update_status(SessionStatus.IDLE, "整理完成")
+            return {"success": True}
+        except Exception as e:
+            return await self._handle_error(f"Analysis failed: {e}")
+
+    async def _analyze_content(self, project_id: str, chapter: str, content: str):
+        """Internal method to run analysis / 内部分析方法"""
+        # Generate chapter summary
+        try:
+            scene_brief = await self.draft_storage.get_scene_brief(project_id, chapter)
+            chapter_title = scene_brief.title if scene_brief and scene_brief.title else chapter
+
+            summary = await self.archivist.generate_chapter_summary(
+                project_id=project_id,
+                chapter=chapter,
+                chapter_title=chapter_title,
+                final_draft=content,
+            )
+            await self.draft_storage.save_chapter_summary(project_id, summary)
+        except Exception as e:
+            print(f"[Orchestrator] Failed to generate chapter summary: {e}")
+
+        # Extract canon updates
+        try:
+            canon_updates = await self.archivist.extract_canon_updates(
+                project_id=project_id,
+                chapter=chapter,
+                final_draft=content,
+            )
+
+            for fact in canon_updates.get("facts", []) or []:
+                await self.canon_storage.add_fact(project_id, fact)
+
+            for event in canon_updates.get("timeline_events", []) or []:
+                await self.canon_storage.add_timeline_event(project_id, event)
+
+            for state in canon_updates.get("character_states", []) or []:
+                await self.canon_storage.update_character_state(project_id, state)
+
+            # Detect conflicts
+            try:
+                report = await self.canon_storage.detect_conflicts(
+                    project_id=project_id,
+                    chapter=chapter,
+                    new_facts=canon_updates.get("facts", []) or [],
+                    new_timeline_events=canon_updates.get("timeline_events", []) or [],
+                    new_character_states=canon_updates.get("character_states", []) or [],
+                )
+                await self.draft_storage.save_conflict_report(
+                    project_id=project_id,
+                    chapter=chapter,
+                    report=report,
+                )
+            except Exception as e:
+                print(f"[Orchestrator] Failed to detect conflicts: {e}")
+        except Exception as e:
+            print(f"[Orchestrator] Failed to update canon: {e}")

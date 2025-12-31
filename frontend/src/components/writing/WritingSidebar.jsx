@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { cn, Card, Button } from '../ui/core';
 import { X, MessageSquare, Terminal } from 'lucide-react';
@@ -7,7 +6,7 @@ export const WritingSidebar = ({ isOpen, onClose, title, children, icon: Icon = 
     return (
         <div
             className={cn(
-                "fixed right-0 top-0 h-screen w-80 bg-surface/95 backdrop-blur-md border-l border-border shadow-2xl z-50 transform transition-transform duration-300 ease-in-out font-sans",
+                "fixed right-0 top-0 h-screen w-96 bg-surface/95 backdrop-blur-md border-l border-border shadow-2xl z-50 transform transition-transform duration-300 ease-in-out font-sans",
                 isOpen ? "translate-x-0" : "translate-x-full"
             )}
         >
@@ -18,13 +17,13 @@ export const WritingSidebar = ({ isOpen, onClose, title, children, icon: Icon = 
                         <Icon size={16} className="text-primary" />
                         <span>{title}</span>
                     </div>
-                    <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
+                    <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8 text-ink-500 hover:text-ink-900">
                         <X size={16} />
                     </Button>
                 </div>
 
                 {/* Content */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
                     {children}
                 </div>
             </div>

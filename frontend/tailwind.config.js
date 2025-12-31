@@ -11,28 +11,30 @@ export default {
         // "Calm & Focus" Palette
         background: "#FAFAF9", // Stone-50 - Canvas
         surface: "#FFFFFF",    // White - Writing Sheet
-        
+
         // Text Colors
         ink: {
-            900: "#1F2937", // Gray-800 - Primary Text
-            500: "#6B7280", // Gray-500 - Secondary/Icons
-            400: "#9CA3AF", // Gray-400 - Placeholders
+          900: "#1F2937", // Gray-800 - Primary Text
+          500: "#6B7280", // Gray-500 - Secondary/Icons
+          400: "#9CA3AF", // Gray-400 - Placeholders
         },
 
         // Interactive/Accents
         primary: {
-            DEFAULT: "#1F2937", // Gray-800 - Standard interactive
-            hover: "#000000",   
-            light: "#F5F5F4",   // Stone-100 - Hover backgrounds
+          DEFAULT: "#1F2937", // Gray-800 - Standard interactive
+          hover: "#000000",
+          light: "#F5F5F4",   // Stone-100 - Hover backgrounds
         },
-        
+
         accent: {
-            DEFAULT: "#E0F2FE", // Sky-100 - Subtle highlights
-            active: "#7DD3FC",  // Sky-300 - Active indicators
+          DEFAULT: "#E0F2FE", // Sky-100 - Subtle highlights
+          active: "#7DD3FC",  // Sky-300 - Active indicators
         },
 
         // Semantic
-        border: "#E5E7EB",      // Gray-200 - Very subtle borders
+        border: "#D6D3D1",      // Stone-300 - Visible but subtle borders
+        input: "#A8A29E",       // Stone-400 - Inputs need stronger borders
+        ring: "#1C1917",        // Stone-900 - Focus rings
       },
       fontFamily: {
         // UI Fonts: Clean, modern sans-serif

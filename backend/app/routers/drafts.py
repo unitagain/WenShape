@@ -5,6 +5,7 @@ Draft and summary management endpoints
 """
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from typing import List
 from app.schemas.draft import Draft, SceneBrief, ReviewResult, ChapterSummary
 from app.storage import DraftStorage
@@ -84,3 +85,48 @@ async def delete_chapter(project_id: str, chapter: str):
     if not deleted:
         raise HTTPException(status_code=404, detail="Chapter not found")
     return {"success": True}
+
+
+class UpdateContentRequest(BaseModel):
+    content: str
+
+
+@router.put("/{chapter}/content")
+async def update_draft_content(
+    project_id: str,
+    chapter: str,
+    body: UpdateContentRequest
+):
+    """
+    Update draft content manually
+    手动更新草稿内容
+    """
+    # 1. List existing versions to determine next version
+    versions = await draft_storage.list_draft_versions(project_id, chapter)
+    if not versions:
+        next_version = "v1"
+    else:
+        # Simple increment logic assuming v1, v2...
+        # If complex naming, might need better logic.
+        # Assuming last version is vN
+        last = versions[-1]
+        try:
+            num = int(last.replace("v", ""))
+            next_version = f"v{num + 1}"
+        except:
+            next_version = f"v{len(versions) + 1}"
+
+    # 2. Save
+    await draft_storage.save_draft(
+        project_id=project_id,
+        chapter=chapter,
+        version=next_version,
+        content=body.content,
+        word_count=len(body.content)
+    )
+
+    return {
+        "success": True, 
+        "version": next_version,
+        "message": "Content saved"
+    }

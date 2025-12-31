@@ -174,3 +174,32 @@ async def cancel_session(project_id: str):
         "success": True,
         "message": "Session cancelled"
     }
+
+
+class AnalyzeRequest(BaseModel):
+    """Request to analyze chapter / 分析章节请求"""
+    chapter: str = Field(..., description="Chapter ID / 章节ID")
+
+
+@router.post("/analyze")
+async def analyze_chapter(
+    project_id: str,
+    request: AnalyzeRequest
+):
+    """
+    Analyze chapter content manually
+    手动分析章节内容
+    
+    Args:
+        project_id: Project ID / 项目ID
+        request: Analyze request / 分析请求
+        
+    Returns:
+        Analysis result / 分析结果
+    """
+    try:
+        orchestrator = get_orchestrator()
+        result = await orchestrator.analyze_chapter(project_id, request.chapter)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

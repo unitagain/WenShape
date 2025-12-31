@@ -26,11 +26,11 @@ export const cardsAPI = {
   getWorld: (projectId, name) => axios.get(`${API_BASE}/projects/${projectId}/cards/world/${name}`),
   createWorld: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/cards/world`, data),
   updateWorld: (projectId, name, data) => axios.put(`${API_BASE}/projects/${projectId}/cards/world/${name}`, data),
-  
+
   // Style card
   getStyle: (projectId) => axios.get(`${API_BASE}/projects/${projectId}/cards/style`),
   updateStyle: (projectId, data) => axios.put(`${API_BASE}/projects/${projectId}/cards/style`, data),
-  
+
   // Rules card
   getRules: (projectId) => axios.get(`${API_BASE}/projects/${projectId}/cards/rules`),
   updateRules: (projectId, data) => axios.put(`${API_BASE}/projects/${projectId}/cards/rules`, data),
@@ -42,6 +42,7 @@ export const sessionAPI = {
   getStatus: (projectId) => axios.get(`${API_BASE}/projects/${projectId}/session/status`),
   submitFeedback: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/feedback`, data),
   cancel: (projectId) => axios.post(`${API_BASE}/projects/${projectId}/session/cancel`),
+  analyze: (projectId, data) => axios.post(`${API_BASE}/projects/${projectId}/session/analyze`, data),
 };
 
 // Drafts API
@@ -54,6 +55,7 @@ export const draftsAPI = {
   getFinal: (projectId, chapter) => axios.get(`${API_BASE}/projects/${projectId}/drafts/${chapter}/final`),
   getSummary: (projectId, chapter) => axios.get(`${API_BASE}/projects/${projectId}/drafts/${chapter}/summary`),
   deleteChapter: (projectId, chapter) => axios.delete(`${API_BASE}/projects/${projectId}/drafts/${chapter}`),
+  updateContent: (projectId, chapter, data) => axios.put(`${API_BASE}/projects/${projectId}/drafts/${chapter}/content`, data),
 };
 
 // Config API
@@ -68,7 +70,7 @@ export const createWebSocket = (projectId, onMessage) => {
   const wsHost = window.location.host;
   const ws = new WebSocket(`${wsProtocol}://${wsHost}/ws/${projectId}/session`);
   let heartbeatTimer = null;
-  
+
   ws.onopen = () => {
     console.log('WebSocket connected');
     heartbeatTimer = window.setInterval(() => {
@@ -79,16 +81,16 @@ export const createWebSocket = (projectId, onMessage) => {
       }
     }, 20000);
   };
-  
+
   ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
     onMessage(data);
   };
-  
+
   ws.onerror = (error) => {
     console.error('WebSocket error:', error);
   };
-  
+
   ws.onclose = () => {
     console.log('WebSocket disconnected');
     if (heartbeatTimer) {
@@ -96,6 +98,6 @@ export const createWebSocket = (projectId, onMessage) => {
       heartbeatTimer = null;
     }
   };
-  
+
   return ws;
 };
