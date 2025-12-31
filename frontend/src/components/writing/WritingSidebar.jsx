@@ -6,7 +6,7 @@ export const WritingSidebar = ({ isOpen, onClose, title, children, icon: Icon = 
     return (
         <div
             className={cn(
-                "fixed right-0 top-0 h-screen w-96 bg-surface/95 backdrop-blur-md border-l border-border shadow-2xl z-50 transform transition-transform duration-300 ease-in-out font-sans",
+                "absolute right-0 top-0 h-full w-96 bg-surface/95 backdrop-blur-md border-l border-border shadow-2xl z-50 transform transition-transform duration-300 ease-in-out font-sans",
                 isOpen ? "translate-x-0" : "translate-x-full"
             )}
         >

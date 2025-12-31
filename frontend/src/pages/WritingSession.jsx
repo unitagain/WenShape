@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { ChapterCreateDialog } from '../components/project/ChapterCreateDialog';
 
-function WritingSession() {
+function WritingSession({ isEmbedded = false }) {
     const { projectId } = useParams();
     const navigate = useNavigate();
 
@@ -49,7 +49,7 @@ function WritingSession() {
     const wsRef = useRef(null);
     const logContainerRef = useRef(null);
 
-    const isGenerating = ['starting', 'waiting_feedback'].includes(status);
+    const isGenerating = ['starting', 'finalizing'].includes(status);
 
     // --- Initialization ---
 
@@ -301,15 +301,17 @@ function WritingSession() {
     // --- Render ---
 
     return (
-        <div className="flex h-screen w-full bg-background relative overflow-hidden">
+        <div className={`flex w-full bg-background relative overflow-hidden ${isEmbedded ? 'h-full' : 'h-screen'}`}>
 
             {/* Floating Header */}
             <header className="absolute top-0 left-0 right-0 h-16 pointer-events-none z-10 flex items-center justify-between px-6 transition-all duration-300"
                 style={{ paddingRight: sidebarOpen ? '26rem' : '1.5rem' }}>
                 <div className="pointer-events-auto flex items-center gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => navigate(`/project/${projectId}`)}>
-                        <ChevronLeft className="mr-2 h-4 w-4" /> 返回
-                    </Button>
+                    {!isEmbedded && (
+                        <Button variant="ghost" size="sm" onClick={() => navigate(`/project/${projectId}`)}>
+                            <ChevronLeft className="mr-2 h-4 w-4" /> 返回
+                        </Button>
+                    )}
                 </div>
 
                 <div className="pointer-events-auto flex items-center gap-2">
@@ -385,50 +387,53 @@ function WritingSession() {
                 title={status === 'editing' ? "编辑助手" : "创作助手"}
                 icon={status === 'editing' ? PenTool : Bot}
             >
-                {/* 1. Chapter Selection */}
-                <div className="mb-6 p-4 bg-surface border border-border rounded-lg shadow-sm space-y-3">
-                    <div className="flex items-center justify-between">
-                        <label className="text-xs font-bold uppercase text-ink-500 tracking-wider">当前章节</label>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono ${status === 'editing' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                            {status === 'editing' ? 'EDITING' : 'NEW'}
-                        </span>
-                    </div>
-
-                    <div className="flex gap-2">
-                        <select
-                            className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:border-primary cursor-pointer"
-                            value={chapterInfo.chapter}
-                            onChange={handleChapterSelect}
-                        >
-                            <option value="">-- 选择章节 --</option>
-                            {chapters.map(ch => (
-                                <option key={ch} value={ch}>{ch}</option>
-                            ))}
-                        </select>
-                        <Button
-                            size="icon"
-                            variant="outline"
-                            onClick={() => setShowChapterDialog(true)}
-                            title="新建章节"
-                            className="border-input hover:border-primary hover:text-primary"
-                        >
-                            <Plus size={16} />
-                        </Button>
-                    </div>
-
-                    {chapterInfo.chapter && (
-                        <div className="flex gap-2 animate-in fade-in pt-1">
-                            <div className="w-16 h-10 flex items-center justify-center bg-ink-900 text-surface border border-ink-900 rounded text-xs font-mono font-bold">
-                                {chapterInfo.chapter}
-                            </div>
-                            <Input
-                                value={chapterInfo.chapter_title}
-                                onChange={e => setChapterInfo({ ...chapterInfo, chapter_title: e.target.value })}
-                                placeholder="输入标题..."
-                                className="h-10 font-serif border-input"
-                            />
+                {/* 1. Context Information (Unified Panel) */}
+                <div className="mb-6 space-y-4">
+                    {/* Chapter Selector & ID */}
+                    <div className="p-3 bg-surface/50 rounded-xl border border-border/50 space-y-3">
+                        <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold uppercase text-ink-400 tracking-wider">当前章节</span>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono border ${status === 'editing' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
+                                {status === 'editing' ? '⚫ EDITING' : '⚪ IDLE'}
+                            </span>
                         </div>
-                    )}
+
+                        <div className="flex gap-2">
+                            <select
+                                className="flex-1 rounded-lg border border-input bg-background/50 px-3 py-2 text-sm focus-visible:outline-none focus-visible:border-primary cursor-pointer transition-all hover:border-primary/30"
+                                value={chapterInfo.chapter}
+                                onChange={handleChapterSelect}
+                            >
+                                <option value="">-- 选择章节 --</option>
+                                {chapters.map(ch => (
+                                    <option key={ch} value={ch}>{ch}</option>
+                                ))}
+                            </select>
+                            <Button
+                                size="icon"
+                                variant="outline"
+                                onClick={() => setShowChapterDialog(true)}
+                                title="新建章节"
+                                className="rounded-lg border-input hover:border-primary hover:text-primary transition-all bg-background/50"
+                            >
+                                <Plus size={16} />
+                            </Button>
+                        </div>
+
+                        {chapterInfo.chapter && (
+                            <div className="flex items-center gap-2 animate-in fade-in pt-1">
+                                <div className="h-9 min-w-[3.5rem] px-2 flex items-center justify-center bg-primary/5 text-primary border border-primary/20 rounded-lg text-xs font-mono font-bold shadow-sm">
+                                    {chapterInfo.chapter}
+                                </div>
+                                <Input
+                                    value={chapterInfo.chapter_title}
+                                    onChange={e => setChapterInfo({ ...chapterInfo, chapter_title: e.target.value })}
+                                    placeholder="章节标题..."
+                                    className="h-9 font-serif border-input bg-background/50 focus:bg-background transition-all"
+                                />
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 {/* 2. Mode Specific Cards */}

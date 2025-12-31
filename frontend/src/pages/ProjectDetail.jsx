@@ -3,8 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { projectsAPI, cardsAPI } from '../api';
 import { DashboardView } from '../components/project/DashboardView';
 import { CharacterView } from '../components/project/CharacterView';
-import { WritingView } from '../components/project/WritingView';
 import { DraftsView } from '../components/project/DraftsView';
+import WritingSession from './WritingSession';
 import { WorldView } from '../components/project/WorldView';
 import { StyleView } from '../components/project/StyleView';
 import { Button } from '../components/ui/Button';
@@ -185,7 +185,7 @@ function ProjectDetail() {
         </div>
 
         {/* Viewport */}
-        <div className="flex-1 overflow-y-auto p-6 relative z-0 custom-scrollbar">
+        <div className={`flex-1 relative z-0 custom-scrollbar ${activeTab === 'writing' ? 'overflow-hidden p-0' : 'overflow-y-auto p-6'}`}>
           {activeTab === 'dashboard' && (
             <DashboardView
               dashboard={dashboard}
@@ -205,7 +205,7 @@ function ProjectDetail() {
           )}
 
           {activeTab === 'writing' && (
-            <WritingView projectId={projectId} />
+            <WritingSession isEmbedded={true} />
           )}
 
           {activeTab === 'drafts' && (
