@@ -264,7 +264,6 @@ Output: Revised draft with clear, engaging prose
         original_draft: str,
         review: Any,
         style_card: Any,
-        style_card: Any,
         user_feedback: str,
         rejected_entities: List[str] = None
     ) -> str:
