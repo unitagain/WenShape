@@ -10,7 +10,7 @@ function Agents() {
   const [success, setSuccess] = useState('');
 
   const [status, setStatus] = useState(null);
-  const [defaultProvider, setDefaultProvider] = useState('mock');
+  const [defaultProvider, setDefaultProvider] = useState('openai');
   const [agentOverrides, setAgentOverrides] = useState({
     archivist: '',
     writer: '',
@@ -24,7 +24,13 @@ function Agents() {
   const providers = useMemo(() => status?.providers || [], [status]);
   const configured = useMemo(() => status?.configured || {}, [status]);
 
-  const providerMeta = (id) => providers.find((x) => x.id === id);
+  // Filter out mock provider
+  const availableProviders = useMemo(() =>
+    providers.filter(p => p.id !== 'mock'),
+    [providers]
+  );
+
+  const providerMeta = (id) => availableProviders.find((x) => x.id === id);
 
   const effectiveProviders = useMemo(() => {
     return {
@@ -42,7 +48,7 @@ function Agents() {
 
   const requiredKeyProviders = useMemo(() => {
     return requiredProviders.filter((p) => providerMeta(p)?.requires_key);
-  }, [requiredProviders, providers]);
+  }, [requiredProviders, availableProviders]);
 
   const load = async () => {
     setLoading(true);
@@ -53,19 +59,37 @@ function Agents() {
       const data = resp?.data || null;
       setStatus(data);
 
-      const initialDefault = data?.default_provider || data?.selected_provider || 'mock';
-      setDefaultProvider(initialDefault);
+      const initialDefault = data?.default_provider || data?.selected_provider || 'openai';
+      setDefaultProvider(initialDefault === 'mock' ? 'openai' : initialDefault);
 
       const overrides = data?.agent_overrides;
       if (overrides && typeof overrides === 'object') {
         setAgentOverrides({
-          archivist: overrides.archivist || '',
-          writer: overrides.writer || '',
-          reviewer: overrides.reviewer || '',
-          editor: overrides.editor || '',
+          archivist: overrides.archivist === 'mock' ? '' : (overrides.archivist || ''),
+          writer: overrides.writer === 'mock' ? '' : (overrides.writer || ''),
+          reviewer: overrides.reviewer === 'mock' ? '' : (overrides.reviewer || ''),
+          editor: overrides.editor === 'mock' ? '' : (overrides.editor || ''),
         });
       } else {
         setAgentOverrides({ archivist: '', writer: '', reviewer: '', editor: '' });
+      }
+
+      // Set masked keys for configured providers
+      const configuredProviders = data?.configured || {};
+      if (configuredProviders.openai) {
+        setOpenaiKey('sk-••••••••••••••••••••');
+      } else {
+        setOpenaiKey('');
+      }
+      if (configuredProviders.anthropic) {
+        setAnthropicKey('sk-ant-••••••••••••••••');
+      } else {
+        setAnthropicKey('');
+      }
+      if (configuredProviders.deepseek) {
+        setDeepseekKey('sk-••••••••••••••••••••');
+      } else {
+        setDeepseekKey('');
       }
     } catch (e) {
       setError(String(e?.response?.data?.detail || e?.message || '加载失败'));
@@ -109,15 +133,13 @@ function Agents() {
         },
       };
 
-      if (openaiKey.trim()) payload.openai_api_key = openaiKey.trim();
-      if (anthropicKey.trim()) payload.anthropic_api_key = anthropicKey.trim();
-      if (deepseekKey.trim()) payload.deepseek_api_key = deepseekKey.trim();
+      // Only send keys that have been modified (not masked)
+      if (openaiKey.trim() && !openaiKey.includes('••')) payload.openai_api_key = openaiKey.trim();
+      if (anthropicKey.trim() && !anthropicKey.includes('••')) payload.anthropic_api_key = anthropicKey.trim();
+      if (deepseekKey.trim() && !deepseekKey.includes('••')) payload.deepseek_api_key = deepseekKey.trim();
 
       await configAPI.updateLLM(payload);
       setSuccess('配置已保存');
-      setOpenaiKey('');
-      setAnthropicKey('');
-      setDeepseekKey('');
       await load();
     } catch (e) {
       setError(String(e?.response?.data?.detail || e?.message || '保存失败'));
@@ -150,17 +172,16 @@ function Agents() {
             </h3>
           </div>
           <div className="p-6 space-y-4">
-            {(providers.length ? providers : [
+            {(availableProviders.length ? availableProviders : [
               { id: 'openai', label: 'OpenAI', requires_key: true },
               { id: 'anthropic', label: 'Anthropic (Claude)', requires_key: true },
               { id: 'deepseek', label: 'DeepSeek', requires_key: true },
-              { id: 'mock', label: 'Mock (Demo)', requires_key: false },
             ]).map((p) => (
               <label
                 key={p.id}
                 className={`flex items-center justify-between p-4 border rounded-lg cursor-pointer transition-all ${defaultProvider === p.id
-                    ? 'bg-primary/5 border-primary shadow-sm'
-                    : 'bg-background border-border hover:border-primary/30'
+                  ? 'bg-primary/5 border-primary shadow-sm'
+                  : 'bg-background border-border hover:border-primary/30'
                   }`}
               >
                 <div className="flex items-center gap-4">
@@ -207,11 +228,10 @@ function Agents() {
                   className="px-3 py-1.5 border border-border rounded bg-surface text-ink-900 text-sm focus:outline-none focus:border-primary transition-colors cursor-pointer ml-4 w-48"
                 >
                   <option value="">跟随默认 ({defaultProvider})</option>
-                  {(providers.length ? providers : [
+                  {(availableProviders.length ? availableProviders : [
                     { id: 'openai', label: 'OpenAI' },
                     { id: 'anthropic', label: 'Anthropic (Claude)' },
                     { id: 'deepseek', label: 'DeepSeek' },
-                    { id: 'mock', label: 'Mock (Demo)' },
                   ]).map((p) => (
                     <option key={p.id} value={p.id}>{p.label}</option>
                   ))}
@@ -243,8 +263,11 @@ function Agents() {
                       type="password"
                       value={openaiKey}
                       onChange={(e) => setOpenaiKey(e.target.value)}
-                      placeholder={configured?.openai ? '已配置 (保持空白以维持不变)' : 'sk-...'}
+                      placeholder={configured?.openai ? '已配置 (修改后保存)' : 'sk-...'}
                     />
+                    {configured?.openai && (
+                      <p className="text-xs text-ink-400">已配置 · 修改后点击保存</p>
+                    )}
                   </div>
                 )}
                 {requiredKeyProviders.includes('anthropic') && (
@@ -254,8 +277,11 @@ function Agents() {
                       type="password"
                       value={anthropicKey}
                       onChange={(e) => setAnthropicKey(e.target.value)}
-                      placeholder={configured?.anthropic ? '已配置 (保持空白以维持不变)' : 'sk-ant-...'}
+                      placeholder={configured?.anthropic ? '已配置 (修改后保存)' : 'sk-ant-...'}
                     />
+                    {configured?.anthropic && (
+                      <p className="text-xs text-ink-400">已配置 · 修改后点击保存</p>
+                    )}
                   </div>
                 )}
                 {requiredKeyProviders.includes('deepseek') && (
@@ -265,8 +291,11 @@ function Agents() {
                       type="password"
                       value={deepseekKey}
                       onChange={(e) => setDeepseekKey(e.target.value)}
-                      placeholder={configured?.deepseek ? '已配置 (保持空白以维持不变)' : '...'}
+                      placeholder={configured?.deepseek ? '已配置 (修改后保存)' : '...'}
                     />
+                    {configured?.deepseek && (
+                      <p className="text-xs text-ink-400">已配置 · 修改后点击保存</p>
+                    )}
                   </div>
                 )}
               </div>
