@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { sessionAPI, createWebSocket, draftsAPI } from '../api';
+import { sessionAPI, createWebSocket, draftsAPI, cardsAPI } from '../api';
 import { Button, Input, Card } from '../components/ui/core';
 import { WritingCanvas } from '../components/writing/WritingCanvas';
 import { WritingSidebar } from '../components/writing/WritingSidebar';
@@ -24,6 +24,10 @@ function WritingSession() {
     // Save/Analyze UI
     const [showSaveDialog, setShowSaveDialog] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+
+    // Proposal State
+    const [proposals, setProposals] = useState([]);
+    const [rejectedItems, setRejectedItems] = useState([]);
 
     // Logic State
     const [status, setStatus] = useState('idle'); // idle, starting, editing, waiting_feedback, completed
@@ -94,6 +98,7 @@ function WritingSession() {
         setCurrentDraft(null);
         setStatus('idle');
         setReview(null);
+        setProposals([]);
 
         try {
             // 1. Get List of Versions
@@ -151,6 +156,7 @@ function WritingSession() {
             setCurrentDraft(null);
             setManualContent('');
             setStatus('idle');
+            setProposals([]);
         } catch (e) {
             console.error(e);
         }
@@ -180,6 +186,7 @@ function WritingSession() {
         setStatus('starting');
         setMessages([]);
         setShowStartModal(false);
+        setProposals([]);
 
         try {
             const response = await sessionAPI.start(projectId, chapterInfo);
@@ -187,6 +194,9 @@ function WritingSession() {
             if (response.data.success) {
                 setCurrentDraft(response.data.draft_v2);
                 setReview(response.data.review);
+                if (response.data.proposals) {
+                    setProposals(response.data.proposals);
+                }
                 setStatus('waiting_feedback');
             } else {
                 addMessage('error', 'SESSION_START_FAILED: ' + response.data.error);
@@ -226,8 +236,13 @@ function WritingSession() {
         try {
             // Trigger Analysis
             addMessage('system', '正在启动管理员整理流程...');
-            await sessionAPI.analyze(projectId, { chapter: chapterInfo.chapter });
-            addMessage('system', '管理员整理完成，信息已更新。');
+            const resp = await sessionAPI.analyze(projectId, { chapter: chapterInfo.chapter });
+            if (resp.proposals) {
+                setProposals(resp.proposals);
+                addMessage('system', `管理员整理完成。发现 ${resp.proposals.length} 个新设定变更。`);
+            } else {
+                addMessage('system', '管理员整理完成，信息已更新。');
+            }
         } catch (e) {
             addMessage('error', '整理失败: ' + e.message);
         }
@@ -251,7 +266,8 @@ function WritingSession() {
             const response = await sessionAPI.submitFeedback(projectId, {
                 chapter: chapterInfo.chapter,
                 feedback: feedback,
-                action: action
+                action: action,
+                rejected_entities: rejectedItems
             });
 
             if (action === 'confirm') {
@@ -259,14 +275,20 @@ function WritingSession() {
                     setStatus('completed');
                     alert("章节已确认和保存!");
                     loadDraftContent(chapterInfo.chapter);
+                    setRejectedItems([]); // Clear rejections
+                    setProposals([]);
                 } else {
                     setStatus('waiting_feedback');
                 }
             } else {
                 if (response.data.success) {
                     setCurrentDraft(response.data.draft);
+                    if (response.data.proposals) {
+                        setProposals(response.data.proposals);
+                    }
                     setFeedback('');
                     setStatus('editing');
+                    setRejectedItems([]); // Clear rejections as they've been sent
                 }
             }
         } catch (error) {
@@ -467,6 +489,68 @@ function WritingSession() {
                                 )}
                             </div>
                         </div>
+
+                        {/* Proposal List */}
+                        {proposals.length > 0 && (
+                            <div className="space-y-3 pt-4 border-t border-border animate-in slide-in-from-right-4 fade-in duration-300">
+                                <h4 className="font-bold text-sm text-ink-900 flex items-center gap-2">
+                                    <Sparkles size={14} className="text-purple-500" />
+                                    发现新设定 ({proposals.length})
+                                </h4>
+                                <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-1">
+                                    {proposals.map((p, idx) => (
+                                        <div key={idx} className="p-3 bg-purple-50/50 rounded-lg border border-purple-100 text-ink-700 relative group">
+                                            <div className="flex justify-between items-start mb-1">
+                                                <span className="font-bold text-purple-800 text-xs px-1.5 py-0.5 bg-purple-100 rounded">
+                                                    {p.type}: {p.name}
+                                                </span>
+                                                <span className="text-[10px] text-purple-400 font-mono">
+                                                    {(p.confidence * 100).toFixed(0)}%
+                                                </span>
+                                            </div>
+                                            <p className="text-xs mb-2 leading-relaxed">{p.description}</p>
+                                            <p className="text-[10px] text-ink-400 italic mb-2">"{p.source_text?.slice(0, 50)}..."</p>
+
+                                            <div className="flex gap-2 mt-2">
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="h-6 text-[10px] border-green-200 hover:bg-green-50 text-green-700 px-2"
+                                                    onClick={async () => {
+                                                        try {
+                                                            if (p.type === 'Character') {
+                                                                await cardsAPI.createCharacter(projectId, { name: p.name, identity: p.description, motivation: "Unset", boundaries: [] });
+                                                            } else if (p.type === 'World') {
+                                                                await cardsAPI.createWorld(projectId, { name: p.name, category: 'Location', description: p.description, rules: [] });
+                                                            }
+                                                            setProposals(prev => prev.filter(x => x.name !== p.name));
+                                                            addMessage('system', `已采纳设定: ${p.name}`);
+                                                        } catch (e) {
+                                                            addMessage('error', `创建失败: ${e.message}`);
+                                                        }
+                                                    }}
+                                                >
+                                                    <Check size={10} className="mr-1" /> 采纳
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="h-6 text-[10px] border-red-200 hover:bg-red-50 text-red-700 px-2"
+                                                    onClick={() => {
+                                                        setRejectedItems(prev => [...prev, p.name]);
+                                                        setProposals(prev => prev.filter(x => x.name !== p.name));
+                                                        addMessage('system', `已拒绝: ${p.name} (将在下次修订中修正)`);
+                                                    }}
+                                                >
+                                                    <Eraser size={10} className="mr-1" /> 拒绝
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         {review?.issues?.length > 0 && (
                             <div className="space-y-3 pt-4 border-t border-border">
                                 <h4 className="font-bold text-sm text-ink-900 flex items-center gap-2">

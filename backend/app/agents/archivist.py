@@ -7,7 +7,7 @@ Manages cards, canon (facts/timeline/character states), and generates scene brie
 import yaml
 from typing import Dict, Any, List, Optional
 from app.agents.base import BaseAgent
-from app.schemas.draft import SceneBrief, ChapterSummary
+from app.schemas.draft import SceneBrief, ChapterSummary, CardProposal
 from app.schemas.canon import Fact, TimelineEvent, CharacterState
 
 
@@ -313,6 +313,76 @@ Generate the YAML only, no additional text.
                 style_reminder="",
                 forbidden=[]
             )
+
+    async def detect_setting_changes(
+        self,
+        draft_content: str,
+        existing_card_names: List[str]
+    ) -> List[CardProposal]:
+        """Detect potential new setting cards / 检测潜在的新设定卡"""
+        
+        provider = self.gateway.get_provider_for_agent(self.get_agent_name())
+        if provider == "mock":
+            return []
+
+        prompt = self._build_setting_detection_prompt(draft_content, existing_card_names)
+        
+        messages = self.build_messages(
+            system_prompt=self.get_system_prompt(),
+            user_prompt=prompt
+        )
+        
+        response = await self.call_llm(messages)
+        
+        # Parse logic
+        proposals = []
+        try:
+            # Extract JSON/YAML
+            clean_resp = response
+            if "```json" in response:
+                clean_resp = response.split("```json")[1].split("```")[0]
+            elif "```" in response:
+                clean_resp = response.split("```")[1].split("```")[0]
+            
+            import json
+            data = json.loads(clean_resp)
+            
+            for item in data:
+                # Basic validation
+                if item.get("confidence", 0) < 0.7:
+                    continue
+                proposals.append(CardProposal(**item))
+                
+        except Exception as e:
+            print(f"[Archivist] Failed to parse setting proposals: {e}")
+            
+        return proposals
+
+    def _build_setting_detection_prompt(self, draft: str, existing: List[str]) -> str:
+        return f"""Analyze the draft and identify NEW significant entities (Characters, Locations, Rules/Concepts) that should have their own Setting Cards.
+
+Core Rules:
+1. Ignore entities already in this list: {', '.join(existing)}
+2. Ignore trivial/background characters with no name or impact.
+3. Ignore standard locations (e.g. "a bar", "the street") unless they have a specific name and significance.
+4. Confidence score (0.0-1.0): 1.0 means critical for story consistency, 0.0 means fluff. Keep only > 0.7.
+
+Draft Content:
+{draft[:15000]}... (truncated if too long)
+
+Output JSON List format:
+[
+  {{
+    "name": "Entity Name",
+    "type": "Character" | "World" | "Rule",
+    "description": "Brief description based on text",
+    "rationale": "Why this needs a card",
+    "source_text": "Quote where introduced",
+    "confidence": 0.95
+  }}
+]
+Output JSON ONLY.
+"""
 
     async def generate_chapter_summary(
         self,

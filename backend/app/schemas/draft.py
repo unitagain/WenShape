@@ -85,3 +85,14 @@ class ChapterSummary(BaseModel):
     )
     open_loops: List[str] = Field(..., description="Open story loops / 未解悬念")
     brief_summary: str = Field(..., description="Brief summary / 简要概述")
+
+
+class CardProposal(BaseModel):
+    """Proposal for a new setting card / 新设定卡提案"""
+    name: str = Field(..., description="Entity name / 实体名称")
+    type: str = Field(..., description="Type: Character, World, Rule / 类型")
+    description: str = Field(..., description="Proposed content / 提议内容")
+    rationale: str = Field(..., description="Why is this important / 重要性说明")
+    source_text: str = Field(..., description="Quote from source text / 原文引用")
+    confidence: float = Field(..., description="Confidence score 0.0-1.0 / 置信度")
+

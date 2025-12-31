@@ -226,6 +226,9 @@ class Orchestrator:
             # Step 5: Wait for user feedback / 步骤5：等待用户反馈
             await self._update_status(SessionStatus.WAITING_FEEDBACK, "等待用户反馈...")
             
+            # Detect proposals / 检测提案
+            proposals = await self._detect_proposals(project_id, revised_draft)
+
             return {
                 "success": True,
                 "status": SessionStatus.WAITING_FEEDBACK,
@@ -233,7 +236,8 @@ class Orchestrator:
                 "draft_v1": draft,
                 "review": review,
                 "draft_v2": revised_draft,
-                "iteration": self.iteration_count
+                "iteration": self.iteration_count,
+                "proposals": proposals
             }
             
         except Exception as e:
@@ -244,7 +248,8 @@ class Orchestrator:
         project_id: str,
         chapter: str,
         feedback: str,
-        action: str = "revise"  # "revise" or "confirm"
+        action: str = "revise",  # "revise" or "confirm"
+        rejected_entities: list = None
     ) -> Dict[str, Any]:
         """
         Process user feedback
@@ -297,7 +302,8 @@ class Orchestrator:
                 chapter=chapter,
                 context={
                     "draft_version": latest_version,
-                    "user_feedback": feedback
+                    "user_feedback": feedback,
+                    "rejected_entities": rejected_entities or []
                 }
             )
             
@@ -307,12 +313,16 @@ class Orchestrator:
             # Wait for feedback again / 再次等待反馈
             await self._update_status(SessionStatus.WAITING_FEEDBACK, "等待用户反馈...")
             
+            # Detect proposals / 检测提案
+            proposals = await self._detect_proposals(project_id, editor_result["draft"])
+
             return {
                 "success": True,
                 "status": SessionStatus.WAITING_FEEDBACK,
                 "draft": editor_result["draft"],
                 "version": editor_result["version"],
-                "iteration": self.iteration_count
+                "iteration": self.iteration_count,
+                "proposals": proposals
             }
             
         except Exception as e:
@@ -505,3 +515,16 @@ class Orchestrator:
                 print(f"[Orchestrator] Failed to detect conflicts: {e}")
         except Exception as e:
             print(f"[Orchestrator] Failed to update canon: {e}")
+
+    async def _detect_proposals(self, project_id: str, content: str) -> List[Dict]:
+        """Detect setting proposals / 检测设定提案"""
+        try:
+            chars = await self.card_storage.list_character_cards(project_id)
+            worlds = await self.card_storage.list_world_cards(project_id)
+            existing = chars + worlds
+            
+            proposals = await self.archivist.detect_setting_changes(content, existing)
+            return [p.model_dump() for p in proposals]
+        except Exception as e:
+            print(f"[Orchestrator] Proposal detection failed: {e}")
+            return []

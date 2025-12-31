@@ -102,7 +102,8 @@ Output: Revised draft with clear, engaging prose
             original_draft=draft.content,
             review=review,
             style_card=style_card,
-            user_feedback=user_feedback
+            user_feedback=user_feedback,
+            rejected_entities=context.get("rejected_entities", [])
         )
 
         # Parse and apply edit instructions / 解析并应用编辑指令
@@ -263,7 +264,9 @@ Output: Revised draft with clear, engaging prose
         original_draft: str,
         review: Any,
         style_card: Any,
-        user_feedback: str
+        style_card: Any,
+        user_feedback: str,
+        rejected_entities: List[str] = None
     ) -> str:
         """
         Generate edit instructions using LLM
@@ -334,6 +337,11 @@ Output: Revised draft with clear, engaging prose
         # Add user feedback / 添加用户反馈
         if user_feedback:
             context_items.append(f"User Feedback:\n{user_feedback}")
+
+        # Add rejected entities / 添加拒绝的实体
+        if rejected_entities:
+             context_items.append(f"Rejected Concepts (MUST REMOVE/REWRITE):\nThe user explicitly rejected the following concepts. You must ensure they are NOT present in the revised draft or are completely rewritten:\n- " + "\n- ".join(rejected_entities))
+
         
         # Add style requirements / 添加文风要求
         if style_card:

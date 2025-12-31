@@ -50,6 +50,7 @@ class FeedbackRequest(BaseModel):
     chapter: str = Field(..., description="Chapter ID / 章节ID")
     feedback: str = Field(..., description="User feedback / 用户反馈")
     action: str = Field("revise", description="Action: 'revise' or 'confirm' / 动作")
+    rejected_entities: Optional[List[str]] = Field(None, description="Rejected entity names / 拒绝的实体名称")
 
 
 @router.post("/start")
@@ -134,7 +135,8 @@ async def submit_feedback(
             project_id=project_id,
             chapter=request.chapter,
             feedback=request.feedback,
-            action=request.action
+            action=request.action,
+            rejected_entities=request.rejected_entities
         )
         
         return result
