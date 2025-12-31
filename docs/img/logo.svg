@@ -1,0 +1,39 @@
+<svg width="800" height="250" viewBox="0 0 800 250" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="15" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  <style>
+    .title {
+      font-family: "Noto Serif SC", "Merriweather", "Times New Roman", Serif;
+      font-weight: 900;
+      font-size: 140px;
+      fill: #1F2937;
+      text-anchor: middle;
+      dominant-baseline: middle;
+      letter-spacing: -0.02em;
+    }
+    .subtitle {
+      font-family: "Inter", "Noto Sans SC", system-ui, sans-serif;
+      font-size: 20px;
+      fill: #57534E;
+      text-anchor: middle;
+      letter-spacing: 0.4em;
+      text-transform: uppercase;
+      font-weight: 500;
+    }
+    .accent {
+      font-family: serif;
+      font-style: italic;
+      fill: #9CA3AF;
+    }
+  </style>
+  <!-- Decoration -->
+  <line x1="250" y1="180" x2="550" y2="180" stroke="#E5E7EB" stroke-width="2" />
+  
+  <!-- Text -->
+  <text x="50%" y="50%" class="title">NOVIX</text>
+  <text x="50%" y="85%" class="subtitle">Agentic AI Storyteller</text>
+</svg>
