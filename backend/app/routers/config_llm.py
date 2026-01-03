@@ -20,6 +20,13 @@ class LLMConfigStatus(BaseModel):
     agent_providers: Dict[str, str]
     agent_overrides: Dict[str, str]
     configured: Dict[str, bool]
+    custom_base_url: Optional[str] = None
+    custom_model_name: Optional[str] = None
+    
+    # Model selections
+    openai_model: Optional[str] = None
+    anthropic_model: Optional[str] = None
+    deepseek_model: Optional[str] = None
 
 
 class LLMConfigUpdate(BaseModel):
@@ -29,6 +36,16 @@ class LLMConfigUpdate(BaseModel):
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     deepseek_api_key: Optional[str] = None
+    
+    # Custom
+    custom_api_key: Optional[str] = None
+    custom_base_url: Optional[str] = None
+    custom_model_name: Optional[str] = None
+    
+    # Model selections
+    openai_model: Optional[str] = None
+    anthropic_model: Optional[str] = None
+    deepseek_model: Optional[str] = None
 
 
 AGENTS = ["archivist", "writer", "reviewer", "editor"]
@@ -95,6 +112,7 @@ async def get_llm_config_status():
         {"id": "openai", "label": "OpenAI", "requires_key": True},
         {"id": "anthropic", "label": "Anthropic (Claude)", "requires_key": True},
         {"id": "deepseek", "label": "DeepSeek", "requires_key": True},
+        {"id": "custom", "label": "自定义 (兼容 OpenAI)", "requires_key": True},
         {"id": "mock", "label": "Mock (Demo)", "requires_key": False},
     ]
 
@@ -121,6 +139,7 @@ async def get_llm_config_status():
         "openai": _is_real_key(app_config.settings.openai_api_key),
         "anthropic": _is_real_key(app_config.settings.anthropic_api_key),
         "deepseek": _is_real_key(app_config.settings.deepseek_api_key),
+        "custom": bool(app_config.settings.custom_base_url), # Check URL as min requirement
         "mock": True,
     }
 
@@ -131,12 +150,18 @@ async def get_llm_config_status():
         "agent_providers": agent_providers,
         "agent_overrides": agent_overrides,
         "configured": configured,
+        "custom_base_url": app_config.settings.custom_base_url,
+        "custom_model_name": app_config.settings.custom_model_name,
+        "openai_model": app_config.settings.openai_model,
+        "anthropic_model": app_config.settings.anthropic_model,
+        "deepseek_model": app_config.settings.deepseek_model,
     }
+
 
 
 @router.post("/llm")
 async def update_llm_config(payload: LLMConfigUpdate):
-    allowed = {"openai", "anthropic", "deepseek", "mock"}
+    allowed = {"openai", "anthropic", "deepseek", "mock", "custom"}
     default_provider = payload.default_provider or payload.provider
     if not default_provider:
         raise HTTPException(status_code=400, detail="Provider is required")
@@ -159,6 +184,21 @@ async def update_llm_config(payload: LLMConfigUpdate):
         updates["ANTHROPIC_API_KEY"] = payload.anthropic_api_key
     if payload.deepseek_api_key is not None:
         updates["DEEPSEEK_API_KEY"] = payload.deepseek_api_key
+        
+    if payload.custom_api_key is not None:
+        updates["CUSTOM_API_KEY"] = payload.custom_api_key
+    if payload.custom_base_url is not None:
+        updates["CUSTOM_BASE_URL"] = payload.custom_base_url
+    if payload.custom_model_name is not None:
+        updates["CUSTOM_MODEL_NAME"] = payload.custom_model_name
+        
+    # Model selections
+    if payload.openai_model is not None:
+        updates["OPENAI_MODEL"] = payload.openai_model
+    if payload.anthropic_model is not None:
+        updates["ANTHROPIC_MODEL"] = payload.anthropic_model
+    if payload.deepseek_model is not None:
+        updates["DEEPSEEK_MODEL"] = payload.deepseek_model
 
     env_path = _backend_root() / ".env"
     _upsert_env_vars(env_path, updates)

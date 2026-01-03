@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
+    
+    # Custom LLM Provider / 自定义模型配置
+    custom_api_key: str = os.getenv("CUSTOM_API_KEY", "")
+    custom_base_url: str = os.getenv("CUSTOM_BASE_URL", "")
+    custom_model_name: str = os.getenv("CUSTOM_MODEL_NAME", "")
+
+    # Model Selection per Provider / 各提供商的模型选择
+    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o")
+    anthropic_model: str = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+    deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
     # LLM Provider / 大模型供应商
     novix_llm_provider: str = os.getenv("NOVIX_LLM_PROVIDER", "")
