@@ -7,7 +7,7 @@ import { WritingSidebar } from '../components/writing/WritingSidebar';
 import {
     Play, RotateCcw, Check, MessageSquare, AlertTriangle,
     Terminal, Sparkles, Save, ChevronLeft, Bot, PanelRight, Plus,
-    BookOpen, PenTool, Eraser
+    BookOpen, PenTool, Eraser, X
 } from 'lucide-react';
 import { ChapterCreateDialog } from '../components/project/ChapterCreateDialog';
 
@@ -304,7 +304,7 @@ function WritingSession({ isEmbedded = false }) {
         <div className={`flex w-full bg-background relative overflow-hidden ${isEmbedded ? 'h-full' : 'h-screen'}`}>
 
             {/* Floating Header */}
-            <header className="absolute top-0 left-0 right-0 h-16 pointer-events-none z-10 flex items-center justify-between px-6 transition-all duration-300"
+            <header className={`absolute top-0 left-0 right-0 h-16 pointer-events-none z-10 flex items-center justify-between px-6 transition-all duration-300 ${showSaveDialog ? 'opacity-0 invisible' : 'opacity-100 visible'}`}
                 style={{ paddingRight: sidebarOpen ? '26rem' : '1.5rem' }}>
                 <div className="pointer-events-auto flex items-center gap-2">
                     {!isEmbedded && (
@@ -315,8 +315,8 @@ function WritingSession({ isEmbedded = false }) {
                 </div>
 
                 <div className="pointer-events-auto flex items-center gap-2">
-                    {/* Manual Save Button - Only visible if editing and not generating */}
-                    {status === 'editing' && !isGenerating && (
+                    {/* Manual Save Button - Always visible if chapter is selected and not generating */}
+                    {chapterInfo.chapter && !isGenerating && (
                         <Button
                             size="sm"
                             variant="outline"
@@ -601,8 +601,11 @@ function WritingSession({ isEmbedded = false }) {
 
             {/* Analysis Confirmation Dialog */}
             {showSaveDialog && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in">
-                    <Card className="w-full max-w-md p-6 space-y-4 shadow-xl border-border bg-background">
+                <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in">
+                    <Card className="w-full max-w-md p-6 space-y-4 shadow-xl border-border bg-background relative">
+                        <Button variant="ghost" size="icon" className="absolute right-4 top-4 text-ink-400 hover:text-ink-600" onClick={() => setShowSaveDialog(false)}>
+                            <X size={16} />
+                        </Button>
                         <div className="flex items-center gap-3 text-ink-900">
                             <Check className="h-6 w-6 text-green-600 bg-green-100 rounded-full p-1" />
                             <h3 className="text-lg font-bold font-serif">草稿已保存</h3>
