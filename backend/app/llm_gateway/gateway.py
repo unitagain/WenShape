@@ -15,6 +15,7 @@ from app.llm_gateway.providers import (
     AnthropicProvider,
     DeepSeekProvider,
     MockProvider,
+    CustomProvider,
 )
 
 
@@ -86,6 +87,23 @@ class LLMGateway:
                     model=deepseek_config.get("model", "deepseek-chat"),
                     max_tokens=deepseek_config.get("max_tokens", 8000),
                     temperature=deepseek_config.get("temperature", 0.7)
+                )
+
+        # Initialize Custom / 初始化 Custom (兼容 OpenAI)
+        if "custom" in providers_config:
+            custom_config = providers_config["custom"]
+            # Only init if BaseURL is provided (or just init anyway and let it fail if missing?)
+            # Usually we check if 'configured'.
+            # key or URL might be optional depending on local LLM setup, but let's assume we need at least URL or Key?
+            # Actually, for local LLM, key might be "sk-no-key-required".
+            # So just check if we have config.
+            if custom_config.get("base_url") or custom_config.get("api_key"):
+                self.providers["custom"] = CustomProvider(
+                    api_key=custom_config.get("api_key", "sk-custom"), # Default placeholder if empty?
+                    base_url=custom_config.get("base_url", ""),
+                    model=custom_config.get("model", "custom-model"),
+                    max_tokens=custom_config.get("max_tokens", 8000),
+                    temperature=custom_config.get("temperature", 0.7)
                 )
     
     async def chat(

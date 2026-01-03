@@ -7,6 +7,7 @@ from .openai_provider import OpenAIProvider
 from .anthropic_provider import AnthropicProvider
 from .deepseek_provider import DeepSeekProvider
 from .mock_provider import MockProvider
+from .custom_provider import CustomProvider
 
 __all__ = [
     "BaseLLMProvider",
@@ -14,4 +15,5 @@ __all__ = [
     "AnthropicProvider",
     "DeepSeekProvider",
     "MockProvider",
+    "CustomProvider",
 ]
