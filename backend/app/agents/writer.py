@@ -34,10 +34,10 @@ Core principle:
 - Before writing, form a brief internal plan (3-6 beats) to reach the chapter goal, then write the prose.
 
 Output Format:
-- Write engaging narrative prose
-- Mark uncertain details with [TO_CONFIRM: detail]
-- Include word count at the end
-- List any pending confirmations
+- FIRST, Provide your internal plan inside <plan> tags.
+- SECOND, Write the narrative prose inside <draft> tags.
+- Mark uncertain details with [TO_CONFIRM: detail] inside the text.
+- Word count is not needed in text, system calculates it.
 
 你是一个小说撰稿人。
 
@@ -48,15 +48,18 @@ Output Format:
 4. 尊重角色边界和时间线约束
 
 核心原则：
-- 章节目标优先。卡片/事实表是约束与参考资料，不是每章必须覆盖的清单。
-- 不要试图在一章里提到或使用所有卡片，只在与本章目标相关时才引用。
-- 写作前先在脑中形成 3-6 个“推进节点/场景节拍”的简短规划，然后再写正文。
+- 章节目标优先。
+- 写作前先在 <plan> 标签中列出 3-6 个“推进节点/场景节拍”。
+- 然后在 <draft> 标签中撰写正文。
 
-输出格式：
-- 撰写引人入胜的叙事散文
-- 用 [TO_CONFIRM: detail] 标记不确定的细节
-- 在末尾包含字数统计
-- 列出任何待确认事项"""
+输出格式示例：
+<plan>
+1. 节拍一...
+2. 节拍二...
+</plan>
+<draft>
+正文内容...
+</draft>"""
     
     async def execute(
         self,
@@ -290,26 +293,23 @@ FORBIDDEN:
 Chapter goal (top priority): {chapter_goal or scene_brief.goal}
 
 Requirements:
-- Target word count: approximately {target_word_count} words (Chinese characters count as words)
+- Target word count: approximately {target_word_count} words
 - Follow the style reminder strictly
 - Respect all constraints and forbidden actions
 - DO NOT invent new settings without marking them [TO_CONFIRM: detail]
-- Keep character behaviors consistent with their cards
-- If scene brief conflicts with cards/canon, follow cards/canon
-- Focus on accomplishing the chapter goal; do not force coverage of unrelated cards/facts
-- Advance the plot toward the chapter goal
 
-Write the draft in narrative prose. Be engaging and vivid.
+Output format:
+<plan>
+(Your 3-6 beats plan here, in Markdown list format)
+</plan>
+<draft>
+(Your narrative prose here)
+</draft>
 
 要求：
 - 目标字数：约 {target_word_count} 字
-- 严格遵循文风提醒
-- 尊重所有约束和禁区
-- 不要自行发明新设定，如需新设定请标记 [TO_CONFIRM: detail]
-- 保持角色行为与角色卡一致
-- 若场景简报与卡片/事实表冲突，以卡片/事实表为准
-- 聚焦完成章节目标，不要为了“覆盖设定卡”而硬塞无关信息
-- 推进情节朝着章节目标发展
+- 严格遵循 <plan> 和 <draft> 的格式
+- 保持角色行为一致性
 
 用叙事散文撰写草稿，要引人入胜、生动形象。"""
         
@@ -320,7 +320,21 @@ Write the draft in narrative prose. Be engaging and vivid.
             context_items=context_items
         )
         
-        return await self.call_llm(messages)
+        raw_response = await self.call_llm(messages)
+        
+        # Parse XML <draft> content / 解析 XML Draft 内容
+        draft_content = raw_response
+        if "<draft>" in raw_response:
+            try:
+                start = raw_response.find("<draft>") + 7
+                end = raw_response.find("</draft>")
+                if end == -1:
+                    end = len(raw_response)
+                draft_content = raw_response[start:end].strip()
+            except Exception:
+                pass # Fallback to raw response
+                
+        return draft_content
     
     def _format_characters(self, characters: List[Dict]) -> str:
         """Format characters for display / 格式化角色信息"""

@@ -35,7 +35,14 @@ function WritingSession({ isEmbedded = false }) {
     const [currentDraft, setCurrentDraft] = useState(null);
     const [manualContent, setManualContent] = useState(''); // Textarea content
     const [review, setReview] = useState(null);
+    const [sceneBrief, setSceneBrief] = useState(null);
+    const [draftV1, setDraftV1] = useState(null);
     const [feedback, setFeedback] = useState('');
+    const [expandedSteps, setExpandedSteps] = useState({ review: true, editor: true });
+
+    const toggleStep = (step) => {
+        setExpandedSteps(prev => ({ ...prev, [step]: !prev[step] }));
+    };
 
     const [chapterInfo, setChapterInfo] = useState({
         chapter: '',
@@ -98,6 +105,8 @@ function WritingSession({ isEmbedded = false }) {
         setCurrentDraft(null);
         setStatus('idle');
         setReview(null);
+        setSceneBrief(null);
+        setDraftV1(null);
         setProposals([]);
 
         try {
@@ -194,6 +203,8 @@ function WritingSession({ isEmbedded = false }) {
             if (response.data.success) {
                 setCurrentDraft(response.data.draft_v2);
                 setReview(response.data.review);
+                setSceneBrief(response.data.scene_brief);
+                setDraftV1(response.data.draft_v1);
                 if (response.data.proposals) {
                     setProposals(response.data.proposals);
                 }
@@ -495,83 +506,164 @@ function WritingSession({ isEmbedded = false }) {
                             </div>
                         </div>
 
-                        {/* Proposal List */}
-                        {proposals.length > 0 && (
-                            <div className="space-y-3 pt-4 border-t border-border animate-in slide-in-from-right-4 fade-in duration-300">
-                                <h4 className="font-bold text-sm text-ink-900 flex items-center gap-2">
-                                    <Sparkles size={14} className="text-purple-500" />
-                                    发现新设定 ({proposals.length})
-                                </h4>
-                                <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-1">
-                                    {proposals.map((p, idx) => (
-                                        <div key={idx} className="p-3 bg-purple-50/50 rounded-lg border border-purple-100 text-ink-700 relative group">
-                                            <div className="flex justify-between items-start mb-1">
-                                                <span className="font-bold text-purple-800 text-xs px-1.5 py-0.5 bg-purple-100 rounded">
-                                                    {p.type}: {p.name}
-                                                </span>
-                                                <span className="text-[10px] text-purple-400 font-mono">
-                                                    {(p.confidence * 100).toFixed(0)}%
-                                                </span>
-                                            </div>
-                                            <p className="text-xs mb-2 leading-relaxed">{p.description}</p>
-                                            <p className="text-[10px] text-ink-400 italic mb-2">"{p.source_text?.slice(0, 50)}..."</p>
+                        {/* Unified Agent Workflow Timeline (4-Agents) */}
+                        <div className="space-y-4 pt-4 border-t border-border animate-in slide-in-from-right-4 fade-in duration-300">
+                            <h4 className="font-bold text-sm text-ink-900 flex items-center gap-2 mb-2">
+                                <Bot size={14} className="text-primary" />
+                                智能体工作流
+                            </h4>
 
-                                            <div className="flex gap-2 mt-2">
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    className="h-6 text-[10px] border-green-200 hover:bg-green-50 text-green-700 px-2"
-                                                    onClick={async () => {
-                                                        try {
-                                                            if (p.type === 'Character') {
-                                                                await cardsAPI.createCharacter(projectId, { name: p.name, identity: p.description, motivation: "Unset", boundaries: [] });
-                                                            } else if (p.type === 'World') {
-                                                                await cardsAPI.createWorld(projectId, { name: p.name, category: 'Location', description: p.description, rules: [] });
-                                                            }
+                            {/* 1. Archivist: Scene Brief */}
+                            {sceneBrief && (
+                                <div className="relative pl-4 border-l-2 border-indigo-200 pb-4 last:border-0 last:pb-0">
+                                    <div className="absolute -left-[5px] top-0 w-2.5 h-2.5 rounded-full bg-indigo-400 ring-2 ring-background" />
+                                    <div
+                                        className="text-xs font-bold text-indigo-700 mb-1 flex justify-between cursor-pointer hover:bg-indigo-50/50 rounded px-1 -ml-1 py-0.5 transition-colors"
+                                        onClick={() => toggleStep('archivist')}
+                                    >
+                                        <span>📚 资料员 (Archivist)</span>
+                                        <span className="opacity-50 font-normal text-[10px]">{expandedSteps.archivist ? '收起' : '展开'}</span>
+                                    </div>
+                                    <div className={`transition-all duration-300 overflow-hidden ${expandedSteps.archivist ? 'max-h-[300px]' : 'max-h-0'}`}>
+                                        <div className="bg-indigo-50/50 rounded border border-indigo-100/60 p-2 space-y-1 mt-1 text-[11px] text-ink-600">
+                                            <div className="flex gap-2">
+                                                <span className="font-bold text-indigo-800 shrink-0">目标:</span>
+                                                <span className="leading-tight">{sceneBrief.goal}</span>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <span className="font-bold text-indigo-800 shrink-0">角色:</span>
+                                                <span className="leading-tight">{sceneBrief.characters?.map(c => c.name).join(', ') || '无'}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* 2. Writer: Draft V1 */}
+                            {draftV1 && (
+                                <div className="relative pl-4 border-l-2 border-slate-200 pb-4 last:border-0 last:pb-0">
+                                    <div className="absolute -left-[5px] top-0 w-2.5 h-2.5 rounded-full bg-slate-400 ring-2 ring-background" />
+                                    <div
+                                        className="text-xs font-bold text-slate-700 mb-1 flex justify-between cursor-pointer hover:bg-slate-50/50 rounded px-1 -ml-1 py-0.5 transition-colors"
+                                        onClick={() => toggleStep('writer')}
+                                    >
+                                        <span>✍️ 作家 (Writer)</span>
+                                        <span className="opacity-50 font-normal text-[10px]">{expandedSteps.writer ? '收起' : '展开'}</span>
+                                    </div>
+                                    <div className={`transition-all duration-300 overflow-hidden ${expandedSteps.writer ? 'max-h-[300px]' : 'max-h-0'}`}>
+                                        <div className="bg-slate-50/50 rounded border border-slate-100/60 p-2 mt-1 text-[11px] text-ink-600">
+                                            <PenTool size={10} className="inline mr-1" />
+                                            已完成初稿撰写 (字数: {draftV1.word_count})
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* 3. Reviewer: Analysis */}
+                            {review && (
+                                <div className="relative pl-4 border-l-2 border-amber-200 pb-4 last:border-0 last:pb-0">
+                                    <div className="absolute -left-[5px] top-0 w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-background" />
+                                    <div
+                                        className="text-xs font-bold text-amber-700 mb-1 flex justify-between cursor-pointer hover:bg-amber-50/50 rounded px-1 -ml-1 py-0.5 transition-colors"
+                                        onClick={() => toggleStep('review')}
+                                    >
+                                        <span>⚖️ 审稿人 (Reviewer)</span>
+                                        <span className="opacity-50 font-normal text-[10px]">{expandedSteps.review ? '收起' : '展开'}</span>
+                                    </div>
+                                    <div className={`transition-all duration-300 overflow-hidden ${expandedSteps.review ? 'max-h-[500px]' : 'max-h-0'}`}>
+                                        <div className="bg-amber-50/50 rounded border border-amber-100/60 p-2 space-y-2 mt-1">
+                                            {review.issues.length === 0 ? (
+                                                <div className="text-[11px] text-amber-800 flex items-center gap-1">
+                                                    <Check size={12} /> 未发现严重问题
+                                                </div>
+                                            ) : (
+                                                review.issues.map((issue, idx) => (
+                                                    <div key={idx} className="text-xs group border-b border-amber-100/50 last:border-0 pb-2 last:pb-0">
+                                                        <div className="font-bold text-amber-800 flex items-center gap-1 mb-0.5">
+                                                            <span className="bg-amber-100 text-[9px] px-1 rounded uppercase min-w-[30px] text-center">{issue.category}</span>
+                                                            <span className="font-normal text-ink-700 leading-tight">{issue.problem}</span>
+                                                        </div>
+                                                        {issue.suggestion && (
+                                                            <div className="text-[10px] text-ink-500 pl-1 border-l-2 border-amber-200 ml-1 mt-0.5 italic leading-tight">
+                                                                {issue.suggestion}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* 4. Editor: Revision */}
+                            {review && status === 'editing' && (
+                                <div className="relative pl-4 border-l-2 border-blue-200 pb-4 last:border-0 last:pb-0">
+                                    <div className="absolute -left-[5px] top-0 w-2.5 h-2.5 rounded-full bg-blue-400 ring-2 ring-background" />
+                                    <div
+                                        className="text-xs font-bold text-blue-700 mb-1 flex justify-between cursor-pointer hover:bg-blue-50/50 rounded px-1 -ml-1 py-0.5 transition-colors"
+                                        onClick={() => toggleStep('editor')}
+                                    >
+                                        <span>📝 编辑 (Editor)</span>
+                                        <span className="opacity-50 font-normal text-[10px]">{expandedSteps.editor ? '收起' : '展开'}</span>
+                                    </div>
+                                    <div className={`transition-all duration-300 overflow-hidden ${expandedSteps.editor ? 'max-h-[300px]' : 'max-h-0'}`}>
+                                        <div className="text-[11px] text-ink-600 bg-blue-50/50 p-2 rounded border border-blue-100 mt-1">
+                                            <Check size={10} className="inline mr-1 text-blue-600" />
+                                            已根据审稿意见完成全文修订与润色。
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* 3. Archivist Step */}
+                            {proposals.length > 0 && (
+                                <div className="relative pl-4 border-l-2 border-purple-200 pb-0">
+                                    <div className="absolute -left-[5px] top-0 w-2.5 h-2.5 rounded-full bg-purple-400 ring-2 ring-background" />
+                                    <div className="text-xs font-bold text-purple-700 mb-1 flex justify-between">
+                                        <span>Archivist Agent</span>
+                                        <span className="opacity-50 font-normal">New Settings ({proposals.length})</span>
+                                    </div>
+                                    <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-1">
+                                        {proposals.map((p, idx) => (
+                                            <div key={idx} className="p-2 bg-purple-50/50 rounded border border-purple-100 text-ink-700 relative group transition-colors hover:bg-purple-50">
+                                                <div className="flex justify-between items-start mb-1">
+                                                    <span className="font-bold text-purple-800 text-[10px] px-1.5 py-0.5 bg-purple-100 rounded">
+                                                        {p.type}: {p.name}
+                                                    </span>
+                                                    <span className="text-[9px] text-purple-400 font-mono">
+                                                        {(p.confidence * 100).toFixed(0)}%
+                                                    </span>
+                                                </div>
+                                                <p className="text-[10px] leading-relaxed mb-1 font-medium">{p.rationale}</p>
+                                                <p className="text-[10px] text-ink-500 mb-2">{p.description}</p>
+
+                                                <div className="flex gap-2">
+                                                    <Button size="sm" variant="outline" className="h-5 text-[10px] px-2 py-0 border-green-200 text-green-700 hover:bg-green-50"
+                                                        onClick={async () => {
+                                                            try {
+                                                                if (p.type === 'Character') await cardsAPI.createCharacter(projectId, { name: p.name, identity: p.description, motivation: "Unset", boundaries: [] });
+                                                                else if (p.type === 'World') await cardsAPI.createWorld(projectId, { name: p.name, category: 'Location', description: p.description, rules: [] });
+                                                                setProposals(prev => prev.filter(x => x.name !== p.name));
+                                                                addMessage('system', `已采纳: ${p.name}`);
+                                                            } catch (e) { addMessage('error', e.message); }
+                                                        }}>
+                                                        <Check size={10} className="mr-1" /> 采纳
+                                                    </Button>
+                                                    <Button size="sm" variant="outline" className="h-5 text-[10px] px-2 py-0 border-red-200 text-red-700 hover:bg-red-50"
+                                                        onClick={() => {
+                                                            setRejectedItems(prev => [...prev, p.name]);
                                                             setProposals(prev => prev.filter(x => x.name !== p.name));
-                                                            addMessage('system', `已采纳设定: ${p.name}`);
-                                                        } catch (e) {
-                                                            addMessage('error', `创建失败: ${e.message}`);
-                                                        }
-                                                    }}
-                                                >
-                                                    <Check size={10} className="mr-1" /> 采纳
-                                                </Button>
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    className="h-6 text-[10px] border-red-200 hover:bg-red-50 text-red-700 px-2"
-                                                    onClick={() => {
-                                                        setRejectedItems(prev => [...prev, p.name]);
-                                                        setProposals(prev => prev.filter(x => x.name !== p.name));
-                                                        addMessage('system', `已拒绝: ${p.name} (将在下次修订中修正)`);
-                                                    }}
-                                                >
-                                                    <Eraser size={10} className="mr-1" /> 拒绝
-                                                </Button>
+                                                        }}>
+                                                        <Eraser size={10} className="mr-1" /> 拒绝
+                                                    </Button>
+                                                </div>
                                             </div>
-                                        </div>
-                                    ))}
+                                        ))}
+                                    </div>
                                 </div>
-                            </div>
-                        )}
-
-                        {review?.issues?.length > 0 && (
-                            <div className="space-y-3 pt-4 border-t border-border">
-                                <h4 className="font-bold text-sm text-ink-900 flex items-center gap-2">
-                                    <AlertTriangle size={14} className="text-amber-500" />
-                                    优化建议
-                                </h4>
-                                <div className="space-y-2 max-h-[200px] overflow-y-auto custom-scrollbar pr-1">
-                                    {review.issues.map((issue, idx) => (
-                                        <div key={idx} className="text-xs p-3 bg-amber-50/50 rounded-lg border border-amber-100 text-ink-700">
-                                            <span className="font-bold text-amber-700 block mb-1">[{issue.category}]</span>
-                                            {issue.description}
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
+                            )}
+                        </div>
                     </div>
                 )}
                 <div className="mt-auto pt-6 border-t border-border">
