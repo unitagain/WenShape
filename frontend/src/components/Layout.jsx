@@ -1,11 +1,20 @@
 import React, { useState } from 'react';
 import { BookOpen, Settings, ChevronLeft, ChevronRight, Menu, PenTool, Bot } from 'lucide-react';
 import { Button, cn } from './ui/core';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 export const Layout = ({ children, onOpenSettings }) => {
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const navigate = useNavigate();
+    const location = useLocation();
+
+    // Extract projectId from URL path: /project/:projectId/...
+    const getProjectIdFromPath = () => {
+        const match = location.pathname.match(/\/project\/([^/]+)/);
+        return match ? match[1] : null;
+    };
+
+    const projectId = getProjectIdFromPath();
 
     return (
         <div className="flex h-screen w-full bg-background overflow-hidden font-sans text-ink-900">

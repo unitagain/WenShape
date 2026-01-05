@@ -10,6 +10,7 @@ class CharacterCard(BaseModel):
     """Character card model / 角色卡模型"""
     name: str = Field(..., description="Character name / 角色名称")
     identity: str = Field(..., description="Character identity / 角色身份")
+    appearance: Optional[str] = Field(None, description="Physical appearance / 外貌特征")
     motivation: str = Field(..., description="Character motivation / 角色动机")
     personality: List[str] = Field(default_factory=list, description="Personality traits / 性格特点")
     speech_pattern: Optional[str] = Field(None, description="Speech pattern / 说话风格")

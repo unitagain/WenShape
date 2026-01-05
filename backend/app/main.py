@@ -14,6 +14,7 @@ from app.routers import (
     session_router,
     config_router
 )
+from app.routers.fanfiction import router as fanfiction_router
 from app.routers.websocket import router as websocket_router
 
 # Create FastAPI application / 创建 FastAPI 应用
@@ -41,6 +42,7 @@ app.include_router(drafts_router)
 app.include_router(session_router)
 app.include_router(config_router)
 app.include_router(websocket_router)
+app.include_router(fanfiction_router)
 
 
 @app.get("/")

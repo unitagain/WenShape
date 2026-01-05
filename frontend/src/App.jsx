@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import ProjectList from './pages/ProjectList';
 import ProjectDetail from './pages/ProjectDetail';
 import WritingSession from './pages/WritingSession';
+import FanfictionView from './pages/FanfictionView';
 import Agents from './pages/Agents';
 import System from './pages/System';
 import LLMSetupModal from './components/LLMSetupModal';
@@ -60,6 +61,7 @@ function App() {
         <Route path="/" element={<ProjectList onSelectProject={selectProject} />} />
         <Route path="/project/:projectId" element={<ProjectDetail />} />
         <Route path="/project/:projectId/session" element={<WritingSession />} />
+        <Route path="/project/:projectId/fanfiction" element={<FanfictionView />} />
         <Route path="/agents" element={<Agents />} />
         <Route path="/system" element={<System />} />
       </Routes>

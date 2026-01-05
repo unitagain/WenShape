@@ -93,6 +93,13 @@ class CardProposal(BaseModel):
     type: str = Field(..., description="Type: Character, World, Rule / 类型")
     description: str = Field(..., description="Proposed content / 提议内容")
     rationale: str = Field(..., description="Why is this important / 重要性说明")
-    source_text: str = Field(..., description="Quote from source text / 原文引用")
-    confidence: float = Field(..., description="Confidence score 0.0-1.0 / 置信度")
+    source_text: str = Field(default="", description="Quote from source text / 原文引用")
+    confidence: float = Field(default=0.8, description="Confidence score 0.0-1.0 / 置信度")
+    
+    # Detailed fields for Character
+    personality: List[str] = Field(default=[], description="Personality traits / 性格特征")
+    appearance: str = Field(default="", description="Physical appearance / 外貌特征")
+    background: str = Field(default="", description="Background story / 背景故事")
+    abilities: str = Field(default="", description="Abilities/Skills / 能力技能")
+    relationships: List[Dict[str, str]] = Field(default=[], description="Relationships / 人际关系")
 

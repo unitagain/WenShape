@@ -23,23 +23,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM Check if virtual environment exists
-if not exist "venv\" (
-    echo [1/4] Creating virtual environment...
-    python -m venv venv
-    if errorlevel 1 (
-        echo ERROR: Failed to create virtual environment.
-        echo Please make sure Python 3.10+ is installed correctly.
-        pause
-        exit /b 1
-    )
-)
-
-echo [2/4] Activating virtual environment...
-call venv\Scripts\activate
-
-echo [3/4] Upgrading pip and installing dependencies...
-python -m pip install --upgrade pip -q
+echo [1/3] Checking dependencies...
 python -m pip install -r requirements.txt -q
 if errorlevel 1 (
     echo.
@@ -63,13 +47,14 @@ if not exist ".env" (
 
 REM Start server
 echo.
-echo [4/4] Starting server...
+echo [2/3] Starting server...
 echo.
 echo   Frontend: http://localhost:3000
 echo   Backend:  http://localhost:8000
 echo   API Docs: http://localhost:8000/docs
 echo.
 
+echo [3/3] Server running...
 python -m app.main
 
 pause
