@@ -113,10 +113,7 @@ async def extract_cards(request: ExtractRequest):
     try:
         agent = ExtractorAgent(
             agent_id="wiki_extractor",
-            config={
-                "provider": "openai",
-                "model": "gpt-4-turbo"
-            }
+            config={}
         )
         
         proposals = await agent.extract_cards(
@@ -148,10 +145,7 @@ async def batch_extract_cards(request: BatchExtractRequest):
         # 2. Batch Agent Processing
         agent = BatchExtractorAgent(
             agent_id="batch_extractor",
-            config={
-                "provider": "openai",
-                "model": "gpt-4-turbo"
-            }
+            config={}
         )
         
         # Pass structured data to agent

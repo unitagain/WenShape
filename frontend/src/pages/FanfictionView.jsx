@@ -123,50 +123,18 @@ export default function FanfictionView() {
         setExtracting(true);
         setProposals([]); // Clear previous
         try {
-            // Determine mode: Batch (>5) or Single loop
-            const isBatch = selectedLinks.length > 5;
+            // Always use Batch Mode for better performance and consistency
+            console.log(`[Fanfiction] Starting batch extraction for ${selectedLinks.length} URLs`);
+            const response = await axios.post(`${API_BASE}/fanfiction/extract/batch`, {
+                project_id: projectId,
+                urls: selectedLinks
+            });
 
-            if (isBatch) {
-                console.log(`[Fanfiction] Starting batch extraction for ${selectedLinks.length} URLs`);
-                const response = await axios.post(`${API_BASE}/fanfiction/extract/batch`, {
-                    project_id: projectId,
-                    urls: selectedLinks
-                });
-
-                if (response.data.success) {
-                    setProposals(response.data.proposals);
-                    setStep(3);
-                } else {
-                    alert(`批量提取失败: ${response.data.error}`);
-                }
-
-            } else {
-                // Legacy serial mode for small batches (<5)
-                // Extract one by one serially to avoid rate limits
-                const newProposals = [];
-                for (const url of selectedLinks) {
-                    try {
-                        // 1. Scrape content
-                        const previewResp = await axios.post(`${API_BASE}/fanfiction/preview`, { url });
-                        if (!previewResp.data.success) continue;
-
-                        // 2. Extract
-                        const extractResp = await axios.post(`${API_BASE}/fanfiction/extract`, {
-                            project_id: projectId,
-                            title: previewResp.data.title || 'Unknown',
-                            content: previewResp.data.content || '',
-                            max_cards: 1
-                        });
-
-                        if (extractResp.data.success) {
-                            newProposals.push(...extractResp.data.proposals);
-                        }
-                    } catch (e) {
-                        console.error(`Failed to extract ${url}`, e);
-                    }
-                }
-                setProposals(newProposals);
+            if (response.data.success) {
+                setProposals(response.data.proposals);
                 setStep(3);
+            } else {
+                alert(`提取失败: ${response.data.error}`);
             }
 
         } catch (error) {

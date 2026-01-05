@@ -2,7 +2,7 @@
 
 # LLM Providers / 大模型提供商配置
 llm:
-  default_provider: openai
+  default_provider: deepseek
   providers:
     openai:
       api_key: ${OPENAI_API_KEY}
