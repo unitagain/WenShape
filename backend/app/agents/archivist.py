@@ -5,6 +5,7 @@ Manages cards, canon (facts/timeline/character states), and generates scene brie
 """
 
 import yaml
+import json
 from typing import Dict, Any, List, Optional
 from app.agents.base import BaseAgent
 from app.schemas.draft import SceneBrief, ChapterSummary, CardProposal
@@ -37,7 +38,7 @@ Core principle:
 - Prefer clarity and actionability over completeness.
 
 Output Format:
-- Generate scene briefs in YAML format
+- Generate scene briefs in JSON format
 - Include relevant context only (not exhaustive): characters, timeline, world constraints, style reminders, and forbidden actions
 - Flag any conflicts or inconsistencies
 
@@ -55,7 +56,7 @@ Output Format:
 - 追求可执行性与清晰度，不追求面面俱到。
 
 输出格式：
-- 以 YAML 格式生成场景简报
+- 以 JSON 格式生成场景简报
 - 仅包含本章需要的相关上下文：角色、时间线、世界观约束、文风提醒和禁区（不必穷举）
 - 标记任何冲突或不一致"""
     
@@ -229,30 +230,32 @@ Goal-first requirements:
 - 不要倾倒所有事实与约束；只选“防止写错、能推进目标”的最小集合。
 - 如果关键设定缺失，请在合适字段用 [TO_CONFIRM: ...] 标记。
 
-Output the scene brief in YAML format with these fields:
-```yaml
-chapter: {chapter}
-title: {chapter_title}
-goal: {chapter_goal}
-characters:
-  - name: <character_name>
-    current_state: <state_description>
-    relevant_traits: <traits>
-timeline_context:
-  before: <previous_event>
-  current: <current_time>
-  after: <upcoming_hints>
-world_constraints:
-  - <constraint1>
-  - <constraint2>
-style_reminder: <style_note>
-forbidden:
-  - <forbidden_action1>
-  - <forbidden_action2>
+Output the scene brief in JSON format matching this structure:
+```json
+{{
+  "chapter": "{chapter}",
+  "title": "{chapter_title}",
+  "goal": "{chapter_goal}",
+  "characters": [
+    {{
+      "name": "<character_name>",
+      "current_state": "<state_description>",
+      "relevant_traits": "<traits>"
+    }}
+  ],
+  "timeline_context": {{
+    "before": "<previous_event>",
+    "current": "<current_time>",
+    "after": "<upcoming_hints>"
+  }},
+  "world_constraints": ["<constraint1>"],
+  "style_reminder": "<style_note>",
+  "forbidden": ["<forbidden_action1>"]
+}}
 ```
 
-Generate the YAML only, no additional text.
-生成 YAML 内容，不要额外的文字。"""
+Generate VALID JSON only. No markdown, no comments outside JSON.
+生成有效的 JSON，不要额外的文字。"""
         
         # Call LLM / 调用大模型
         messages = self.build_messages(
@@ -263,32 +266,33 @@ Generate the YAML only, no additional text.
         
         response = await self.call_llm(messages)
         
-        # Extract YAML from response / 从响应中提取 YAML
-        if "```yaml" in response:
-            yaml_start = response.find("```yaml") + 7
-            yaml_end = response.find("```", yaml_start)
-            response = response[yaml_start:yaml_end].strip()
+        # Extract JSON from response / 从响应中提取 JSON
+        json_content = response
+        if "```json" in response:
+            start = response.find("```json") + 7
+            end = response.find("```", start)
+            json_content = response[start:end].strip()
         elif "```" in response:
-            yaml_start = response.find("```") + 3
-            yaml_end = response.find("```", yaml_start)
-            response = response[yaml_start:yaml_end].strip()
+            start = response.find("```") + 3
+            end = response.find("```", start)
+            json_content = response[start:end].strip()
         
-        return response
+        return json_content
     
-    def _parse_scene_brief(self, yaml_content: str, chapter: str) -> SceneBrief:
+    def _parse_scene_brief(self, json_content: str, chapter: str) -> SceneBrief:
         """
-        Parse YAML content to SceneBrief object
-        解析 YAML 内容为 SceneBrief 对象
+        Parse JSON content to SceneBrief object
+        解析 JSON 内容为 SceneBrief 对象
         
         Args:
-            yaml_content: YAML string / YAML字符串
+            json_content: JSON string / JSON字符串
             chapter: Chapter ID / 章节ID
             
         Returns:
             SceneBrief object / SceneBrief 对象
         """
         try:
-            data = yaml.safe_load(yaml_content)
+            data = json.loads(json_content)
             # Ensure required fields / 确保必需字段
             data["chapter"] = chapter
             data["title"] = data.get("title", "")
@@ -302,11 +306,11 @@ Generate the YAML only, no additional text.
             return SceneBrief(**data)
         except Exception as e:
             # Fallback: create basic scene brief / 回退：创建基本场景简报
-            print(f"[Archivist] Failed to parse scene brief: {e}")
+            print(f"[Archivist] Failed to parse scene brief: {e}\nContent: {json_content[:100]}...")
             return SceneBrief(
                 chapter=chapter,
                 title="",
-                goal="",
+                goal="Parsing failed, please check logs.",
                 characters=[],
                 timeline_context={},
                 world_constraints=[],
@@ -327,6 +331,7 @@ Generate the YAML only, no additional text.
 
         prompt = self._build_setting_detection_prompt(draft_content, existing_card_names)
         
+        # Use system prompt + user prompt
         messages = self.build_messages(
             system_prompt=self.get_system_prompt(),
             user_prompt=prompt
@@ -349,7 +354,8 @@ Generate the YAML only, no additional text.
             
             for item in data:
                 # Basic validation
-                if item.get("confidence", 0) < 0.7:
+                # Lowered threshold to catchment more candidates, let user decide
+                if item.get("confidence", 0) < 0.6:
                     continue
                 proposals.append(CardProposal(**item))
                 
@@ -359,29 +365,31 @@ Generate the YAML only, no additional text.
         return proposals
 
     def _build_setting_detection_prompt(self, draft: str, existing: List[str]) -> str:
-        return f"""Analyze the draft and identify NEW significant entities (Characters, Locations, Rules/Concepts) that should have their own Setting Cards.
+        return f"""Analyze the draft deeply to identify NEW significant World-Building Elements (Characters, Locations, Rules/Concepts, Items) that require a dedicated Setting Card.
 
-Core Rules:
-1. Ignore entities already in this list: {', '.join(existing)}
-2. Ignore trivial/background characters with no name or impact.
-3. Ignore standard locations (e.g. "a bar", "the street") unless they have a specific name and significance.
-4. Confidence score (0.0-1.0): 1.0 means critical for story consistency, 0.0 means fluff. Keep only > 0.7.
+Core Rules for Proposal:
+1.  **NO DUPLICATES**: Ignore entities already in this list: {', '.join(existing)}.
+2.  **SIGNIFICANCE CHECK**: 
+    - Characters: Must have a name and perform an action or have dialogue. Ignored unnamed extras.
+    - Locations: Must be a specific place (e.g. "The Green Dragon Inn", not "a tavern").
+    - Rules/Concepts: Must be a magic system rule, a political faction, or a specific lore term.
+3.  **RATIONALE**: You must provide a LOGICAL argument for *why* this needs a card. (e.g., "Recurs later", "Key to plot", "Unique traits").
 
-Draft Content:
-{draft[:15000]}... (truncated if too long)
+Draft Content (Excerpt):
+{draft[:15000]}...
 
-Output JSON List format:
+Output strict JSON List format:
 [
   {{
-    "name": "Entity Name",
+    "name": "Exact Name",
     "type": "Character" | "World" | "Rule",
-    "description": "Brief description based on text",
-    "rationale": "Why this needs a card",
-    "source_text": "Quote where introduced",
-    "confidence": 0.95
+    "description": "Concise definition based on text (1-2 sentences)",
+    "rationale": "Strong reason why user should approve this card. Mention role in story.",
+    "source_text": "Short quote triggering detection",
+    "confidence": 0.85
   }}
 ]
-Output JSON ONLY.
+Output JSON ONLY. No markdown, no commentary.
 """
 
     async def generate_chapter_summary(
