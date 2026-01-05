@@ -15,7 +15,8 @@ import {
   PenTool,
   Globe,
   FileText,
-  ArrowLeft
+  ArrowLeft,
+  Library
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -28,6 +29,7 @@ function ProjectDetail() {
   const tabLabels = {
     dashboard: '仪表盘',
     writing: '写作会话',
+    fanfiction: '同人创作',
     characters: '角色',
     world: '世界观',
     style: '文风设定',
@@ -126,6 +128,12 @@ function ProjectDetail() {
             icon={<PenTool size={18} />}
             label="写作会话"
             highlight
+          />
+          <NavButton
+            active={activeTab === 'fanfiction'}
+            onClick={() => navigate(`/project/${projectId}/fanfiction`)}
+            icon={<Library size={18} />}
+            label="同人创作"
           />
 
           <div className="text-sm font-mono text-muted-foreground px-3 mt-6 mb-2 uppercase tracking-wider opacity-70">数据库</div>

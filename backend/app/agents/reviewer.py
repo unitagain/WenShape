@@ -185,40 +185,34 @@ Style Reminder: {scene_brief.style_reminder}""")
 - Sentence Structure: {style_card.sentence_structure}""")
         
         # Build user prompt / 构建用户提示
-        user_prompt = """Review this draft and identify issues.
+        user_prompt = """Review this draft criticaly and identify ACTUAL issues.
 
-Check for:
-1. Logical consistency and plot holes
-2. Character behavior consistency with character cards
-3. Fact contradictions with established canon
-4. Style guideline adherence
-5. Forbidden action violations
+Focus Areas:
+1. **Logic & Plot**: Holes, contradictions, or confusing sequences.
+2. **Character**: Inconsistent behavior/speech vs established character cards.
+3. **Canon**: Contradicts established facts/timeline.
+4. **Style**: Deviates from required tone/pacing.
+5. **Forbidden**: Violates specific forbidden actions.
 
 Output in YAML format:
 ```yaml
 issues:
   - severity: critical|moderate|minor
     category: logic|character|fact|style|forbidden
-    location: "paragraph X" or "line Y"
-    problem: "description of the problem"
-    suggestion: "how to fix it"
+    location: "paragraph X" or "line Y" or specific quote
+    problem: "Specific description of what is wrong. Be precise."
+    suggestion: "Actionable fix. Write exactly what should be changed or rewritten."
 
-overall_assessment: "brief overall evaluation"
+overall_assessment: "Brief evaluation of readiness (1-2 sentences)"
 can_proceed: true|false
 ```
 
-Be thorough but concise. Focus on real issues, not nitpicks.
+Rules:
+- If there are no major issues, return an empty issues list. Do not invent problems.
+- Avoid generic advice like "Show, don't tell" unless specific example provided.
+- Focus on Logic and Consistency first.
 
-审核这篇草稿并识别问题。
-
-检查项：
-1. 逻辑一致性和情节漏洞
-2. 角色行为是否与角色卡一致
-3. 事实是否与已有设定矛盾
-4. 是否遵循文风指南
-5. 是否违反禁区
-
-以 YAML 格式输出，要全面但简洁，关注真正的问题。"""
+以 YAML 格式输出，确保 suggestions 具体可行。"""
         
         # Call LLM / 调用大模型
         messages = self.build_messages(

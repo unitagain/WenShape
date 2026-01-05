@@ -6,6 +6,7 @@ export function CharacterView({ characters, onEdit, onSave, editing, onCancel })
   const [formData, setFormData] = useState({
     name: '',
     identity: '',
+    appearance: '',
     motivation: '',
     personality: [],
     speech_pattern: '',
@@ -22,6 +23,7 @@ export function CharacterView({ characters, onEdit, onSave, editing, onCancel })
       setFormData({
         name: '',
         identity: '',
+        appearance: '',
         motivation: '',
         personality: [],
         speech_pattern: '',
@@ -58,8 +60,8 @@ export function CharacterView({ characters, onEdit, onSave, editing, onCancel })
               key={char.name}
               onClick={() => onEdit(char)}
               className={`p-4 rounded-lg border cursor-pointer transition-all shadow-sm ${editing?.name === char.name
-                  ? 'bg-primary text-white border-primary shadow-md'
-                  : 'bg-surface border-border text-ink-500 hover:border-primary/50 hover:text-ink-900 hover:shadow-md'
+                ? 'bg-primary text-white border-primary shadow-md'
+                : 'bg-surface border-border text-ink-500 hover:border-primary/50 hover:text-ink-900 hover:shadow-md'
                 }`}
             >
               <div className="flex items-center justify-between mb-1">
@@ -111,6 +113,16 @@ export function CharacterView({ characters, onEdit, onSave, editing, onCancel })
                       placeholder="例如：流浪剑客"
                     />
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-ink-500 uppercase">外貌特征</label>
+                  <textarea
+                    className="flex min-h-[80px] w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm placeholder:text-ink-400 focus-visible:outline-none focus-visible:border-ink-900 transition-colors"
+                    value={formData.appearance || ''}
+                    onChange={(e) => setFormData({ ...formData, appearance: e.target.value })}
+                    placeholder="例如：银色长发，琥珀色眼睛，身穿蓝白相间的冒险者服装..."
+                  />
                 </div>
 
                 <div className="space-y-2">
