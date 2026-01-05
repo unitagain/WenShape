@@ -39,22 +39,48 @@
 模拟真实的编辑部工作流，各司其职，紧密协作：
 
 ```mermaid
-graph TD
-    User((User)) -->|设定目标| Director[🎬 导演 Director]
-    Director -->|编排大纲| Writer[✍️ 撰稿人 Writer]
-    Archivist[🗃️ 档案员 Archivist] -->|提供设定/记忆| Writer
-    Writer -->|生成初稿| Reviewer[🧐 审阅员 Reviewer]
-    Reviewer -->|提出修改意见| Editor[📝 编辑 Editor]
-    Editor -->|润色修订| Draft[📄 最终草稿]
-    Draft -->|提取新设定| Archivist
+graph LR
+    %% 样式定义
+    classDef user fill:#2563EB,stroke:#1D4ED8,stroke-width:2px,color:#fff
+    classDef creative fill:#F0F9FF,stroke:#0EA5E9,stroke-width:2px,color:#0369A1
+    classDef quality fill:#FFF1F2,stroke:#F43F5E,stroke-width:2px,color:#BE123C
+    classDef memory fill:#FEFCE8,stroke:#EAB308,stroke-width:2px,color:#854D0E
+    classDef artifact fill:#F3F4F6,stroke:#6B7280,stroke-width:1px,stroke-dasharray: 5 5
+
+    User((User)):::user -->|设定目标| Director
     
-    style User fill:#F5F5F4,stroke:#78716C
-    style Director fill:#E0F2FE,stroke:#38BDF8
-    style Writer fill:#ECFDF5,stroke:#34D399
-    style Archivist fill:#FEF3C7,stroke:#FBBF24
-    style Reviewer fill:#FFF1F2,stroke:#FB7185
-    style Editor fill:#F3E8FF,stroke:#A78BFA
+    subgraph "✨ 创意核心 Creative Core"
+        Director[🎬 导演 Director]:::creative -->|编排大纲| Writer[✍️ 撰稿人 Writer]:::creative
+    end
+
+    subgraph "🧠 记忆系统 Memory System"
+        Archivist[🗃️ 档案员 Archivist]:::memory
+        Canon[(动态事实表)]:::memory
+    end
+
+    subgraph "💎 质量保证 Quality Assurance"
+        Writer -->|初稿| Reviewer[🧐 审阅员 Reviewer]:::quality
+        Reviewer -->|修订意见| Editor[📝 编辑 Editor]:::quality
+    end
+
+    Editor -->|润色完成| Draft([📄 最终草稿]):::artifact
+    
+    %% 交互流
+    Archivist -.->|设定检索| Writer
+    Draft -.->|新设定提取| Archivist
+    Archivist -->|更新| Canon
+    
+    %% 连接样式
+    linkStyle default stroke:#64748B,stroke-width:1.5px
 ```
+
+### 📚 同人创作支持 (Fanfiction Support)
+
+NOVIX 现已支持从 Wiki 导入世界观，为同人创作提供强大助力：
+
+*   **🌐 多源 Wiki 接入**: 支持 **萌娘百科**、**Fandom**、**Wikipedia** 等主流 Wiki 站点。
+*   **⚡ 极速批量提取**: 独创的并发爬取与聚合算法，支持一次性提取数十个角色/设定，效率提升 **10 倍**。
+*   **🧬 深度结构化**: 自动解析 Infobox 与正文，提取角色**外貌**、**性格**、**人际关系**等关键信息，直接生成可用的设定卡片。
 
 ### 🧠 深度上下文工程 (Deep Context)
 
