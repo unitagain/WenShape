@@ -65,6 +65,7 @@ class BatchExtractorAgent:
             # Don't specify provider - let gateway use configured default
             result = await gateway.chat(
                 messages=messages,
+                provider=self.config.get('provider'),
                 temperature=0.3,
                 max_tokens=4000
             )
