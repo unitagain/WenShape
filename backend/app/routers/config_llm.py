@@ -218,6 +218,7 @@ async def update_llm_config(payload: LLMConfigUpdate):
         "openai": app_config.settings.openai_api_key,
         "anthropic": app_config.settings.anthropic_api_key,
         "deepseek": app_config.settings.deepseek_api_key,
+        "custom": app_config.settings.custom_api_key,  # Support for custom OpenAI-compatible providers
         "mock": "ok",
     }
 
