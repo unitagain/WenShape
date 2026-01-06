@@ -49,7 +49,8 @@ class SearchService:
             try:
                 # Use OpenSearch for better relevance (finding main pages)
                 # DDG site: search often returns subpages
-                api_url = "https://zh.moegirl.org.cn/api.php"
+                # Note: mzh.moegirl.org.cn seems more stable than zh.moegirl.org.cn
+                api_url = "https://mzh.moegirl.org.cn/api.php"
                 params = {
                     "action": "opensearch",
                     "search": query,

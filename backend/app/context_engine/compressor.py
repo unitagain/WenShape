@@ -77,7 +77,7 @@ Output only the compressed summary, no explanation.
             }
         ]
         
-        response = await self.gateway.chat(messages, provider="openai", temperature=0.3)
+        response = await self.gateway.chat(messages, temperature=0.3)
         return response["content"]
     
     def truncate_items(

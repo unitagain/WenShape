@@ -11,7 +11,7 @@ from app.orchestrator import Orchestrator
 from app.orchestrator.orchestrator import SessionStatus
 from app.routers.websocket import broadcast_progress
 
-router = APIRouter(prefix="/projects/{project_id}/session", tags=["session"])
+router = APIRouter(tags=["session"])
 
 # Global orchestrator instance / 全局调度器实例
 _orchestrator: Optional[Orchestrator] = None
@@ -53,7 +53,7 @@ class FeedbackRequest(BaseModel):
     rejected_entities: Optional[List[str]] = Field(None, description="Rejected entity names / 拒绝的实体名称")
 
 
-@router.post("/start")
+@router.post("/projects/{project_id}/session/start")
 async def start_session(
     project_id: str,
     request: StartSessionRequest
@@ -87,7 +87,7 @@ async def start_session(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/status")
+@router.get("/projects/{project_id}/session/status")
 async def get_session_status(project_id: str):
     """
     Get current session status
@@ -112,7 +112,7 @@ async def get_session_status(project_id: str):
     return status
 
 
-@router.post("/feedback")
+@router.post("/projects/{project_id}/session/feedback")
 async def submit_feedback(
     project_id: str,
     request: FeedbackRequest
@@ -145,7 +145,7 @@ async def submit_feedback(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/cancel")
+@router.post("/projects/{project_id}/session/cancel")
 async def cancel_session(project_id: str):
     """
     Cancel current session
@@ -183,7 +183,7 @@ class AnalyzeRequest(BaseModel):
     chapter: str = Field(..., description="Chapter ID / 章节ID")
 
 
-@router.post("/analyze")
+@router.post("/projects/{project_id}/session/analyze")
 async def analyze_chapter(
     project_id: str,
     request: AnalyzeRequest

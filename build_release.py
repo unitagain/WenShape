@@ -65,6 +65,11 @@ def run_pyinstaller():
         "--hidden-import", "uvicorn.lifespan",
         "--hidden-import", "uvicorn.lifespan.on",
         "--hidden-import", "engineio.async_drivers.aiohttp",
+        # Dependencies for search and agents
+        "--hidden-import", "duckduckgo_search",
+        "--hidden-import", "curl_cffi",
+        "--collect-all", "curl_cffi", 
+        "--collect-all", "duckduckgo_search",
         
         # Entry point
         "backend/app/main.py"
@@ -82,11 +87,17 @@ def finalize_package():
         shutil.copy(config_src, dist_dir / "config.yaml")
         print("Copied config.yaml")
         
-    # 2. Copy .env if exists (Optional, usually user should create it)
-    env_src = Path("backend/.env")
-    if env_src.exists():
-        shutil.copy(env_src, dist_dir / ".env")
-        print("Copied .env")
+    # 2. Copy .env.example for safe configuration
+    env_example = Path(".env.example")
+    if env_example.exists():
+        shutil.copy(env_example, dist_dir / ".env.example")
+        print("Copied .env.example")
+    
+    # Do NOT copy .env automatically to prevent secret leakage
+    # env_src = Path("backend/.env")
+    # if env_src.exists():
+    #     shutil.copy(env_src, dist_dir / ".env")
+    #     print("Copied .env")
 
     # 3. Create run.bat for convenience (optional, exe is enough)
     

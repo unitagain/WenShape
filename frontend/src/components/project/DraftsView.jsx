@@ -164,7 +164,26 @@ export function DraftsView({ projectId }) {
                   >
                     {versions.map(v => <option key={v} value={v}>{v}</option>)}
                   </select>
-                  <Button variant="outline" size="sm" className="w-full text-xs text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full text-xs text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+                    onClick={async () => {
+                      if (window.confirm(`确定要删除章节 ${selectedChapter} 吗？此操作不可撤销！`)) {
+                        try {
+                          await draftsAPI.deleteChapter(projectId, selectedChapter);
+                          alert('章节已删除');
+                          setSelectedChapter('');
+                          setVersions([]);
+                          setDraftContent('');
+                          setSummary(null);
+                          await loadChapters();
+                        } catch (e) {
+                          alert('删除失败: ' + e.message);
+                        }
+                      }
+                    }}
+                  >
                     <Trash2 size={12} className="mr-2" /> 删除章节
                   </Button>
                 </div>
