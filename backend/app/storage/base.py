@@ -14,14 +14,15 @@ import aiofiles
 class BaseStorage:
     """Base storage class with common file operations / 带通用文件操作的存储基类"""
     
-    def __init__(self, data_dir: str = "../data"):
+    def __init__(self, data_dir: Optional[str] = None):
         """
         Initialize storage
         
         Args:
             data_dir: Root data directory / 数据根目录
         """
-        self.data_dir = Path(data_dir)
+        from app.config import settings
+        self.data_dir = Path(data_dir or settings.data_dir)
         self.encoding = "utf-8"
     
     def get_project_path(self, project_id: str) -> Path:

@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     novix_agent_writer_provider: str = os.getenv("NOVIX_AGENT_WRITER_PROVIDER", "")
     novix_agent_reviewer_provider: str = os.getenv("NOVIX_AGENT_REVIEWER_PROVIDER", "")
     novix_agent_editor_provider: str = os.getenv("NOVIX_AGENT_EDITOR_PROVIDER", "")
+    
+    # Storage Configuration / 存储路径配置
+    # Note: Will be calculated in load_config logic if needed, but here we set default
+    # If using absolute path in .env, use it. Otherwise relative.
+    # We need a dynamic property for this in usage.
+    data_dir: str = "../data"  # Default relative path
 
 
 def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
@@ -57,7 +63,18 @@ def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
     Returns:
         Configuration dictionary / 配置字典
     """
-    config_file = Path(__file__).parent.parent / config_path
+    import sys
+    
+    # Determine root path: Dev or Frozen (EXE)
+    if getattr(sys, 'frozen', False):
+        # Running as PyInstaller Bundle
+        # The config file should be next to the EXE
+        root_path = Path(sys.executable).parent
+    else:
+        # Running as Source Code
+        root_path = Path(__file__).parent.parent
+
+    config_file = root_path / config_path
     
     if not config_file.exists():
         raise FileNotFoundError(f"Config file not found: {config_file}")
@@ -85,6 +102,19 @@ def _replace_env_vars(obj: Any) -> Any:
         return os.getenv(var_name, "")
     return obj
 
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Dynamic path resolution for data_dir
+        import sys
+        if getattr(sys, 'frozen', False):
+             # Frozen: data dir is next to EXE
+             root = Path(sys.executable).parent
+             self.data_dir = str(root / "data")
+        else:
+             # Dev: data dir is relative to source
+             # Although default is "../data", we can make it absolute for clarity
+             pass
 
 # Global settings instance / 全局设置实例
 settings = Settings()
