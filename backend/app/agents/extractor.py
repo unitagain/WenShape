@@ -82,36 +82,63 @@ Content:
 {content[:15000]}...
 
 Requirements:
-- Extract the MOST IMPORTANT entities (characters, locations).
+- Extract the MOST IMPORTANT entities (characters, locations, concepts, organizations).
 - Maximum {max_cards} cards.
-- **CRITICAL: Provide DETAILED content for all fields. Do not summarize too much.**
-- For characters, extract: personality, appearance, background, abilities, relationships.
-- **APPEARANCE**: Describe physical features (hair, eyes, height, build, clothing style, distinctive marks).
+- **CRITICAL: You MUST create BOTH Character AND World cards. Aim for a balanced mix.**
 
-Output strict JSON array format:
+**TYPE CLASSIFICATION (Very Important!):**
+- **Character**: Any person, creature, or sentient being with a name. Examples: heroes, villains, NPCs, named monsters.
+- **World**: Any non-person entity. Examples:
+  - Locations: cities, countries, buildings, dungeons, realms
+  - Organizations: guilds, factions, companies, governments
+  - Concepts: magic systems, technologies, historical events, artifacts, items
+  - Species/Races: non-sentient creatures, monster types (when describing the species, not an individual)
+
+**For EACH Character card, extract:**
+- personality: personality traits as array
+- appearance: physical description (hair, eyes, height, build, clothing)
+- background: backstory (2-3 paragraphs)
+- abilities: combat style, powers, skills
+- relationships: connections to other characters
+
+**For EACH World card, extract:**
+- description: what it is and its significance
+- category: "Location" | "Organization" | "Concept" | "Item" | "Species"
+- rules: any special rules or properties (for magic systems, artifacts, etc.)
+
+Output strict JSON array format with MIXED types:
 [
   {{
-    "name": "Exact Name",
-    "type": "Character" | "World",
-    "description": "Short identity (e.g. 'A Rover wakening from slumber')",
-    "rationale": "Why this is important",
+    "name": "Character Name",
+    "type": "Character",
+    "description": "Short identity",
+    "rationale": "Why important for writing",
     "personality": ["Trait 1", "Trait 2"],
-    "appearance": "Detailed physical description (hair color, eye color, height, build, clothing, etc.)",
-    "background": "Detailed background story (2-3 paragraphs)",
-    "abilities": "Detailed description of combat style and skills",
-    "relationships": [
-        {{"target": "Related Name", "relation": "friend/enemy/..."}}
-    ],
+    "appearance": "Physical description",
+    "background": "Backstory",
+    "abilities": "Powers and skills",
+    "relationships": [{{"target": "Name", "relation": "friend/enemy/..."}}],
     "confidence": 0.9
+  }},
+  {{
+    "name": "Location or Concept Name",
+    "type": "World",
+    "description": "What it is and its atmosphere/purpose",
+    "category": "Location",
+    "rationale": "Why important for worldbuilding",
+    "rules": ["Special rule 1", "Special rule 2"],
+    "confidence": 0.85
   }}
 ]
 
 Output JSON ONLY. No markdown, no commentary.
+**You MUST include at least 1 World card if any locations/organizations/concepts are mentioned.**
 
 要求：
 - 提取详细的设定信息。
-- 必须包含性格、外貌、背景、能力、关系。
-- 外貌描述应包括发色、瞳色、身高、体型、服装风格等。
+- **必须同时提取角色卡和世界观卡，保持平衡。**
+- 角色卡包括：性格、外貌、背景、能力、关系。
+- 世界卡包括：地点、组织、概念、物品、魔法体系等。
 - 仅输出 JSON 数组。"""
         
         # Call LLM

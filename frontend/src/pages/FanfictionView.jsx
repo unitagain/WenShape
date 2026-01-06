@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Search, Link as LinkIcon, Loader, CheckCircle, X, Library, ChevronRight, Check, ArrowLeft } from 'lucide-react';
 import axios from 'axios';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = '/api';
 
 export default function FanfictionView() {
     const { projectId } = useParams();
@@ -14,7 +14,7 @@ export default function FanfictionView() {
 
     // Step 1: Search
     const [searchQuery, setSearchQuery] = useState('');
-    const [searchEngine, setSearchEngine] = useState('all');
+    const [searchEngine, setSearchEngine] = useState('moegirl');
     const [searchResults, setSearchResults] = useState([]);
     const [searching, setSearching] = useState(false);
 
@@ -265,28 +265,9 @@ export default function FanfictionView() {
                         </div>
 
                         <div className="flex gap-4 mb-4 justify-center">
-                            <label className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-surface border border-transparent hover:border-border transition-all">
-                                <input
-                                    type="radio"
-                                    name="engine"
-                                    value="moegirl"
-                                    checked={searchEngine === 'moegirl'}
-                                    onChange={(e) => setSearchEngine(e.target.value)}
-                                    className="accent-primary"
-                                />
+                            <div className="flex items-center gap-2 p-2 rounded bg-surface border border-primary">
                                 <span className="text-sm text-ink-700">🌱 萌娘百科</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-surface border border-transparent hover:border-border transition-all">
-                                <input
-                                    type="radio"
-                                    name="engine"
-                                    value="wiki"
-                                    checked={searchEngine === 'wiki'}
-                                    onChange={(e) => setSearchEngine(e.target.value)}
-                                    className="accent-primary"
-                                />
-                                <span className="text-sm text-ink-700">🌐 常规 Wiki</span>
-                            </label>
+                            </div>
                         </div>
 
                         <div className="flex gap-2 mb-6">

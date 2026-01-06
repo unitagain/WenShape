@@ -11,7 +11,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 
 # Load environment variables / 加载环境变量
-load_dotenv()
+import sys
+if getattr(sys, 'frozen', False):
+    # In frozen mode, load from the directory containing the EXE
+    env_path = Path(sys.executable).parent / ".env"
+    load_dotenv(dotenv_path=env_path)
+else:
+    load_dotenv()
 
 class Settings(BaseSettings):
     """Application settings / 应用设置"""

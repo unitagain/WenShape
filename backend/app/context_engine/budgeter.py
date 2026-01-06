@@ -5,7 +5,7 @@ Manages token allocation for different context components
 """
 
 from typing import Dict
-from app.config import config
+import app.config as app_config
 
 
 class TokenBudgeter:
@@ -16,7 +16,7 @@ class TokenBudgeter:
     
     def __init__(self):
         """Initialize budgeter with configuration / 使用配置初始化预算控制器"""
-        budget_config = config.get("context_budget", {})
+        budget_config = app_config.config.get("context_budget", {})
         self.total_tokens = budget_config.get("total_tokens", 128000)
         
         # Budget allocations / 预算分配

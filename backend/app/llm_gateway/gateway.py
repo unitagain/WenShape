@@ -8,7 +8,7 @@ import asyncio
 import os
 import time
 from typing import List, Dict, Any, Optional
-from app.config import config
+import app.config as app_config
 from app.llm_gateway.providers import (
     BaseLLMProvider,
     OpenAIProvider,
@@ -40,7 +40,8 @@ class LLMGateway:
     
     def _init_providers(self) -> None:
         """Initialize LLM providers from config / 从配置初始化提供商"""
-        providers_config = config.get("llm", {}).get("providers", {})
+        # Access config via module to get the CURRENT config after any reload
+        providers_config = app_config.config.get("llm", {}).get("providers", {})
 
         def _has_real_key(value: Optional[str]) -> bool:
             if not value:
@@ -134,7 +135,7 @@ class LLMGateway:
         """
         # Select provider / 选择提供商
         if provider is None:
-            provider = os.getenv("NOVIX_LLM_PROVIDER") or config.get("llm", {}).get("default_provider", "openai")
+            provider = os.getenv("NOVIX_LLM_PROVIDER") or app_config.config.get("llm", {}).get("default_provider", "openai")
         
         if provider not in self.providers:
             raise ValueError(
@@ -195,16 +196,29 @@ class LLMGateway:
                 )
             except Exception as e:
                 last_exception = e
+                error_type = type(e).__name__
+                error_msg = str(e)
+                
+                # Enhanced logging for debugging
+                print(f"[LLMGateway] Provider: {provider.get_provider_name()}")
+                print(f"[LLMGateway] Error Type: {error_type}")
+                print(f"[LLMGateway] Error Message: {error_msg[:500]}")
+                
+                # Check if it's an OpenAI API error with status code
+                if hasattr(e, 'status_code'):
+                    print(f"[LLMGateway] HTTP Status: {e.status_code}")
+                if hasattr(e, 'response'):
+                    print(f"[LLMGateway] Response: {e.response}")
                 
                 if attempt < self.max_retries - 1:
                     delay = self.retry_delays[attempt]
                     print(
                         f"[LLMGateway] Retry {attempt + 1}/{self.max_retries} "
-                        f"after {delay}s due to: {str(e)}"
+                        f"after {delay}s"
                     )
                     await asyncio.sleep(delay)
                 else:
-                    print(f"[LLMGateway] All retries failed: {str(e)}")
+                    print(f"[LLMGateway] All retries exhausted")
         
         raise last_exception
     
@@ -285,11 +299,11 @@ class LLMGateway:
         if global_provider:
             return global_provider
 
-        agents_config = config.get("agents", {})
+        agents_config = app_config.config.get("agents", {})
         agent_config = agents_config.get(agent_name, {})
         return agent_config.get(
             "provider",
-            config.get("llm", {}).get("default_provider", "openai")
+            app_config.config.get("llm", {}).get("default_provider", "openai")
         )
     
     def get_temperature_for_agent(self, agent_name: str) -> float:
@@ -303,7 +317,7 @@ class LLMGateway:
         Returns:
             Temperature value / 温度值
         """
-        agents_config = config.get("agents", {})
+        agents_config = app_config.config.get("agents", {})
         agent_config = agents_config.get(agent_name, {})
         return agent_config.get("temperature", 0.7)
 

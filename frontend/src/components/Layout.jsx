@@ -49,16 +49,6 @@ export const Layout = ({ children, onOpenSettings }) => {
                             onClick={() => navigate('/agents')}
                         />
                     </nav>
-
-                    {/* Bottom Actions */}
-                    <div className="mt-auto pt-4 border-t border-border">
-                        <NavItem
-                            icon={<Settings className="h-4 w-4" />}
-                            label="LLM 设置"
-                            collapsed={!isSidebarOpen}
-                            onClick={onOpenSettings}
-                        />
-                    </div>
                 </div>
             </aside>
 

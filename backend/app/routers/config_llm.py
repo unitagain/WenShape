@@ -66,6 +66,11 @@ def _is_real_key(value: str) -> bool:
 
 
 def _backend_root() -> Path:
+    import sys
+    if getattr(sys, 'frozen', False):
+        # In frozen mode, config files are next to the executable
+        return Path(sys.executable).parent
+    
     return Path(__file__).resolve().parents[2]
 
 

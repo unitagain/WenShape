@@ -112,16 +112,26 @@ Output Format:
         recent_facts = facts[-10:] if facts else []  # Last 10 facts / 最近10条事实
         
         # Generate scene brief using LLM / 使用大模型生成场景简报
-        scene_brief_content = await self._generate_scene_brief(
-            chapter=chapter,
-            chapter_goal=context.get("chapter_goal", ""),
-            chapter_title=context.get("chapter_title", ""),
-            characters=characters,
-            timeline_events=recent_events,
-            facts=recent_facts,
-            style_card=style_card,
-            rules_card=rules_card
-        )
+        try:
+            print(f"[Archivist] Starting scene brief generation for chapter: {chapter}")
+            scene_brief_content = await self._generate_scene_brief(
+                chapter=chapter,
+                chapter_goal=context.get("chapter_goal", ""),
+                chapter_title=context.get("chapter_title", ""),
+                characters=characters,
+                timeline_events=recent_events,
+                facts=recent_facts,
+                style_card=style_card,
+                rules_card=rules_card
+            )
+            print(f"[Archivist] Scene brief generation successful, length: {len(scene_brief_content)}")
+        except Exception as e:
+            print(f"[Archivist] Scene brief generation failed!")
+            print(f"[Archivist] Error Type: {type(e).__name__}")
+            print(f"[Archivist] Error Message: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise
         
         # Parse and save scene brief / 解析并保存场景简报
         scene_brief = self._parse_scene_brief(scene_brief_content, chapter)
