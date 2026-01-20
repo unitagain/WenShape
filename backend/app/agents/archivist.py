@@ -10,6 +10,9 @@ from typing import Dict, Any, List, Optional
 from app.agents.base import BaseAgent
 from app.schemas.draft import SceneBrief, ChapterSummary, CardProposal
 from app.schemas.canon import Fact, TimelineEvent, CharacterState
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class ArchivistAgent(BaseAgent):
@@ -113,7 +116,7 @@ Output Format:
         
         # Generate scene brief using LLM / 使用大模型生成场景简报
         try:
-            print(f"[Archivist] Starting scene brief generation for chapter: {chapter}")
+            logger.debug(f"Starting scene brief generation for chapter: {chapter}")
             scene_brief_content = await self._generate_scene_brief(
                 chapter=chapter,
                 chapter_goal=context.get("chapter_goal", ""),
@@ -124,11 +127,9 @@ Output Format:
                 style_card=style_card,
                 rules_card=rules_card
             )
-            print(f"[Archivist] Scene brief generation successful, length: {len(scene_brief_content)}")
+            logger.info(f"Scene brief generation successful, length: {len(scene_brief_content)}")
         except Exception as e:
-            print(f"[Archivist] Scene brief generation failed!")
-            print(f"[Archivist] Error Type: {type(e).__name__}")
-            print(f"[Archivist] Error Message: {str(e)}")
+            logger.error("Scene brief generation failed", exc_info=True)
             import traceback
             traceback.print_exc()
             raise
@@ -316,7 +317,7 @@ Generate VALID JSON only. No markdown, no comments outside JSON.
             return SceneBrief(**data)
         except Exception as e:
             # Fallback: create basic scene brief / 回退：创建基本场景简报
-            print(f"[Archivist] Failed to parse scene brief: {e}\nContent: {json_content[:100]}...")
+            logger.error(f"Failed to parse scene brief: {e}\nContent: {json_content[:100]}...")
             return SceneBrief(
                 chapter=chapter,
                 title="",
@@ -370,7 +371,7 @@ Generate VALID JSON only. No markdown, no comments outside JSON.
                 proposals.append(CardProposal(**item))
                 
         except Exception as e:
-            print(f"[Archivist] Failed to parse setting proposals: {e}")
+            logger.error(f"Failed to parse setting proposals: {e}")
             
         return proposals
 

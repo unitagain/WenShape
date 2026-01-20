@@ -5,7 +5,7 @@ Compresses context to fit within token budget
 """
 
 from typing import List, Dict, Any
-from app.llm_gateway import LLMGateway
+from app.llm_gateway.gateway import get_gateway
 
 
 class ContextCompressor:
@@ -14,14 +14,11 @@ class ContextCompressor:
     压缩上下文项以减少token使用
     """
     
-    def __init__(self, gateway: LLMGateway):
+    def __init__(self):
         """
         Initialize compressor
-        
-        Args:
-            gateway: LLM gateway instance / 大模型网关实例
         """
-        self.gateway = gateway
+        pass
     
     async def compress_summaries(
         self,
@@ -77,7 +74,12 @@ Output only the compressed summary, no explanation.
             }
         ]
         
-        response = await self.gateway.chat(messages, temperature=0.3)
+        gateway = get_gateway()
+        if not gateway:
+            # Fallback or error if gateway not ready
+            return summaries_text[:target_length] # Rough truncation fallback
+
+        response = await gateway.chat(messages, temperature=0.3)
         return response["content"]
     
     def truncate_items(
@@ -117,3 +119,7 @@ Output only the compressed summary, no explanation.
         # 粗略估算：英文1 token ≈ 4字符，中文1 token ≈ 1.5字符
         # Use average: 1 token ≈ 2 characters / 使用平均值：1 token ≈ 2字符
         return len(text) // 2
+
+
+# Global instance
+context_compressor = ContextCompressor()

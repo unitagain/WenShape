@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { BookOpen, Settings, ChevronLeft, ChevronRight, Menu, PenTool, Bot } from 'lucide-react';
 import { Button, cn } from './ui/core';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 
-export const Layout = ({ children, onOpenSettings }) => {
+export const Layout = ({ onOpenSettings }) => {
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const navigate = useNavigate();
     const location = useLocation();
@@ -54,7 +54,7 @@ export const Layout = ({ children, onOpenSettings }) => {
 
             {/* Main Content Area */}
             <main className="flex-1 h-full overflow-hidden relative flex flex-col">
-                {children}
+                <Outlet />
             </main>
         </div>
     );

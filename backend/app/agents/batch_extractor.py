@@ -1,7 +1,13 @@
 from typing import Dict, List, Any
 import json
-from ..schemas.draft import CardProposal
-from ..llm_gateway.gateway import get_gateway
+import re
+from app.agents.base import BaseAgent
+from app.schemas.draft import CardProposal
+from app.context_engine.compressor import context_compressor
+from app.llm_gateway.gateway import get_gateway
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class BatchExtractorAgent:
@@ -40,14 +46,14 @@ class BatchExtractorAgent:
                 'intro': p.get('summary', '')[:300]
             })
         
-        print(f"[BatchExtractor] Compressed data entries: {len(compressed_data)}")
+        logger.debug(f"Compressed data entries: {len(compressed_data)}")
         
         if not compressed_data:
-            print("[BatchExtractor] No compressed data - returning empty")
+            logger.debug("No compressed data - returning empty")
             return []
             
         json_payload = json.dumps(compressed_data, ensure_ascii=False)
-        print(f"[BatchExtractor] Payload size: {len(json_payload)} chars")
+        logger.debug(f"Payload size: {len(json_payload)} chars")
         
         system_prompt = self.get_system_prompt()
         user_prompt = f"batch_data:\n{json_payload}"
@@ -59,7 +65,7 @@ class BatchExtractorAgent:
         
         try:
             gateway = get_gateway()
-            print(f"[BatchExtractor] Calling LLM with provider={self.config.get('provider')}")
+            logger.debug(f"Calling LLM with provider={self.config.get('provider')}")
             
             # Note: gateway.chat() returns a dict with 'content' field
             # Don't specify provider - let gateway use configured default
@@ -73,15 +79,15 @@ class BatchExtractorAgent:
             # Extract content from response dict
             response = result.get('content', '') if isinstance(result, dict) else str(result)
             
-            print(f"[BatchExtractor] LLM response length: {len(response) if response else 0}")
-            print(f"[BatchExtractor] LLM response preview: {response[:200] if response else 'NONE'}")
+            logger.debug(f"LLM response length: {len(response) if response else 0}")
+            logger.debug(f"LLM response preview: {response[:200] if response else 'NONE'}")
             
             # Clean response and parse JSON
             clean_resp = self._clean_json_response(response)
-            print(f"[BatchExtractor] Cleaned JSON length: {len(clean_resp)}")
+            logger.debug(f"Cleaned JSON length: {len(clean_resp)}")
             
             data = json.loads(clean_resp)
-            print(f"[BatchExtractor] Parsed {len(data)} items from JSON")
+            logger.debug(f"Parsed {len(data)} items from JSON")
             
             proposals = []
             for item in data:
@@ -95,11 +101,11 @@ class BatchExtractorAgent:
                 
                 proposals.append(CardProposal(**item))
             
-            print(f"[BatchExtractor] Created {len(proposals)} proposals")
+            logger.info(f"Created {len(proposals)} proposals")
             return proposals
             
         except Exception as e:
-            print(f"[BatchExtractor] Failed: {e}")
+            logger.error(f"Batch extraction failed: {e}", exc_info=True)
             return []
 
     def _clean_json_response(self, response: str) -> str:

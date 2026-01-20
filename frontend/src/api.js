@@ -60,8 +60,15 @@ export const draftsAPI = {
 
 // Config API
 export const configAPI = {
-  getLLM: () => axios.get(`${API_BASE}/config/llm`),
-  updateLLM: (data) => axios.post(`${API_BASE}/config/llm`, data),
+  getProfiles: () => axios.get(`${API_BASE}/config/llm/profiles`),
+  saveProfile: (data) => axios.post(`${API_BASE}/config/llm/profiles`, data),
+  fetchModels: (data) => axios.post(`${API_BASE}/proxy/fetch-models`, data),
+  deleteProfile: (id) => axios.delete(`${API_BASE}/config/llm/profiles/${id}`),
+
+  getAssignments: () => axios.get(`${API_BASE}/config/llm/assignments`),
+  updateAssignments: (data) => axios.post(`${API_BASE}/config/llm/assignments`, data),
+
+  getProvidersMeta: () => axios.get(`${API_BASE}/config/llm/providers_meta`),
 };
 
 // WebSocket for real-time updates

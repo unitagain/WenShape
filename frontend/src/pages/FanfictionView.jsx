@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Search, Link as LinkIcon, Loader, CheckCircle, X, Library, ChevronRight, Check, ArrowLeft } from 'lucide-react';
 import axios from 'axios';

@@ -5,18 +5,22 @@ API endpoints for the fanfiction feature
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List, Dict, Optional
+from typing import List, Dict, Any, Optional
 from app.services.search_service import search_service
 from app.services.crawler_service import crawler_service
 from app.agents.extractor import ExtractorAgent
 from app.agents.batch_extractor import BatchExtractorAgent
 from app.llm_gateway.gateway import get_gateway
 from app.storage import CardStorage
+from app.storage.cards import cards_storage
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/fanfiction", tags=["fanfiction"])
 
-# Create storage instance
-card_storage = CardStorage()
+# Use imported storage instance
+card_storage = cards_storage
 
 
 # Schema definitions
@@ -127,7 +131,7 @@ async def extract_cards(request: ExtractRequest):
             "proposals": [p.dict() for p in proposals]
         }
     except Exception as e:
-        print(f"Extraction failed: {e}")
+        logger.error(f"Extraction failed: {e}", exc_info=True)
         return {
             "success": False,
             "error": str(e),
@@ -161,7 +165,7 @@ async def batch_extract_cards(request: BatchExtractRequest):
         }
         
     except Exception as e:
-        print(f"Batch extraction failed: {e}")
+        logger.error(f"Batch extraction failed: {e}", exc_info=True)
         return {
             "success": False,
             "error": str(e),

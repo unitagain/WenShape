@@ -6,13 +6,15 @@ Real-time progress updates for writing sessions
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Dict, Set
-import asyncio
 import json
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(tags=["websocket"])
 
 # Active WebSocket connections / 活跃的 WebSocket 连接
-active_connections: Dict[str, Set[WebSocket]] = {}
+# (Managed by ConnectionManager below)
 
 
 class ConnectionManager:
@@ -120,7 +122,7 @@ async def websocket_endpoint(websocket: WebSocket, project_id: str):
     except WebSocketDisconnect:
         manager.disconnect(websocket, project_id)
     except Exception as e:
-        print(f"[WebSocket] Error: {e}")
+        logger.error(f"WebSocket error: {e}", exc_info=True)
         manager.disconnect(websocket, project_id)
 
 

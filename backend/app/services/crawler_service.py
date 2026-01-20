@@ -9,10 +9,13 @@ import requests
 from bs4 import BeautifulSoup
 import asyncio
 import aiohttp
+import json
 import re
-from typing import List, Dict, Optional
-from urllib.parse import urljoin, unquote, quote, urlparse
-import logging
+from typing import List, Dict, Any, Optional, Set
+from urllib.parse import urljoin, urlparse, urldefrag
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 from .wiki_parser import wiki_parser
 
 
@@ -125,7 +128,7 @@ class CrawlerService:
             try:
                 data = response.json()
             except Exception as json_err:
-                print(f"[Crawler] Moegirl JSON parse error: {json_err}")
+                logger.error(f"Moegirl JSON parse error: {json_err}")
                 return self._scrape_html(url)
             
             if 'error' in data:
@@ -170,7 +173,7 @@ class CrawlerService:
             }
             
         except Exception as e:
-            print(f"[Crawler] Moegirl API Error: {e}")
+            logger.error(f"Moegirl API Error: {e}")
             return self._scrape_html(url)
 
     def _scrape_fandom(self, url: str, parsed) -> Dict:
@@ -223,7 +226,7 @@ class CrawlerService:
             try:
                 data = response.json()
             except Exception as json_err:
-                print(f"[Crawler] Fandom JSON parse error: {json_err}")
+                logger.error(f"Fandom JSON parse error: {json_err}")
                 return self._scrape_html(url)
             
             if 'error' in data:
@@ -493,7 +496,7 @@ class CrawlerService:
                 timeout = aiohttp.ClientTimeout(total=30)
                 async with session.get(url, headers=headers, timeout=timeout) as response:
                     if response.status != 200:
-                        print(f"[Concurrent Scraper] HTTP {response.status} for {url}")
+                        logger.warning(f"HTTP {response.status} for {url}")
                         return {'success': False, 'url': url, 'error': f"Status {response.status}"}
                     
                     # Read bytes
@@ -547,7 +550,7 @@ class CrawlerService:
                     return parsed_data
                     
             except Exception as e:
-                print(f"[Concurrent Scraper] Failed {url}: {e}")
+                logger.error(f"Concurrent scraper failed {url}: {e}")
                 return {'success': False, 'url': url, 'error': str(e)}
 
     def _extract_title(self, soup: BeautifulSoup) -> str:

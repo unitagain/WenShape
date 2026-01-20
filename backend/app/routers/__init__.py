@@ -8,6 +8,7 @@ from .canon import router as canon_router
 from .drafts import router as drafts_router
 from .session import router as session_router
 from .config_llm import router as config_router
+from .proxy import router as proxy_router
 
 __all__ = [
     "projects_router",
@@ -16,4 +17,5 @@ __all__ = [
     "drafts_router",
     "session_router",
     "config_router",
+    "proxy_router",
 ]

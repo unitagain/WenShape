@@ -1,21 +1,53 @@
-MIT License
+PolyForm Noncommercial License 1.0.0
 
-Copyright (c) 2025 Differ
+https://polyformproject.org/licenses/noncommercial/1.0.0
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+1. Purpose
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+The purpose of this license is to allow the software to be used for noncommercial purposes, while reserving the right to use the software for commercial purposes for the licensor.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. Agreement
+
+In order to receive this license, you must agree to its rules. The rules of this license are both obligations (like a contract) and conditions (like a copyright license). You must not do anything with this software that triggers a rule that you cannot or will not follow.
+
+3. License Grant
+
+The licensor grants you a copyright license for the software to do everything you might do with the software that would otherwise infringe the licensor's copyright in it for any noncommercial purpose.
+
+4. Noncommercial Purposes
+
+Noncommercial purposes include:
+*   Use for personal use, including personal research, experimentation, and testing
+*   Use by a non-profit organization, such as a charity or a school, for disjoint charitable or educational purposes
+*   Use for testing and evaluation of the software
+
+Any other use is a commercial purpose. Commercial purposes strictly prohibited include, but are not limited to:
+*   Use by any for-profit entity for any purpose
+*   Use in any commercial product or service
+*   Use for any business operation or commercial workflow
+*   Distribution as part of a paid product or service
+
+5. Notices
+
+You must ensure that anyone who gets a copy of any part of this software from you also gets a copy of this license.
+
+6. No Other Rights
+
+This license does not imply any rights other than those expressly granted.
+
+7. Disclaimer
+
+AS FAR AS THE LAW ALLOWS, THIS SOFTWARE COMES AS IS, WITHOUT ANY WARRANTY OR CONDITION, AND THE LICENSOR WILL NOT BE LIABLE TO YOU FOR ANY DAMAGES ARISING OUT OF THIS LICENSE OR THE USE OF THIS SOFTWARE.
+
+---
+COPYRIGHT NOTICE
+---
+Copyright (c) 2026 丁逸飞 (Ding Yifei) <1467673018@qq.com>
+
+All Rights Reserved. 
+STRICTLY NO COMMERCIAL USE WITHOUT WRITTEN PERMISSION.
+禁止一切未经书面授权的商业使用。
+
+Commercial Licensing Contact / 商业授权联系:
+Email: 1467673018@qq.com
+GitHub: https://github.com/unitagain

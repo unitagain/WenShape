@@ -1,6 +1,11 @@
 # NOVIX Configuration / NOVIX 配置文件
 
 # LLM Providers / 大模型提供商配置
+# Copyright (c) 2026 丁逸飞 (Ding Yifei) <1467673018@qq.com>
+# 
+# This source code is licensed under the PolyForm Noncommercial License 1.0.0.
+# COMMERCIAL USE IS STRICTLY PROHIBITED.
+
 llm:
   default_provider: deepseek
   providers:

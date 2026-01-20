@@ -11,7 +11,7 @@
   <br>
 
   <p>
-    <a href="https://github.com/unitagain/NOVIX/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-71717A?style=flat-square&logo=opensourceinitiative" alt="License"></a>
+    <a href="https://github.com/unitagain/NOVIX/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-PolyForm_Noncommercial_1.0.0-525252?style=flat-square&logo=shield" alt="License"></a>
     <a href="https://github.com/unitagain/NOVIX"><img src="https://img.shields.io/badge/status-active-10B981?style=flat-square&logo=serverless" alt="Status"></a>
     <a href="#"><img src="https://img.shields.io/badge/frontend-React_%7C_Vite-61DAFB?style=flat-square&logo=react" alt="Frontend"></a>
     <a href="#"><img src="https://img.shields.io/badge/backend-FastAPI-009688?style=flat-square&logo=fastapi" alt="Backend"></a>
@@ -22,7 +22,18 @@
 
 ---
 
-## 📖 简介 (Introduction)
+> ⚖️ **许可协议变更声明 / License Notice**
+>
+> ⚠️ **Effective Date: January 20, 2026**
+>
+> 自 **2026年1月20日** 起，NOVIX 项目正式采用 **PolyForm Noncommercial License 1.0.0** 协议。
+> The NOVIX project formally adopts the **PolyForm Noncommercial License 1.0.0** starting from **Jan 20, 2026**.
+>
+> 🛑 **严禁商业使用 (Strictly NO Commercial Use)**
+> *   未经作者书面授权，禁止任何形式的商业用途（包括销售、SaaS服务、企业内部盈利性使用等）。
+> *   Commercial use of any kind without written permission is strictly prohibited.
+>
+> *在此日期之前发布的旧版本代码仍受原 MIT 协议约束。*
 
 **NOVIX** 不仅仅是一个写作工具，更是一个精密的**AI 编辑部**。
 
@@ -234,6 +245,35 @@ start.bat
 | **Backend** | FastAPI, Pydantic, Python-dotenv |
 | **Storage** | File-based (YAML/Markdown/JSONL) |
 | **AI Core** | OpenAI API Standard (Supports DeepSeek/Claude/GPT-4o) |
+
+---
+
+## ⚖️ 许可协议 (License)
+
+本项目采用 **PolyForm Noncommercial License 1.0.0**。
+
+> **"源代码可用" (Source Available) ≠ "开源" (Open Source)**
+
+### ✅ 允许 (Permitted)
+*   **个人非商业使用**：您可以自由下载、运行、修改代码用于个人学习、研究或娱乐。
+*   **非营利组织使用**：慈善机构、学校等因教育目的使用。
+
+### 🚫 绝对禁止 (Strictly Prohibited)
+*   **禁止任何商业行为**：哪怕只赚 1 分钱也是违法的。
+*   **禁止公司内部使用**：如果您的公司是营利性实体，即使只是内部工具通过此软件提效，也被视为商业用途。
+*   **禁止“洗稿”**：禁止修改代码后换皮发布商业产品。
+
+📄 完整法律文本请查看 [LICENSE](./LICENSE) 文件。任何违反本协议的行为都将面临法律追责。
+
+---
+
+### 💼 商业授权 (Commercial Licensing)
+
+如果您希望将 NOVIX 用于任何商业目的（包括但不限于 SaaS、企业部署、二次开发销售），您**必须**获得作者的书面授权。
+
+请联系：
+*   **Email**: `1467673018@qq.com`
+*   **GitHub**: [unitagain](https://github.com/unitagain)
 
 ---
 

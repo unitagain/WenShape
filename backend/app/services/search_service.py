@@ -3,13 +3,22 @@ Search Service for Fanfiction Feature
 Uses DuckDuckGo to find Wiki pages for given franchises
 """
 
-from typing import List, Dict
+import os
+import json
+import asyncio
+from typing import List, Dict, Any, Optional
 
 # Try new package name first, fallback to old
 try:
     from ddgs import DDGS
 except ImportError:
     from duckduckgo_search import DDGS
+
+import requests
+from bs4 import BeautifulSoup
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class SearchService:
@@ -85,7 +94,7 @@ class SearchService:
                             seen_urls.add(url)
                             
             except Exception as e:
-                print(f"[SearchService] Moegirl API error: {e}")
+                logger.error(f"Moegirl API error: {e}")
 
         # 2. Generic Wiki Search (DuckDuckGo)
         if engine in ['all', 'wiki']:
@@ -125,7 +134,7 @@ class SearchService:
                     if len(results) >= max_results:
                         break
             except Exception as e:
-                print(f"[SearchService] Generic search error: {e}")
+                logger.error(f"Generic search error: {e}")
             
         return results
     

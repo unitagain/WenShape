@@ -249,3 +249,7 @@ class CardStorage(BaseStorage):
         )
         
         await self.write_yaml(file_path, card.model_dump())
+
+
+# Global instance
+cards_storage = CardStorage()

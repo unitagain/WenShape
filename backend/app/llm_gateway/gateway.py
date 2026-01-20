@@ -9,6 +9,8 @@ import os
 import time
 from typing import List, Dict, Any, Optional
 import app.config as app_config
+from app.utils.logger import get_logger
+from app.services.llm_config_service import llm_config_service
 from app.llm_gateway.providers import (
     BaseLLMProvider,
     OpenAIProvider,
@@ -16,7 +18,14 @@ from app.llm_gateway.providers import (
     DeepSeekProvider,
     MockProvider,
     CustomProvider,
+    QwenProvider,
+    KimiProvider,
+    GLMProvider,
+    GeminiProvider,
+    GrokProvider,
 )
+
+logger = get_logger(__name__)
 
 
 class LLMGateway:
@@ -26,9 +35,11 @@ class LLMGateway:
     """
     
     def __init__(self):
-        """Initialize gateway with configured providers / 使用配置初始化网关"""
+        """Initialize gateway from profiles"""
         self.providers: Dict[str, BaseLLMProvider] = {}
-        self._init_providers()
+        # We don't pre-initialize all providers anymore, or we initialize all profiles?
+        # Let's initialize all valid profiles for cache
+        self._init_profiles()
         
         # Retry configuration / 重试配置
         self.max_retries = 3
@@ -38,127 +49,157 @@ class LLMGateway:
         self.total_tokens = 0
         self.total_requests = 0
     
-    def _init_providers(self) -> None:
-        """Initialize LLM providers from config / 从配置初始化提供商"""
-        # Access config via module to get the CURRENT config after any reload
-        providers_config = app_config.config.get("llm", {}).get("providers", {})
-
-        def _has_real_key(value: Optional[str]) -> bool:
-            if not value:
-                return False
-            v = str(value).strip()
-            placeholders = [
-                "sk-your-",
-                "sk-ant-your-",
-                "your-deepseek-key-here",
-            ]
-            return not any(v.startswith(p) for p in placeholders)
-
+    def _init_profiles(self) -> None:
+        """Initialize LLM providers from stored profiles"""
+        self.providers = {}
+        
         # Always register Mock provider (no key needed)
         self.providers["mock"] = MockProvider()
         
-        # Initialize OpenAI / 初始化 OpenAI
-        if "openai" in providers_config:
-            openai_config = providers_config["openai"]
-            if _has_real_key(openai_config.get("api_key")):
-                self.providers["openai"] = OpenAIProvider(
-                    api_key=openai_config["api_key"],
-                    model=openai_config.get("model", "gpt-4o"),
-                    max_tokens=openai_config.get("max_tokens", 8000),
-                    temperature=openai_config.get("temperature", 0.7)
-                )
-        
-        # Initialize Anthropic / 初始化 Anthropic
-        if "anthropic" in providers_config:
-            anthropic_config = providers_config["anthropic"]
-            if _has_real_key(anthropic_config.get("api_key")):
-                self.providers["anthropic"] = AnthropicProvider(
-                    api_key=anthropic_config["api_key"],
-                    model=anthropic_config.get("model", "claude-3-5-sonnet-20241022"),
-                    max_tokens=anthropic_config.get("max_tokens", 8000),
-                    temperature=anthropic_config.get("temperature", 0.7)
-                )
-        
-        # Initialize DeepSeek / 初始化 DeepSeek
-        if "deepseek" in providers_config:
-            deepseek_config = providers_config["deepseek"]
-            if _has_real_key(deepseek_config.get("api_key")):
-                self.providers["deepseek"] = DeepSeekProvider(
-                    api_key=deepseek_config["api_key"],
-                    model=deepseek_config.get("model", "deepseek-chat"),
-                    max_tokens=deepseek_config.get("max_tokens", 8000),
-                    temperature=deepseek_config.get("temperature", 0.7)
-                )
+        profiles = llm_config_service.get_profiles()
+        for profile in profiles:
+            try:
+                provider_instance = self._create_provider_from_profile(profile)
+                if provider_instance:
+                    self.providers[profile["id"]] = provider_instance
+            except Exception as e:
+                logger.error(f"Failed to init profile {profile.get('name')}: {e}")
 
-        # Initialize Custom / 初始化 Custom (兼容 OpenAI)
-        if "custom" in providers_config:
-            custom_config = providers_config["custom"]
-            # Only init if BaseURL is provided (or just init anyway and let it fail if missing?)
-            # Usually we check if 'configured'.
-            # key or URL might be optional depending on local LLM setup, but let's assume we need at least URL or Key?
-            # Actually, for local LLM, key might be "sk-no-key-required".
-            # So just check if we have config.
-            if custom_config.get("base_url") or custom_config.get("api_key"):
-                self.providers["custom"] = CustomProvider(
-                    api_key=custom_config.get("api_key", "sk-custom"), # Default placeholder if empty?
-                    base_url=custom_config.get("base_url", ""),
-                    model=custom_config.get("model", "custom-model"),
-                    max_tokens=custom_config.get("max_tokens", 8000),
-                    temperature=custom_config.get("temperature", 0.7)
+    def _create_provider_from_profile(self, profile: Dict[str, Any]) -> Optional[BaseLLMProvider]:
+        provider_type = profile.get("provider")
+        api_key = profile.get("api_key")
+        
+        # Mock handled separately, but if listed in profiles:
+        if provider_type == "mock":
+            return MockProvider()
+
+        if not api_key and provider_type != "mock":
+             # Some custom local LLMS might not need key, but generally we expect one or at least safe instantiation
+             pass
+
+        try:
+            if provider_type == "openai":
+                return OpenAIProvider(
+                    api_key=api_key,
+                    model=profile.get("model", "gpt-4o"),
+                    max_tokens=profile.get("max_tokens", 8000),
+                    temperature=profile.get("temperature", 0.7)
                 )
+            elif provider_type == "anthropic":
+                return AnthropicProvider(
+                    api_key=api_key,
+                    model=profile.get("model", "claude-3-5-sonnet-20241022"),
+                    max_tokens=profile.get("max_tokens", 8000),
+                    temperature=profile.get("temperature", 0.7)
+                )
+            elif provider_type == "deepseek":
+                return DeepSeekProvider(
+                    api_key=api_key,
+                    model=profile.get("model", "deepseek-chat"),
+                    max_tokens=profile.get("max_tokens", 8000),
+                    temperature=profile.get("temperature", 0.7)
+                )
+            elif provider_type == "qwen":
+                return QwenProvider(
+                    api_key=api_key,
+                    base_url=profile.get("base_url"),
+                    model=profile.get("model", "qwen-turbo"),
+                    max_tokens=profile.get("max_tokens", 8000),
+                    temperature=profile.get("temperature", 0.7)
+                )
+            elif provider_type == "kimi":
+                return KimiProvider(
+                    api_key=api_key,
+                    base_url=profile.get("base_url"),
+                    model=profile.get("model", "moonshot-v1-8k"),
+                    max_tokens=profile.get("max_tokens", 8000),
+                    temperature=profile.get("temperature", 0.7)
+                )
+            elif provider_type == "glm":
+                return GLMProvider(
+                    api_key=api_key,
+                    base_url=profile.get("base_url"),
+                    model=profile.get("model", "glm-4"),
+                    max_tokens=profile.get("max_tokens", 8000),
+                    temperature=profile.get("temperature", 0.7)
+                )
+            elif provider_type == "gemini":
+                return GeminiProvider(
+                    api_key=api_key,
+                    base_url=profile.get("base_url"),
+                    model=profile.get("model", "gemini-1.5-pro"),
+                    max_tokens=profile.get("max_tokens", 8000),
+                    temperature=profile.get("temperature", 0.7)
+                )
+            elif provider_type == "grok":
+                return GrokProvider(
+                    api_key=api_key,
+                    base_url=profile.get("base_url"),
+                    model=profile.get("model", "grok-beta"),
+                    max_tokens=profile.get("max_tokens", 8000),
+                    temperature=profile.get("temperature", 0.7)
+                )
+            elif provider_type == "custom":
+                return CustomProvider(
+                    api_key=api_key or "sk-custom",
+                    base_url=profile.get("base_url", ""),
+                    model=profile.get("model", "custom-model"),
+                    max_tokens=profile.get("max_tokens", 8000),
+                    temperature=profile.get("temperature", 0.7)
+                )
+        except Exception as e:
+            logger.error(f"Error creating provider instance for {profile.get('name')}: {e}")
+            return None
+        return None
     
     async def chat(
         self,
         messages: List[Dict[str, str]],
-        provider: Optional[str] = None,
+        provider: Optional[str] = None, # This is now the profile_id!
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         retry: bool = True
     ) -> Dict[str, Any]:
         """
-        Send chat request with automatic retry
-        发送聊天请求，支持自动重试
-        
+        Send chat request
         Args:
-            messages: List of messages / 消息列表
-            provider: Provider name (openai, anthropic, deepseek) / 提供商名称
-            temperature: Temperature override / 温度覆盖
-            max_tokens: Max tokens override / 最大token数覆盖
-            retry: Enable retry on failure / 启用失败重试
-            
-        Returns:
-            Response dict with content, usage, etc. / 包含内容、使用量等的响应字典
-            
-        Raises:
-            ValueError: If provider not available / 提供商不可用
-            Exception: If all retries failed / 所有重试都失败
+            provider: This is now the PROFILE ID, not just 'openai'
         """
-        # Select provider / 选择提供商
-        if provider is None:
-            provider = os.getenv("NOVIX_LLM_PROVIDER") or app_config.config.get("llm", {}).get("default_provider", "openai")
+        # If provider is None, fallback to default? Or raise error?
+        # In new system, provider ID should be explicit or looked up via agent assignment
         
-        if provider not in self.providers:
-            raise ValueError(
-                f"Provider '{provider}' not available. "
-                f"Available: {list(self.providers.keys())}"
-            )
+        # NOTE: existing code might pass 'openai' string. 
+        # We should handle backward compatibility or ensure caller passes profile ID.
+        # Actually, caller usually passes result of get_provider_for_agent()
         
-        llm_provider = self.providers[provider]
+        target_provider = None
+
+        if provider in self.providers:
+            target_provider = self.providers[provider]
+        else:
+            # Fallback: maybe it's a legacy string like 'openai'?
+            # Try to find first profile of that type?
+            for pid, p in self.providers.items():
+                if hasattr(p, 'get_provider_name') and p.get_provider_name() == provider:
+                    target_provider = p
+                    break
+             
+            if not target_provider and "mock" in self.providers:
+                # Last resort fallback to mock if available/debug?
+                # For now raise error
+                pass
+
+        if not target_provider:
+             raise ValueError(f"Profile/Provider '{provider}' not found.")
         
-        # Execute with retry / 执行带重试的请求
+        # Execute with retry
         if retry:
             return await self._chat_with_retry(
-                llm_provider,
-                messages,
-                temperature,
-                max_tokens
+                target_provider, messages, temperature, max_tokens
             )
         else:
             return await self._execute_chat(
-                llm_provider,
-                messages,
-                temperature,
-                max_tokens
+                target_provider, messages, temperature, max_tokens
             )
     
     async def _chat_with_retry(
@@ -168,57 +209,20 @@ class LLMGateway:
         temperature: Optional[float],
         max_tokens: Optional[int]
     ) -> Dict[str, Any]:
-        """
-        Execute chat with exponential backoff retry
-        执行聊天请求，使用指数退避重试
-        
-        Args:
-            provider: LLM provider instance / 提供商实例
-            messages: Messages list / 消息列表
-            temperature: Temperature / 温度
-            max_tokens: Max tokens / 最大token数
-            
-        Returns:
-            Response dict / 响应字典
-            
-        Raises:
-            Exception: If all retries failed / 所有重试都失败
-        """
+        """Execute chat with exponential backoff retry"""
         last_exception = None
         
         for attempt in range(self.max_retries):
             try:
                 return await self._execute_chat(
-                    provider,
-                    messages,
-                    temperature,
-                    max_tokens
+                    provider, messages, temperature, max_tokens
                 )
             except Exception as e:
                 last_exception = e
-                error_type = type(e).__name__
-                error_msg = str(e)
-                
-                # Enhanced logging for debugging
-                print(f"[LLMGateway] Provider: {provider.get_provider_name()}")
-                print(f"[LLMGateway] Error Type: {error_type}")
-                print(f"[LLMGateway] Error Message: {error_msg[:500]}")
-                
-                # Check if it's an OpenAI API error with status code
-                if hasattr(e, 'status_code'):
-                    print(f"[LLMGateway] HTTP Status: {e.status_code}")
-                if hasattr(e, 'response'):
-                    print(f"[LLMGateway] Response: {e.response}")
-                
+                # Logging...
+                logger.error(f"LLM request error: {e}", exc_info=True)
                 if attempt < self.max_retries - 1:
-                    delay = self.retry_delays[attempt]
-                    print(
-                        f"[LLMGateway] Retry {attempt + 1}/{self.max_retries} "
-                        f"after {delay}s"
-                    )
-                    await asyncio.sleep(delay)
-                else:
-                    print(f"[LLMGateway] All retries exhausted")
+                    await asyncio.sleep(self.retry_delays[attempt])
         
         raise last_exception
     
@@ -229,97 +233,54 @@ class LLMGateway:
         temperature: Optional[float],
         max_tokens: Optional[int]
     ) -> Dict[str, Any]:
-        """
-        Execute single chat request
-        执行单次聊天请求
-        
-        Args:
-            provider: LLM provider instance / 提供商实例
-            messages: Messages list / 消息列表
-            temperature: Temperature / 温度
-            max_tokens: Max tokens / 最大token数
-            
-        Returns:
-            Response dict / 响应字典
-        """
+        """Execute single chat request"""
         start_time = time.time()
-        
-        response = await provider.chat(
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens
-        )
-        
+        response = await provider.chat(messages, temperature=temperature, max_tokens=max_tokens)
         elapsed_time = time.time() - start_time
         
-        # Track statistics / 追踪统计信息
         self.total_requests += 1
         self.total_tokens += response.get("usage", {}).get("total_tokens", 0)
         
-        # Add metadata / 添加元数据
         response["provider"] = provider.get_provider_name()
         response["elapsed_time"] = elapsed_time
-        
         return response
     
     def get_stats(self) -> Dict[str, Any]:
-        """
-        Get gateway statistics
-        获取网关统计信息
-        
-        Returns:
-            Statistics dict / 统计字典
-        """
+        """Get gateway statistics"""
         return {
             "total_requests": self.total_requests,
             "total_tokens": self.total_tokens,
-            "available_providers": list(self.providers.keys())
+            "profiles_loaded": list(self.providers.keys())
         }
     
     def get_provider_for_agent(self, agent_name: str) -> str:
         """
-        Get configured provider for specific agent
-        获取特定 Agent 的配置提供商
-        
-        Args:
-            agent_name: Agent name (archivist, writer, reviewer, editor)
-                       Agent 名称
-                       
-        Returns:
-            Provider name / 提供商名称
+        Get configured PROFILE ID for specific agent
         """
-        env_key = f"NOVIX_AGENT_{agent_name.upper()}_PROVIDER"
-        env_provider = os.getenv(env_key)
-        if env_provider:
-            return env_provider
-
-        # Global override (should take precedence over config.yaml per-agent defaults)
-        # 全局覆盖（应优先于 config.yaml 的 agent 默认值）
-        global_provider = os.getenv("NOVIX_LLM_PROVIDER")
-        if global_provider:
-            return global_provider
-
-        agents_config = app_config.config.get("agents", {})
-        agent_config = agents_config.get(agent_name, {})
-        return agent_config.get(
-            "provider",
-            app_config.config.get("llm", {}).get("default_provider", "openai")
-        )
+        assignments = llm_config_service.get_assignments()
+        profile_id = assignments.get(agent_name)
+        
+        if profile_id and profile_id in self.providers:
+            return profile_id
+            
+        # Fallback if assignment is invalid or empty
+        # Return first available profile?
+        if self.providers:
+            return list(self.providers.keys())[0]
+            
+        return "mock" # Absolute fallback
     
     def get_temperature_for_agent(self, agent_name: str) -> float:
         """
-        Get configured temperature for specific agent
-        获取特定 Agent 的配置温度
-        
-        Args:
-            agent_name: Agent name / Agent 名称
-            
-        Returns:
-            Temperature value / 温度值
+        Get configured temperature (from assigned profile)
         """
-        agents_config = app_config.config.get("agents", {})
-        agent_config = agents_config.get(agent_name, {})
-        return agent_config.get("temperature", 0.7)
+        profile_id = self.get_provider_for_agent(agent_name)
+        # However, we can't easily peek into provider instance config without casting
+        # But we can look at the raw profile data
+        profile = llm_config_service.get_profile_by_id(profile_id)
+        if profile:
+            return profile.get("temperature", 0.7)
+        return 0.7
 
 
 # Global gateway instance / 全局网关实例
@@ -327,13 +288,7 @@ _gateway_instance: Optional[LLMGateway] = None
 
 
 def get_gateway() -> LLMGateway:
-    """
-    Get or create global gateway instance
-    获取或创建全局网关实例
-    
-    Returns:
-        LLM gateway instance / 网关实例
-    """
+    """Get or create global gateway instance"""
     global _gateway_instance
     if _gateway_instance is None:
         _gateway_instance = LLMGateway()

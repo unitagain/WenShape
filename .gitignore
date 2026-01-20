@@ -47,6 +47,12 @@ Thumbs.db
 data/
 backend/data/
 
+# LLM Configuration Files (Contains API Keys) - CRITICAL
+data/llm_profiles.json
+data/agent_assignments.json
+backend/data/llm_profiles.json
+backend/data/agent_assignments.json
+
 # Logs
 *.log
 traces/

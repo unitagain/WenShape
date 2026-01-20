@@ -3,19 +3,29 @@ NOVIX FastAPI Application Entry Point
 FastAPI 应用入口
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from app.config import settings
+from app.utils.logger import get_logger
 from app.routers import (
     projects_router,
     cards_router,
     canon_router,
     drafts_router,
     session_router,
-    config_router
+    config_router,
+    proxy_router
 )
 from app.routers.fanfiction import router as fanfiction_router
 from app.routers.websocket import router as websocket_router
+
+logger = get_logger(__name__)
+
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
 
 # Create FastAPI application / 创建 FastAPI 应用
 app = FastAPI(
@@ -25,10 +35,22 @@ app = FastAPI(
     debug=settings.debug
 )
 
+# Add rate limiter to app state
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # Configure CORS / 配置跨域
+# Production-ready CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Configure properly for production / 生产环境需要配置具体域名
+    allow_origins=[
+        "http://localhost:3000",  # Dev: Vite dev server
+        "http://localhost:8000",  # Prod: Packaged app
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
+        # Add your production domain here when deploying:
+        # "https://yourdomain.com",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -47,7 +69,8 @@ routers = [
     session_router,
     config_router,
     websocket_router,
-    fanfiction_router
+    fanfiction_router,
+    proxy_router
 ]
 
 for router in routers:
@@ -74,7 +97,7 @@ async def on_startup():
     # But webbrowser.open is usually fire-and-forget
     if getattr(sys, 'frozen', False):
         url = f"http://localhost:{settings.port}"
-        print(f"[Main] Auto-opening browser at {url} ...")
+        logger.info(f"Auto-opening browser at {url}")
         # Small delay to ensure server is ready
         async def open_browser():
             await asyncio.sleep(1.5)
@@ -97,7 +120,7 @@ else:
     static_dir = Path(__file__).parent.parent / "static"
 
 if static_dir.exists():
-    print(f"[Main] Serving static files from: {static_dir}")
+    logger.info(f"Serving static files from: {static_dir}")
     
     # 1. Mount assets (css, js, images)
     app.mount("/assets", StaticFiles(directory=str(static_dir / "assets")), name="assets")
@@ -124,7 +147,7 @@ if static_dir.exists():
         # Otherwise serve index.html for SPA routing
         return FileResponse(static_dir / "index.html")
 else:
-    print("[Main] Static directory not found. Running in API-only mode (Dev).")
+    logger.warning("Static directory not found. Running in API-only mode (Dev)")
 
 
 if __name__ == "__main__":
@@ -140,7 +163,7 @@ if __name__ == "__main__":
     if is_frozen:
         # Prod/EXE: Run directly with app instance, NO RELOAD
         # Reloading in frozen mode causes infinite subprocess spawning
-        print("[Main] Running in Frozen (EXE) Mode")
+        logger.info("Running in Frozen (EXE) Mode")
         uvicorn.run(
             app,  # Pass app instance directly, not string
             host=settings.host, 
@@ -150,7 +173,7 @@ if __name__ == "__main__":
         )
     else:
         # Dev: Run with reload
-        print("[Main] Running in Dev Mode")
+        logger.info("Running in Dev Mode")
         uvicorn.run(
             "app.main:app",
             host=settings.host,
