@@ -119,11 +119,13 @@ else:
     # Dev: Look for backend/static if it exists (for testing build script without freezing)
     static_dir = Path(__file__).parent.parent / "static"
 
-if static_dir.exists():
+# Only serve static files in production mode (when assets directory exists)
+assets_dir = static_dir / "assets"
+if static_dir.exists() and assets_dir.exists():
     logger.info(f"Serving static files from: {static_dir}")
     
     # 1. Mount assets (css, js, images)
-    app.mount("/assets", StaticFiles(directory=str(static_dir / "assets")), name="assets")
+    app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
     
     # 2. Serve Index at Root
     @app.get("/")
@@ -147,7 +149,7 @@ if static_dir.exists():
         # Otherwise serve index.html for SPA routing
         return FileResponse(static_dir / "index.html")
 else:
-    logger.warning("Static directory not found. Running in API-only mode (Dev)")
+    logger.warning("Static directory or assets not found. Running in API-only mode (Dev)")
 
 
 if __name__ == "__main__":
