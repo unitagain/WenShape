@@ -541,7 +541,14 @@ function WritingSessionContent({ isEmbedded = false }) {
 
             // Initial setup with basic info
             const cardData = state.activeDocument.data || { name: state.activeDocument.id };
-            setActiveCard({ ...cardData, type: state.activeDocument.type });
+            const originalName = state.activeDocument.id || cardData.name || '';
+            const isNew = Boolean(state.activeDocument.isNew || cardData.isNew || !originalName);
+            setActiveCard({
+                ...cardData,
+                type: state.activeDocument.type,
+                isNew,
+                originalName
+            });
             setCardForm({
                   name: cardData.name || '',
                   description: ''
@@ -949,18 +956,36 @@ function WritingSessionContent({ isEmbedded = false }) {
         if (!activeCard) return;
         setIsSaving(true);
         try {
+            const name = (cardForm.name || '').trim();
+            if (!name) {
+                throw new Error('卡片名称不能为空');
+            }
             if (activeCard.type === 'character') {
                 const payload = {
-                    name: cardForm.name || '',
+                    name,
                     description: cardForm.description || ''
                 };
-                await cardsAPI.updateCharacter(projectId, activeCard.name, payload);
+                if (activeCard.isNew || !activeCard.originalName) {
+                    await cardsAPI.createCharacter(projectId, payload);
+                } else if (activeCard.originalName !== name) {
+                    await cardsAPI.createCharacter(projectId, payload);
+                    await cardsAPI.deleteCharacter(projectId, activeCard.originalName);
+                } else {
+                    await cardsAPI.updateCharacter(projectId, activeCard.originalName, payload);
+                }
             } else {
                 const payload = {
-                    name: cardForm.name || '',
+                    name,
                     description: cardForm.description || ''
                 };
-                await cardsAPI.updateWorld(projectId, activeCard.name, payload);
+                if (activeCard.isNew || !activeCard.originalName) {
+                    await cardsAPI.createWorld(projectId, payload);
+                } else if (activeCard.originalName !== name) {
+                    await cardsAPI.createWorld(projectId, payload);
+                    await cardsAPI.deleteWorld(projectId, activeCard.originalName);
+                } else {
+                    await cardsAPI.updateWorld(projectId, activeCard.originalName, payload);
+                }
             }
             addMessage('system', '卡片已更新');
             dispatch({ type: 'SET_SAVED' });
