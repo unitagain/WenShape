@@ -5,7 +5,6 @@ Unified interface with retry, rate limiting, and cost tracking
 """
 
 import asyncio
-import os
 import time
 from typing import List, Dict, Any, Optional
 import app.config as app_config
@@ -16,6 +15,7 @@ from app.llm_gateway.providers import (
     OpenAIProvider,
     AnthropicProvider,
     DeepSeekProvider,
+    MockProvider,
     CustomProvider,
     QwenProvider,
     KimiProvider,
@@ -47,7 +47,7 @@ class LLMGateway:
         # Cost tracking / 成本追踪
         self.total_tokens = 0
         self.total_requests = 0
-    
+
     def _init_profiles(self) -> None:
         """Initialize LLM providers from stored profiles"""
         self.providers = {}
@@ -139,6 +139,8 @@ class LLMGateway:
                     max_tokens=profile.get("max_tokens", 8000),
                     temperature=profile.get("temperature", 0.7)
                 )
+            elif provider_type == "mock":
+                return MockProvider()
         except Exception as e:
             logger.error(f"Error creating provider instance for {profile.get('name')}: {e}")
             return None

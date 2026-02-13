@@ -23,11 +23,18 @@ fi
 
 # 获取脚本所在目录
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+BACKEND_MODE_ARG=""
+for arg in "$@"; do
+    if [ "$arg" = "test" ] || [ "$arg" = "--test" ]; then
+        BACKEND_MODE_ARG="test"
+        break
+    fi
+done
 
 echo "[1/3] 启动后端服务..."
-osascript -e "tell app \"Terminal\" to do script \"cd '$SCRIPT_DIR/backend' && ./run.sh\"" 2>/dev/null || \
-gnome-terminal -- bash -c "cd '$SCRIPT_DIR/backend' && ./run.sh; exec bash" 2>/dev/null || \
-xterm -e "cd '$SCRIPT_DIR/backend' && ./run.sh" 2>/dev/null &
+osascript -e "tell app \"Terminal\" to do script \"cd '$SCRIPT_DIR/backend' && ./run.sh $BACKEND_MODE_ARG\"" 2>/dev/null || \
+gnome-terminal -- bash -c "cd '$SCRIPT_DIR/backend' && ./run.sh $BACKEND_MODE_ARG; exec bash" 2>/dev/null || \
+xterm -e "cd '$SCRIPT_DIR/backend' && ./run.sh $BACKEND_MODE_ARG" 2>/dev/null &
 
 sleep 3
 

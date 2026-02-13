@@ -1,7 +1,6 @@
 
 import json
 import uuid
-import os
 import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -17,7 +16,7 @@ class LLMConfigService:
         self.profiles_path = self.data_dir / "llm_profiles.json"
         self.assignments_path = self.data_dir / "agent_assignments.json"
         self._ensure_data_dir()
-        self._migrate_legacy_config()
+        self._create_llm_profile()
 
     def _get_data_dir(self) -> Path:
         """Get the persistent data directory."""
@@ -31,6 +30,11 @@ class LLMConfigService:
 
     def _ensure_data_dir(self):
         self.data_dir.mkdir(parents=True, exist_ok=True)
+
+    def _is_mock_enabled(self) -> bool:
+        """Enable mock defaults when startup args include test mode."""
+        args = {arg.strip().lower() for arg in sys.argv[1:]}
+        return "test" in args or "--test" in args
 
     def _load_json(self, path: Path, default: Any) -> Any:
         if not path.exists():
@@ -105,18 +109,24 @@ class LLMConfigService:
                 return p
         return None
 
-    def _migrate_legacy_config(self):
-        """Migrate .env settings to profiles if profiles.json is empty."""
-        profiles = self.get_profiles()
-        if profiles:
-            return  # Already has profiles, skip migration
-
-        logger.info("Migrating legacy configuration...")
+    def _create_llm_profile(self):
+        logger.info("Create llm profile...")
         new_profiles = []
         
         # Helper to check if a key is real
         def is_real_key(val):
             return val and not str(val).startswith("sk-your") and not str(val).startswith("your-")
+
+        if self._is_mock_enabled():
+            new_profiles.append({
+                "id": str(uuid.uuid4()),
+                "name": "Mock (No API Cost)",
+                "provider": "mock",
+                "api_key": "",
+                "model": "mock",
+                "temperature": 0.0
+            })
+            logger.info("Added default mock profile")
 
         # OpenAI
         openai_key = app_config.settings.openai_api_key
