@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """
-WenShape 一键启动脚本
-Starts both backend and frontend services
+WenShape 一键启动脚本 / One-click launcher
+
+- 启动后端（FastAPI/uvicorn）
+- 启动前端（Vite dev server）
+
+说明：
+首次运行时后端可能需要安装依赖，启动耗时较长。为了避免前端在后端未就绪时反复报
+`ECONNREFUSED` 代理错误，本脚本会在后端真正就绪后再启动前端。
 """
 
 import subprocess
@@ -10,7 +16,9 @@ import time
 import os
 import platform
 import socket
+import urllib.request
 from typing import Tuple
+from pathlib import Path
 
 def _pick_free_port(host: str, preferred: int, max_tries: int = 30) -> int:
     preferred = int(preferred or 0)
@@ -67,6 +75,25 @@ def start_backend(backend_port: int):
     env["WENSHAPE_BACKEND_PORT"] = str(backend_port)
     env["WENSHAPE_AUTO_PORT"] = "1"
 
+    # Ensure a safe default .env exists for first-time users / 首次运行自动生成安全的演示配置
+    env_path = Path(backend_dir) / ".env"
+    if not env_path.exists():
+        env_path.write_text(
+            "\n".join(
+                [
+                    "# Auto-generated on first run",
+                    "HOST=0.0.0.0",
+                    "DEBUG=True",
+                    "",
+                    "WENSHAPE_LLM_PROVIDER=mock",
+                    "",
+                    "# See .env.example for provider settings and API keys.",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
     if platform.system() == 'Windows':
         # Windows: start in new window
         subprocess.Popen(
@@ -86,8 +113,30 @@ def start_backend(backend_port: int):
         )
 
     print(f"  Backend: http://localhost:{backend_port}")
-    time.sleep(3)  # Give backend time to start
     return backend_port
+
+
+def wait_for_backend_ready(host: str, port: int, timeout_s: int = 180) -> bool:
+    """
+    Wait until the backend /health endpoint becomes reachable.
+
+    Returns True if ready within timeout; otherwise False.
+    """
+    url = f"http://{host}:{port}/health"
+    deadline = time.monotonic() + max(1, int(timeout_s))
+
+    print(f"  Waiting for backend readiness: {url}")
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2) as resp:
+                if getattr(resp, "status", 200) == 200:
+                    print("  Backend is ready.")
+                    return True
+        except Exception:
+            time.sleep(1)
+
+    print("  Backend not ready yet (timeout). Starting frontend anyway.")
+    return False
 
 def start_frontend(backend_port: int, frontend_port: int):
     """Start frontend service"""
@@ -140,6 +189,7 @@ def main():
     try:
         backend_port, frontend_port = pick_ports()
         backend_port = start_backend(backend_port)
+        wait_for_backend_ready("127.0.0.1", backend_port)
         frontend_port = start_frontend(backend_port, frontend_port)
 
         print()

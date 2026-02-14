@@ -1,35 +1,41 @@
-
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-def run_command(cmd, cwd=None):
-    print(f"Running: {cmd}")
-    subprocess.check_call(cmd, shell=True, cwd=cwd)
+ROOT_DIR = Path(__file__).resolve().parent
+
+
+def run_command(args: list[str], cwd: Path | None = None) -> None:
+    cwd = cwd or ROOT_DIR
+    print(f"Running: {' '.join(args)} (cwd={cwd})")
+    subprocess.check_call(args, cwd=str(cwd))
 
 def build_frontend():
     print("--- Building Frontend ---")
-    frontend_dir = Path("frontend")
+    frontend_dir = ROOT_DIR / "frontend"
     if not frontend_dir.exists():
         print("Frontend directory not found!")
         sys.exit(1)
     
-    # Install dependencies
-    run_command("npm install", cwd=frontend_dir)
+    # Install dependencies (prefer reproducible install when lockfile exists)
+    if (frontend_dir / "package-lock.json").exists():
+        run_command(["npm", "ci"], cwd=frontend_dir)
+    else:
+        run_command(["npm", "install"], cwd=frontend_dir)
     # Build
-    run_command("npm run build", cwd=frontend_dir)
+    run_command(["npm", "run", "build"], cwd=frontend_dir)
 
 def prepare_backend_assets():
     print("--- Preparing Backend Assets ---")
     # Clean previous build
-    backend_static = Path("backend/static")
+    backend_static = ROOT_DIR / "backend" / "static"
     if backend_static.exists():
         shutil.rmtree(backend_static)
         
     # Copy dist to backend/static
-    frontend_dist = Path("frontend/dist")
+    frontend_dist = ROOT_DIR / "frontend" / "dist"
     if not frontend_dist.exists():
         print("Frontend build failed: dist not found")
         sys.exit(1)
@@ -40,20 +46,24 @@ def prepare_backend_assets():
 def run_pyinstaller():
     print("--- Packaging with PyInstaller ---")
     
-    # Ensure pyinstaller is installed
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller", "aiofiles", "uvicorn", "fastapi", "python-multipart"])
+    # Ensure build dependencies are installed
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", str(ROOT_DIR / "backend" / "requirements.txt")])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
     
-    # Command arguments
-    args = [
-        "pyinstaller",
+    # Command arguments (note: app is a package under backend/; add backend/ to module search path)
+    add_data = f"backend/static{os.pathsep}static"
+    args: list[str] = [
+        sys.executable,
+        "-m",
+        "PyInstaller",
         "--name", "WenShape",
         "--clean",
         "--noconfirm",
+        "--paths",
+        "backend",
         # Add backend/static directory to the bundle
-        "--add-data", f"backend/static{os.pathsep}static",
-        # Add config templates if needed, but we expect external config.yaml
-        # However, let's include a default config.yaml for first run?
-        # Maybe copy env.example or config.yaml to dist folder later
+        "--add-data",
+        add_data,
         
         # Hidden imports often missed by PyInstaller
         "--hidden-import", "uvicorn.logging",
@@ -64,34 +74,56 @@ def run_pyinstaller():
         "--hidden-import", "uvicorn.protocols.http.auto",
         "--hidden-import", "uvicorn.lifespan",
         "--hidden-import", "uvicorn.lifespan.on",
-        "--hidden-import", "engineio.async_drivers.aiohttp",
-        # Dependencies for search and agents
-        "--hidden-import", "duckduckgo_search",
-        "--hidden-import", "curl_cffi",
-        "--collect-all", "curl_cffi", 
-        "--collect-all", "duckduckgo_search",
         
         # Entry point
-        "backend/app/main.py"
+        "backend/app/main.py",
     ]
     
-    run_command(" ".join(args), cwd=".")
+    run_command(args, cwd=ROOT_DIR)
     
 def finalize_package():
     print("--- Finalizing Package ---")
-    dist_dir = Path("dist/WenShape")
+    dist_dir = ROOT_DIR / "dist" / "WenShape"
+    if not dist_dir.exists():
+        raise RuntimeError(f"PyInstaller output not found: {dist_dir}")
     
     # 1. Copy config example or config.yaml
-    config_src = Path("backend/config.yaml")
+    config_src = ROOT_DIR / "backend" / "config.yaml"
     if config_src.exists():
         shutil.copy(config_src, dist_dir / "config.yaml")
         print("Copied config.yaml")
         
-    # 2. Copy .env.example for safe configuration
-    env_example = Path(".env.example")
-    if env_example.exists():
-        shutil.copy(env_example, dist_dir / ".env.example")
-        print("Copied .env.example")
+    # 2. Copy .env.example for safe configuration (prefer backend/.env.example)
+    env_example_candidates = [
+        ROOT_DIR / "backend" / ".env.example",
+        ROOT_DIR / ".env.example",
+    ]
+    for env_example in env_example_candidates:
+        if env_example.exists():
+            shutil.copy(env_example, dist_dir / ".env.example")
+            print(f"Copied .env.example from: {env_example}")
+            break
+
+    # 3. Create a safe default .env for first run (demo mode)
+    # Shipping a non-secret .env improves out-of-box usability and prevents "no profiles assigned" startup errors.
+    env_path = dist_dir / ".env"
+    if not env_path.exists():
+        env_path.write_text(
+            "\n".join(
+                [
+                    "# Generated by build_release.py",
+                    "# You can switch provider by editing WENSHAPE_LLM_PROVIDER and adding API keys.",
+                    "HOST=0.0.0.0",
+                    "PORT=8000",
+                    "DEBUG=False",
+                    "",
+                    "WENSHAPE_LLM_PROVIDER=mock",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        print("Created default .env (mock demo mode)")
     
     # Do NOT copy .env automatically to prevent secret leakage
     # env_src = Path("backend/.env")
@@ -99,18 +131,13 @@ def finalize_package():
     #     shutil.copy(env_src, dist_dir / ".env")
     #     print("Copied .env")
 
-    # 3. Create run.bat for convenience (optional, exe is enough)
-    
     # 4. Create data folder
     (dist_dir / "data").mkdir(exist_ok=True)
     
     print(f"\nBuild Complete! Output in: {dist_dir.absolute()}")
 
 if __name__ == "__main__":
-    # Check current directory
-    if not Path("backend").exists() or not Path("frontend").exists():
-        print("Error: Please run this script from the project root (where backend/ and frontend/ folders are).")
-        sys.exit(1)
+    os.chdir(str(ROOT_DIR))
 
     build_frontend()
     prepare_backend_assets()

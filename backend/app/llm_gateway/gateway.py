@@ -40,6 +40,7 @@ class LLMGateway:
         # We don't pre-initialize all providers anymore, or we initialize all profiles?
         # Let's initialize all valid profiles for cache
         self._init_profiles()
+        self._ensure_mock_provider()
 
         # Retry configuration / 重试配置
         self.max_retries = 5  # Increased from 3 to 5
@@ -49,6 +50,25 @@ class LLMGateway:
         # Cost tracking / 成本追踪
         self.total_tokens = 0
         self.total_requests = 0
+
+    def _is_mock_mode(self) -> bool:
+        """
+        Whether the system should run in mock/demo mode.
+
+        In mock mode, we must not require any persisted LLM profiles/assignments,
+        otherwise the app becomes unusable on first run (fresh checkout / packaged build).
+        """
+        try:
+            return str(getattr(app_config.settings, "wenshape_llm_provider", "") or "").strip().lower() == "mock"
+        except Exception:
+            return str(os.getenv("WENSHAPE_LLM_PROVIDER", "") or "").strip().lower() == "mock"
+
+    def _ensure_mock_provider(self) -> None:
+        """Ensure mock provider exists when running in mock mode."""
+        if not self._is_mock_mode():
+            return
+        if "mock" not in self.providers:
+            self.providers["mock"] = MockProvider()
     
     def _init_profiles(self) -> None:
         """Initialize LLM providers from stored profiles"""
@@ -361,10 +381,16 @@ class LLMGateway:
         """
         Get configured PROFILE ID for specific agent
         """
+        if self._is_mock_mode():
+            self._ensure_mock_provider()
+            return "mock"
+
         assignments = llm_config_service.get_assignments()
         profile_id = assignments.get(agent_name)
 
         if not profile_id:
+            if "mock" in self.providers:
+                return "mock"
             raise ValueError(f"No LLM profile assigned for agent '{agent_name}'.")
 
         if profile_id not in self.providers:

@@ -26,18 +26,19 @@ python -m pip install -r requirements.txt
 
 # Check if .env exists / 检查 .env 是否存在
 if [ ! -f ".env" ]; then
-    echo "Warning: .env file not found. Copying from .env.example..."
-    echo "警告：.env 文件不存在，正在从 .env.example 复制..."
-    if [ ! -f ".env.example" ]; then
-        echo "[ERROR] .env.example not found in: $SCRIPT_DIR"
-        exit 1
-    fi
-    cp ".env.example" ".env"
+    echo "Warning: .env file not found. Creating a safe default for demo mode..."
+    cat > ".env" <<'EOF'
+# Auto-generated on first run
+HOST=0.0.0.0
+PORT=8000
+DEBUG=True
+
+WENSHAPE_LLM_PROVIDER=mock
+
+# See .env.example for provider settings and API keys.
+EOF
     echo "Created: $SCRIPT_DIR/.env"
-    echo "Please edit .env file and add your API keys!"
-    echo "请编辑 .env 文件并添加你的 API 密钥！"
-    echo "Press Enter to continue..."
-    read -r
+    echo "Running in demo mode (mock). Edit .env to enable real providers."
 fi
 
 # Start server / 启动服务器
