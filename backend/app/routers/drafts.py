@@ -52,15 +52,6 @@ async def list_draft_versions(project_id: str, chapter: str) -> List[str]:
     return await draft_storage.list_draft_versions(project_id, chapter)
 
 
-@router.get("/{chapter}/{version}")
-async def get_draft(project_id: str, chapter: str, version: str):
-    """Get a specific draft version / 获取指定草稿版本"""
-    draft = await draft_storage.get_draft(project_id, chapter, version)
-    if not draft:
-        raise HTTPException(status_code=404, detail="Draft not found")
-    return draft
-
-
 @router.get("/{chapter}/review")
 async def get_review(project_id: str, chapter: str):
     """Get review result / 获取审稿结果"""
@@ -226,3 +217,15 @@ async def autosave_draft_content(project_id: str, chapter: str, body: UpdateCont
         "chapter": canonical,
         "title": body.title,
     }
+
+
+# 注意：/{chapter}/{version} 通配路由必须在所有具体路由之后注册
+# 否则会遮蔽 /{chapter}/final, /{chapter}/review 等具体路由
+# FastAPI 按注册顺序从上到下匹配，先匹配先赢
+@router.get("/{chapter}/{version}")
+async def get_draft(project_id: str, chapter: str, version: str):
+    """Get a specific draft version / 获取指定草稿版本"""
+    draft = await draft_storage.get_draft(project_id, chapter, version)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return draft
