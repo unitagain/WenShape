@@ -67,12 +67,44 @@ function WritingSessionContent({ isEmbedded = false }) {
     // ========================================================================
     // 项目数据状态 / Project data from API
     const [project, setProject] = useState(null);
+    const prevProjectIdRef = useRef(null);
+
     useEffect(() => {
         if (projectId) {
             projectsAPI.get(projectId).then(res => setProject(res.data));
             dispatch({ type: 'SET_PROJECT_ID', payload: projectId });
         }
     }, [projectId, dispatch]);
+
+    // 项目切换时清理所有会话状态，防止数据污染
+    // 使用 useRef 判断 projectId 是否真正变化，避免不必要的清理
+    useEffect(() => {
+        if (prevProjectIdRef.current && prevProjectIdRef.current !== projectId) {
+            // 项目真正切换了：清理所有写作会话状态
+            setDiffReview(null);
+            setDiffDecisions({});
+            setCurrentDraft(null);
+            setManualContent('');
+            setManualContentByChapter({});
+            setMessagesByChapter({});
+            setProgressEventsByChapter({});
+            setDraftV1(null);
+            setSceneBrief(null);
+            setFeedback('');
+            setChapterInfo({ chapter: null, chapter_title: null, content: null });
+            setStatus('idle');
+            setSelectionInfo({ start: 0, end: 0, text: '' });
+            setAttachedSelection(null);
+            setEditScope('document');
+            setAiLockedChapter(null);
+            if (streamingRef.current?.timer) {
+                streamingRef.current.timer();
+            }
+            streamingRef.current = null;
+            setStreamingState({ active: false, progress: 0, current: 0, total: 0 });
+        }
+        prevProjectIdRef.current = projectId;
+    }, [projectId]);
 
 
 
