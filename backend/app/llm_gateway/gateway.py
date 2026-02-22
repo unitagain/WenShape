@@ -166,8 +166,7 @@ class LLMGateway:
             elif provider_type == "gemini":
                 return GeminiProvider(
                     api_key=api_key,
-                    base_url=profile.get("base_url"),
-                    model=profile.get("model", "gemini-1.5-pro"),
+                    model=profile.get("model", "gemini-2.5-flash"),
                     max_tokens=profile.get("max_tokens", 8000),
                     temperature=profile.get("temperature", 0.7)
                 )

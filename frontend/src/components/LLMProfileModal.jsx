@@ -95,7 +95,7 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
     const PROVIDERS = [
         { id: 'anthropic', label: 'Anthropic（Claude）' },
         { id: 'deepseek', label: 'DeepSeek' },
-        { id: 'gemini', label: 'Gemini（Google）' },
+        { id: 'gemini', label: 'Gemini（Google，含免费试用模型）' },
         { id: 'glm', label: 'GLM（智谱）' },
         { id: 'grok', label: 'Grok（xAI）' },
         { id: 'kimi', label: 'Kimi（月之暗面）' },
@@ -123,8 +123,8 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
     ];
 
     const GEMINI_MODELS = [
-        { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
-        { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
+        { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash（免费对话20次）' },
+        { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview（免费对话20次）' },
     ];
 
     const GROK_MODELS = [
@@ -268,7 +268,7 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
                                     if (newProvider === 'openai') defaultModel = 'gpt-4o';
                                     if (newProvider === 'anthropic') defaultModel = 'claude-3-5-sonnet-20241022';
                                     if (newProvider === 'deepseek') defaultModel = 'deepseek-chat';
-                                    if (newProvider === 'gemini') defaultModel = 'gemini-1.5-pro';
+                                    if (newProvider === 'gemini') defaultModel = 'gemini-2.5-flash';
                                     if (newProvider === 'grok') defaultModel = 'grok-beta';
                                     if (newProvider === 'kimi') defaultModel = 'moonshot-v1-8k';
                                     if (newProvider === 'glm') defaultModel = 'glm-4';

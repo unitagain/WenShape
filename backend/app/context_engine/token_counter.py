@@ -164,8 +164,8 @@ MODEL_CONTEXT_WINDOWS = {
     "glm-3-turbo": 128000,
 
     # Gemini
-    "gemini-1.5-pro": 1000000,
-    "gemini-1.5-flash": 1000000,
+    "gemini-2.5-flash": 1000000,
+    "gemini-3-flash-preview": 1000000,
     "gemini-pro": 32000,
 
     # Grok

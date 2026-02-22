@@ -28,7 +28,7 @@ class LLMConfigService:
     """
     LLM 配置管理服务 - 持久化存储 API 配置和智能体分配。
 
-    Manages LLM API profiles (OpenAI, Anthropic, DeepSeek, Custom) and agent assignments.
+    Manages LLM API profiles (OpenAI, Anthropic, DeepSeek, Gemini, Custom) and agent assignments.
     Supports multiple profiles with per-provider settings.
     Handles legacy .env configuration migration for backward compatibility.
 
@@ -328,6 +328,18 @@ class LLMConfigService:
                 "provider": "deepseek",
                 "api_key": deepseek_key,
                 "model": app_config.settings.deepseek_model or "deepseek-chat",
+                "temperature": 0.7
+            })
+
+        # Gemini
+        gemini_key = app_config.settings.gemini_api_key
+        if is_real_key(gemini_key):
+            new_profiles.append({
+                "id": str(uuid.uuid4()),
+                "name": "Legacy Gemini",
+                "provider": "gemini",
+                "api_key": gemini_key,
+                "model": app_config.settings.gemini_model or "gemini-2.5-flash",
                 "temperature": 0.7
             })
 

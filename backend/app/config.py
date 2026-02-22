@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
 
     # Custom LLM Provider / 自定义LLM供应商配置
     # For OpenAI-compatible endpoints
@@ -71,9 +72,10 @@ class Settings(BaseSettings):
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o")
     anthropic_model: str = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
     deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
     # LLM Provider / 大模型供应商选择
-    # 可选值：openai, anthropic, deepseek, mock, custom
+    # 可选值：openai, anthropic, deepseek, gemini, mock, custom
     wenshape_llm_provider: str = os.getenv("WENSHAPE_LLM_PROVIDER", "")
 
     # Per-Agent LLM provider override / 按Agent指定LLM供应商

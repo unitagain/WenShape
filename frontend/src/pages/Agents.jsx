@@ -12,7 +12,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import useSWR, { mutate } from 'swr';
-import { Cpu, Plus, Edit2, Trash2, Bot, Save, Server, Shield, Box, Globe, RotateCcw } from 'lucide-react';
+import { Cpu, Plus, Edit2, Trash2, Bot, Save, Server, Shield, Box, Globe, RotateCcw, Sparkle } from 'lucide-react';
 import { Card, Button } from '../components/ui/core';
 import { configAPI } from '../api';
 import LLMProfileModal from '../components/LLMProfileModal';
@@ -121,6 +121,7 @@ function Agents() {
             case 'openai': return Shield;
             case 'anthropic': return Cpu;
             case 'deepseek': return Box;
+            case 'gemini': return Sparkle;
             case 'custom': return Server;
             default: return Globe;
         }
