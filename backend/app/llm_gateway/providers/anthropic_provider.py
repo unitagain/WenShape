@@ -30,7 +30,7 @@ class AnthropicProvider(BaseLLMProvider):
     def __init__(
         self,
         api_key: str,
-        model: str = "claude-3-5-sonnet-20241022",
+        model: str = "claude-sonnet-4-6",
         max_tokens: int = 8000,
         temperature: float = 0.7
     ):
@@ -39,7 +39,7 @@ class AnthropicProvider(BaseLLMProvider):
 
         Args:
             api_key: Anthropic API密钥 / Anthropic API key.
-            model: Claude模型名称，默认 claude-3-5-sonnet-20241022 / Claude model name.
+            model: Claude模型名称，默认 claude-sonnet-4-6 / Claude model name.
             max_tokens: 最大生成token数 / Maximum tokens to generate.
             temperature: 生成温度 / Generation temperature.
         """

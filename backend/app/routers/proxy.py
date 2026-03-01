@@ -21,13 +21,9 @@ class FetchModelsRequest(BaseModel):
 
 
 ANTHROPIC_FALLBACK_MODELS: List[str] = [
-    # 用于“拉取模型列表”失败时的兜底；保持小而稳定，避免 UI 无法继续配置。
+    # 用于"拉取模型列表"失败时的兜底；保持小而稳定，避免 UI 无法继续配置。
     "claude-opus-4-6",
-    "claude-3-5-sonnet-20241022",
-    "claude-3-5-haiku-20241022",
-    "claude-3-opus-20240229",
-    "claude-3-sonnet-20240229",
-    "claude-3-haiku-20240307",
+    "claude-sonnet-4-6",
 ]
 
 @router.post("/fetch-models")
@@ -40,7 +36,7 @@ async def fetch_models(request: FetchModelsRequest):
         base_url = (request.base_url or "").strip() or None
 
         # Anthropic: 使用官方 SDK 的 Models API（而不是 OpenAI 兼容的 /v1/models）。
-        # 注意：无论成功/失败都要 return，避免 fallthrough 到 OpenAI 客户端导致 400（前端误以为“拉取失败”）。
+        # 注意：无论成功/失败都要 return，避免 fallthrough 到 OpenAI 客户端导致 400（前端误以为"拉取失败"）。
         if provider == "anthropic":
             try:
                 logger.debug("Fetch Models Debug: Provider=anthropic, BaseURL=%s", base_url or "(default)")

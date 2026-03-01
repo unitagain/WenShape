@@ -302,7 +302,7 @@ class LLMConfigService:
                 "name": "Legacy Anthropic",
                 "provider": "anthropic",
                 "api_key": ant_key,
-                "model": app_config.settings.anthropic_model or "claude-3-5-sonnet-20241022",
+                "model": app_config.settings.anthropic_model or "claude-sonnet-4-6",
                 "temperature": 0.7
             })
 

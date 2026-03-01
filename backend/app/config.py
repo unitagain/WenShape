@@ -70,7 +70,7 @@ class Settings(BaseSettings):
 
     # Model Selection per Provider / 各供应商的模型选择
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o")
-    anthropic_model: str = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+    anthropic_model: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
     deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
