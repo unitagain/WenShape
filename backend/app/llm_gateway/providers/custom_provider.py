@@ -2,14 +2,14 @@
 Custom LLM Provider / 自定义模型适配器 (OpenAI 兼容)
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, AsyncGenerator
 from openai import AsyncOpenAI
 from app.llm_gateway.providers.base import BaseLLMProvider
 
 
 class CustomProvider(BaseLLMProvider):
     """Custom OpenAI-compatible API provider / 自定义 OpenAI 兼容 API 提供商"""
-    
+
     def __init__(
         self,
         api_key: str,
@@ -21,10 +21,10 @@ class CustomProvider(BaseLLMProvider):
         super().__init__(api_key, model, max_tokens, temperature)
         # Ensure base_url is valid, if empty default to None (which defaults to standard OpenAI)
         # But for 'custom', user likely provides a specific URL.
-        # If user leaves it blank but uses 'custom', it behaves like standard OpenAI? 
+        # If user leaves it blank but uses 'custom', it behaves like standard OpenAI?
         # Better to pass it explicitely.
         self.client = AsyncOpenAI(api_key=api_key, base_url=base_url if base_url else None)
-    
+
     async def chat(
         self,
         messages: List[Dict[str, str]],
@@ -41,18 +41,46 @@ class CustomProvider(BaseLLMProvider):
             temperature=temperature or self.temperature,
             max_tokens=max_tokens or self.max_tokens
         )
-        
+
+        if not hasattr(response, "choices") or not response.choices:
+            raise ValueError(
+                f"API returned unexpected response (no 'choices'). "
+                f"Response type: {type(response).__name__}, value: {str(response)[:200]}"
+            )
+
         return {
             "content": response.choices[0].message.content,
             "usage": {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens
+                "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+                "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+                "total_tokens": response.usage.total_tokens if response.usage else 0
             },
-            "model": response.model,
+            "model": getattr(response, "model", self.model),
             "finish_reason": response.choices[0].finish_reason
         }
-    
+
+    async def stream_chat(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None
+    ) -> AsyncGenerator[str, None]:
+        """
+        Stream chat response token by token
+        流式输出聊天响应
+        """
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=temperature or self.temperature,
+            max_tokens=max_tokens or self.max_tokens,
+            stream=True
+        )
+
+        async for chunk in response:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
     def get_provider_name(self) -> str:
         """Get provider name / 获取提供商名称"""
         return "custom"

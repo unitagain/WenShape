@@ -48,13 +48,19 @@ class GeminiProvider(BaseLLMProvider):
             max_tokens=max_tokens or self.max_tokens,
         )
 
+        if not hasattr(response, "choices") or not response.choices:
+            raise ValueError(
+                f"API returned unexpected response (no 'choices'). "
+                f"Response type: {type(response).__name__}, value: {str(response)[:200]}"
+            )
+
         usage = response.usage
         return {
             "content": response.choices[0].message.content,
             "usage": {
-                "prompt_tokens": usage.prompt_tokens,
-                "completion_tokens": usage.completion_tokens,
-                "total_tokens": usage.total_tokens,
+                "prompt_tokens": usage.prompt_tokens if usage else 0,
+                "completion_tokens": usage.completion_tokens if usage else 0,
+                "total_tokens": usage.total_tokens if usage else 0,
             },
             "model": response.model,
             "finish_reason": response.choices[0].finish_reason,

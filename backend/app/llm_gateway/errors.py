@@ -132,6 +132,11 @@ def classify_error(error: Exception) -> Tuple[bool, str]:
     if any(t in error_type for t in ("auth", "permission", "invalid")):
         return False, "auth_error"
 
+    # Programming errors (AttributeError, TypeError, etc.) are not retryable
+    # 程序错误（AttributeError、TypeError 等）不应重试
+    if any(t in error_type for t in ("attribute", "type", "value", "key", "index", "assertion")):
+        return False, "programming_error"
+
     # Check error message for non-retryable patterns
     # 检查错误消息中的不可重试模式
     for pattern in NON_RETRYABLE_PATTERNS:

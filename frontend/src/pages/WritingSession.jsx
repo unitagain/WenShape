@@ -483,7 +483,8 @@ function WritingSessionContent({ isEmbedded = false }) {
     );
 
     const { data: volumes = [] } = useSWR(
-        projectId ? ['volumes', projectId] : null,
+        // Keep SWR key consistent across the app so volume creation immediately updates all views.
+        projectId ? [projectId, 'volumes'] : null,
         () => volumesAPI.list(projectId).then(res => res.data),
         { revalidateOnFocus: false }
     );

@@ -114,7 +114,7 @@ export const cardsAPI = {
 // ============================================================================
 export const sessionAPI = {
   start: (projectId: string, data: Record<string, unknown>): Promise<AxiosResponse> =>
-    llmApi.post(`${API_BASE}/projects/${projectId}/session/start`, data),
+    llmApi.post(`${API_BASE}/projects/${projectId}/session/start`, data, { timeout: LLM_SYNC_TIMEOUT }),
   getStatus: (projectId: string): Promise<AxiosResponse<SessionStatus>> =>
     api.get(`${API_BASE}/projects/${projectId}/session/status`),
   submitFeedback: (projectId: string, data: Record<string, unknown>): Promise<AxiosResponse> =>
@@ -122,7 +122,7 @@ export const sessionAPI = {
   suggestEdit: (projectId: string, data: Record<string, unknown>): Promise<AxiosResponse<EditSuggestResult>> =>
     llmApi.post(`${API_BASE}/projects/${projectId}/session/edit-suggest`, data),
   answerQuestions: (projectId: string, data: Record<string, unknown>): Promise<AxiosResponse> =>
-    llmApi.post(`${API_BASE}/projects/${projectId}/session/answer-questions`, data),
+    llmApi.post(`${API_BASE}/projects/${projectId}/session/answer-questions`, data, { timeout: LLM_SYNC_TIMEOUT }),
   cancel: (projectId: string): Promise<AxiosResponse> =>
     api.post(`${API_BASE}/projects/${projectId}/session/cancel`),
   analyze: (projectId: string, data: Record<string, unknown>): Promise<AxiosResponse> =>
