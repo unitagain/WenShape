@@ -44,7 +44,13 @@ class OpenAIProvider(BaseLLMProvider):
             temperature=temperature or self.temperature,
             max_tokens=max_tokens or self.max_tokens
         )
-        
+
+        if not hasattr(response, "choices") or not response.choices:
+            raise ValueError(
+                f"API returned unexpected response (no 'choices'). "
+                f"Response type: {type(response).__name__}, value: {str(response)[:200]}"
+            )
+
         return {
             "content": response.choices[0].message.content,
             "usage": {

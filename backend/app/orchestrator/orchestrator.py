@@ -438,6 +438,10 @@ class Orchestrator(ContextMixin, AnalysisMixin):
             scene_brief=scene_brief,
             character_names=character_names,
             user_answers=answers,
+            # Key fix: After pre-writing Q&A, don't trigger another research loop.
+            # Reuse the existing memory pack (if present) and proceed to writing.
+            force_refresh_memory_pack=False,
+            memory_pack_source="writer_answer",
         )
         await self._persist_answer_memory(project_id, chapter, answers)
         writer_context = context_bundle["writer_context"]
