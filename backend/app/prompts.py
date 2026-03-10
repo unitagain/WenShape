@@ -33,8 +33,8 @@ DESIGN PRINCIPLES (行业最佳实践)
    - JSON/YAML 等可解析格式
    - 明确 schema，便于程序处理
 
-7. 允许不确定性
-   - 明确允许标记不确定内容（如 [TO_CONFIRM]）
+7. 处理不确定性
+   - 缺乏证据时使用模糊化叙事绕过，或直接省略
    - 减少模型为避免"不知道"而编造信息
 
 ============================================================================
@@ -448,7 +448,7 @@ def get_writer_system_prompt(language: str = "zh") -> str:
                     "",
                     "[P0-MUST] Evidence constraint:",
                     "  - All narrative must be grounded in the provided evidence package (facts/summaries/cards/text_chunks/working_memory)",
-                    "  - Details lacking evidence support must be marked [TO_CONFIRM:specific content]",
+                    "  - Details lacking evidence support must be handled by vague narration or omission",
                     "  - Never fabricate details to fill gaps",
                     "",
                     "[P0-MUST] Identity distinction:",
@@ -471,7 +471,7 @@ def get_writer_system_prompt(language: str = "zh") -> str:
                     "|---------------|------------|",
                     "| working_memory vs scene_brief/cards | Follow working_memory |",
                     "| text_chunks vs summaries | Prefer original text, reference high-confidence facts |",
-                    "| Cannot determine | Leave blank + [TO_CONFIRM] marker |",
+                    "| Cannot determine | Use vague narration to bypass or omit |",
                     "",
                     "[P0-MUST] Do not introduce from outside the evidence package: new settings, new character relationships, or hard causal chains",
                     "",
@@ -535,7 +535,7 @@ def get_writer_system_prompt(language: str = "zh") -> str:
                 "",
                 f"{P0_MARKER} 证据约束：",
                 "  - 所有叙述必须基于提供的证据包（facts/summaries/cards/text_chunks/working_memory）",
-                "  - 缺乏证据支撑的细节必须使用 [TO_CONFIRM:具体内容] 标记",
+                "  - 缺乏证据支撑的细节，使用模糊化叙事绕过或直接省略",
                 "  - 绝对禁止为填充内容而编造细节",
                 "",
                 f"{P0_MARKER} 身份区分：",
@@ -558,7 +558,7 @@ def get_writer_system_prompt(language: str = "zh") -> str:
                 "|---------|---------|",
                 "| working_memory vs scene_brief/cards | 以 working_memory 为准 |",
                 "| text_chunks vs 摘要 | 优先原文，参考高置信 facts |",
-                "| 无法确定时 | 留白 + [TO_CONFIRM] 标记 |",
+                "| 无法确定时 | 模糊化叙事绕过或省略 |",
                 "",
                 f"{P0_MARKER} 禁止引入证据包外的：新设定、新人物关系、硬性因果链",
                 "",
@@ -942,7 +942,7 @@ def writer_draft_prompt(
                 "",
                 "[P0-MUST] Goal first: strictly serve user instruction and chapter goal.",
                 "[P0-MUST] Evidence constraint: only use facts/summaries/cards/text_chunks/working_memory.",
-                "[P0-MUST] Unknown details must be marked as [TO_CONFIRM: ...].",
+                "[P0-MUST] Unknown details must be handled by vague narration or omission — never insert markers.",
                 "[P0-MUST] Conflict priority: working_memory > scene_brief > cards.",
                 "[P0-MUST] Identity rule: different names are different people unless aliases explicitly map them.",
                 "[P0-MUST] Keep prose clean: no system/meta words in final narrative.",
@@ -984,7 +984,7 @@ def writer_draft_prompt(
                     "- Any canon/rule violation?",
                     "- Any unsupported new facts?",
                     "- Character/time/place consistency maintained?",
-                    "- Critical unknowns marked with [TO_CONFIRM]?",
+                    "- Critical unknowns handled by vague narration or omission?",
                     "",
                     "─" * 40,
                     "[Constraints Repeated]",
@@ -1029,7 +1029,7 @@ def writer_draft_prompt(
             "",
             f"{P0_MARKER} 约束2 - 证据约束",
             "  只使用证据包内容：facts/summaries/cards/text_chunks/working_memory",
-            "  缺乏证据的细节必须标记 [TO_CONFIRM:具体内容]",
+            "  缺乏证据的细节，使用模糊化叙事绕过或直接省略",
             "",
             f"{P0_MARKER} 约束3 - 冲突处理",
             "  working_memory > scene_brief > cards（按优先级）",
@@ -1090,7 +1090,7 @@ def writer_draft_prompt(
                 "□ 是否违反任何禁忌/规则？",
                 "□ 是否出现无证据支撑的新设定？",
                 "□ 角色身份/关系/时间线/地点是否一致？",
-                "□ [TO_CONFIRM] 是否覆盖所有关键不确定点？",
+                "□ 不确定的细节是否已用模糊叙事绕过或省略？",
                 "",
                 "─" * 40,
                 "【关键约束重复】",
@@ -3332,7 +3332,7 @@ GUIDING_AGENT_IDENTITIES = {
     "writer": (
         "你是 Writer（主笔）。"
         "核心职责：基于证据包完成章节目标，输出高质量叙事正文。"
-        "工作原则：减少幻觉与矛盾，缺证据时用 [TO_CONFIRM] 标记。"
+        "工作原则：减少幻觉与矛盾，缺证据时模糊化叙事绕过或省略。"
     ),
     "editor": (
         "你是 Editor（编辑）。"
@@ -3374,7 +3374,7 @@ GUIDING_TASK_INSTRUCTIONS = {
             "",
             f"{P0_MARKER} 约束遵守：",
             "  - 严禁违背章节目标/禁忌/事实",
-            "  - 缺证据细节用 [TO_CONFIRM:...] 标记",
+            "  - 缺证据细节用模糊化叙事绕过或省略",
             "",
             f"{P0_MARKER} 输出格式：",
             "  - 中文叙事正文",

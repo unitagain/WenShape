@@ -1011,7 +1011,7 @@ class EditorAgent(BaseAgent):
                 if text:
                     gap_lines.append(f"- {text}")
             if gap_lines:
-                context_items.append("待确认缺口：\n" + "\n".join(gap_lines))
+                context_items.append("未解决缺口（请勿编造）：\n" + "\n".join(gap_lines))
         snapshot = None
         if isinstance(memory_pack, dict):
             snapshot = memory_pack.get("card_snapshot")

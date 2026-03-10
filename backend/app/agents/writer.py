@@ -529,7 +529,7 @@ FORBIDDEN:
             context_items.append("Working Memory:\n" + str(working_memory))
 
         if unresolved_gaps:
-            lines = ["未解决缺口（不得编造，必须留白或用[TO_CONFIRM:…]标记）:"]
+            lines = ["未解决缺口（不得编造，请用模糊化叙事绕过或省略）:"]
             for gap in unresolved_gaps[:6]:
                 if not isinstance(gap, dict):
                     continue

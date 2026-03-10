@@ -62,7 +62,7 @@ flowchart LR
 | :--- | :--- | :--- |
 | 1 Scene preparation | Build a structured, searchable entry for “what this chapter is about” | Scene Brief (character/setting cards, facts, summary, timeline) |
 | 2 Context construction | Organize “the most relevant information” within a limited token budget | Memory Pack (Working Memory + Evidence hits + Gap/Questions) |
-| 3 Draft generation | Stream the first draft, and explicitly mark items that require confirmation | Draft text (with `[TO_CONFIRM]`) |
+| 3 Draft generation | Stream the first draft, handling uncertain details with vague narration | Draft text |
 | 4 Revision loop | Apply edits with minimal changes to avoid unintended collateral impact | Patch ops (replace/insert/delete) + Diff preview |
 | 5 Closing analysis | Persist this chapter into searchable assets for reuse in future chapters | Chapter summary + Canon (facts/timeline/states) |
 
