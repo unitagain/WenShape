@@ -289,9 +289,15 @@ async def answer_questions(project_id: str, request: AnswerQuestionsRequest):
 
 @router.post("/projects/{project_id}/session/cancel")
 async def cancel_session(project_id: str):
-    """Cancel current session."""
+    """Cancel current session at any stage."""
     orchestrator = get_orchestrator(project_id)
 
+    # 设置通用取消标志，让所有阶段的下一个检查点能感知到取消
+    # Set cancel flag so every stage checkpoint can detect it
+    orchestrator._cancelled = True
+
+    # 同时取消正在进行的流任务（流式写作阶段）
+    # Also cancel the active stream task if writing is in progress
     if orchestrator._stream_task:
         orchestrator._stream_task.cancel()
         orchestrator._stream_task = None
@@ -303,6 +309,7 @@ async def cancel_session(project_id: str):
     await broadcast_progress(
         project_id,
         {
+            "type": "cancelled",
             "status": SessionStatus.IDLE.value,
             "message": "Session cancelled",
             "project_id": project_id,
