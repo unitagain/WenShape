@@ -190,6 +190,7 @@ function WritingSessionContent({ isEmbedded = false }) {
     const traceWsRef = useRef(null);
     const wsStatusRef = useRef('disconnected');
     const [isGenerating, setIsGenerating] = useState(false);
+    const [isCancelling, setIsCancelling] = useState(false);
     const streamingRef = useRef(null);
     const [streamingState, setStreamingState] = useState({
         active: false,
@@ -1008,6 +1009,7 @@ function WritingSessionContent({ isEmbedded = false }) {
             const result = resp.data;
 
             if (!result.success) {
+                if (result.cancelled) return; // 用户主动取消，静默退出
                 throw new Error(result.error || t('writingSession.sessionStartFailed'));
             }
             if (result.status === 'waiting_user_input' && result.questions?.length) {
@@ -1052,10 +1054,35 @@ function WritingSessionContent({ isEmbedded = false }) {
             if (!serverStreamActiveRef.current && !serverStreamUsedRef.current) {
                 addMessage('assistant', t('writingSession.draftGenerated'), chapterKey);
             }
+            setPendingStartPayload(null);
         } catch (e) {
             addMessage('error', t('writingSession.startFailed') + e.message, chapterKey);
             setStatus('idle');
             setIsGenerating(false);
+        }
+    };
+
+    const handleCancel = async () => {
+        if (isCancelling || !projectId) return;
+        setIsCancelling(true);
+        // 立即关闭写作前面板，防止取消后面板残留
+        setShowPreWriteDialog(false);
+        setPreWriteQuestions([]);
+        setPendingStartPayload(null);
+        // 同时清理编辑状态，防止编辑指令在后续流程中被重复应用
+        setFeedback('');
+        lastFeedbackRef.current = '';
+        clearDiffReview();
+        try {
+            await sessionAPI.cancel(projectId);
+        } catch (e) {
+            // 即使请求失败也重置前端状态，避免界面卡死
+        } finally {
+            stopStreaming();
+            setIsGenerating(false);
+            setStatus('idle');
+            setAiLockedChapter(null);
+            setIsCancelling(false);
         }
     };
 
@@ -1081,6 +1108,7 @@ function WritingSessionContent({ isEmbedded = false }) {
             const result = resp.data;
 
             if (!result.success) {
+                if (result.cancelled) return; // 用户主动取消，静默退出
                 throw new Error(result.error || t('writingSession.answerFailed'));
             }
 
@@ -1798,6 +1826,9 @@ function WritingSessionContent({ isEmbedded = false }) {
                         ? t('writingSession.aiLockedHint').replace('{n}', String(aiLockedChapter))
                         : ''
                 }
+                isGenerating={agentBusy && String(aiLockedChapter || '') === activeChapterKey}
+                isCancelling={isCancelling}
+                onCancel={handleCancel}
                 selectionCandidateSummary={
                     agentMode === 'edit' && selectionInfo?.text?.trim()
                         ? t('writingSession.selectionPending').replace('{n}', countWords(selectionInfo.text, writingLanguage))

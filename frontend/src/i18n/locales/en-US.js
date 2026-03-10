@@ -503,6 +503,8 @@ export default {
     inputPlaceholderEdit: 'Enter edit instructions (will generate diff blocks)…',
     inputPlaceholderCreate: 'Enter chapter prompt (chapter must be empty)…',
     clipboardNotSupported: 'Clipboard is not supported in this environment',
+    cancelGeneration: 'Stop',
+    cancellingGeneration: 'Stopping…',
     stageLabels: {
       read_previous: 'Reading prior text',
       read_facts: 'Fetching facts',

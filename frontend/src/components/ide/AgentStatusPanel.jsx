@@ -9,7 +9,7 @@
 
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ChevronDown, Send, Sparkles, Copy, X } from 'lucide-react';
+import { ChevronDown, Send, Sparkles, Copy, X, Square } from 'lucide-react';
 import { useLocale } from '../../i18n';
 
 // 消息项组件
@@ -203,6 +203,9 @@ const AgentStatusPanel = ({
     onRejectAllDiff = () => { },
     onApplySelectedDiff = () => { },
     onSubmit = () => { },
+    isGenerating = false,
+    isCancelling = false,
+    onCancel = () => { },
     className = ''
 }) => {
     const [inputValue, setInputValue] = useState('');
@@ -738,13 +741,32 @@ const AgentStatusPanel = ({
                                 inputDisabled ? "opacity-60 cursor-not-allowed" : ""
                             ].join(' ')}
                         />
-                        <button
-                            onClick={handleSubmit}
-                            disabled={inputDisabled || !inputValue.trim()}
-                            className="px-3 h-10 bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] rounded-[6px] border border-[var(--vscode-input-border)] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        >
-                            <Send size={16} />
-                        </button>
+                        {isGenerating ? (
+                            <button
+                                onClick={onCancel}
+                                disabled={isCancelling}
+                                title={t('agentPanel.cancelGeneration')}
+                                className="px-3 h-10 bg-red-500/10 text-red-600 rounded-[6px] border border-red-300/50 hover:bg-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                                {isCancelling ? (
+                                    <motion.div
+                                        animate={{ rotate: 360 }}
+                                        transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                                        className="w-4 h-4 border-2 border-red-500 border-t-transparent rounded-full"
+                                    />
+                                ) : (
+                                    <Square size={16} />
+                                )}
+                            </button>
+                        ) : (
+                            <button
+                                onClick={handleSubmit}
+                                disabled={inputDisabled || !inputValue.trim()}
+                                className="px-3 h-10 bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] rounded-[6px] border border-[var(--vscode-input-border)] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                                <Send size={16} />
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>

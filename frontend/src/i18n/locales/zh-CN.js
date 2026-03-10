@@ -504,6 +504,8 @@ export default {
     inputPlaceholderEdit: '输入修改指令（将生成差异块）...',
     inputPlaceholderCreate: '输入本章创作指令（正文需为空）...',
     clipboardNotSupported: '当前环境不支持剪贴板复制',
+    cancelGeneration: '停止生成',
+    cancellingGeneration: '正在停止...',
     stageLabels: {
       read_previous: '阅读前文',
       read_facts: '检索事实摘要',

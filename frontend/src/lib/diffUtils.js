@@ -11,13 +11,27 @@
     let { hunks, stats } = buildHunksFromOps(ops, contextLines);
     const applied = applyDiffOpsWithDecisions(originalLines, ops, {});
     if (normalize(applied) !== normalize(revisedText)) {
+        // Fallback: split changes into separate hunks, not all into hunk-1
+        // 分组策略：delete 块为一组，add 块为一组，避免将所有改动放在同一个 hunk
         const fallbackOps = [];
-        originalLines.forEach((line) => {
-            fallbackOps.push({ type: "delete", content: line, hunkId: "hunk-1" });
-        });
-        revisedLines.forEach((line) => {
-            fallbackOps.push({ type: "add", content: line, hunkId: "hunk-1" });
-        });
+        let hunkCounter = 0;
+
+        // Group 1: All deletes from original
+        if (originalLines.length > 0) {
+            hunkCounter += 1;
+            originalLines.forEach((line) => {
+                fallbackOps.push({ type: "delete", content: line, hunkId: `hunk-${hunkCounter}` });
+            });
+        }
+
+        // Group 2: All adds from revised
+        if (revisedLines.length > 0) {
+            hunkCounter += 1;
+            revisedLines.forEach((line) => {
+                fallbackOps.push({ type: "add", content: line, hunkId: `hunk-${hunkCounter}` });
+            });
+        }
+
         ops = fallbackOps;
         ({ hunks, stats } = buildHunksFromOps(ops, contextLines));
     }

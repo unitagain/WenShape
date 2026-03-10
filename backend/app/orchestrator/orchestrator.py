@@ -121,6 +121,7 @@ class Orchestrator(ContextMixin, AnalysisMixin):
         self.question_round = 0
         self._stream_task: Optional[asyncio.Task] = None
         self._last_stream_results: Dict[str, Dict[str, Any]] = {}
+        self._cancelled: bool = False  # 通用取消标志，用于在所有阶段响应用户取消 / General cancel flag
 
         # Load session config from config.yaml with sensible defaults
         # 从 config.yaml 加载会话配置
@@ -188,6 +189,7 @@ class Orchestrator(ContextMixin, AnalysisMixin):
         self.iteration_count = 0
         self.question_round = 0
         self._last_stream_results = {}
+        self._cancelled = False  # 重置取消标志 / Reset cancel flag on new session
 
         try:
             # ============================================================================
@@ -202,6 +204,9 @@ class Orchestrator(ContextMixin, AnalysisMixin):
 
             await self._update_status(SessionStatus.GENERATING_BRIEF, "Archivist is preparing the scene brief...")
 
+            if self._cancelled:
+                return await self._handle_cancelled()
+
             archivist_result = await self.archivist.execute(
                 project_id=project_id,
                 chapter=chapter,
@@ -211,6 +216,9 @@ class Orchestrator(ContextMixin, AnalysisMixin):
                     "characters": character_names or [],
                 },
             )
+
+            if self._cancelled:
+                return await self._handle_cancelled()
 
             if not archivist_result.get("success"):
                 try:
@@ -225,6 +233,9 @@ class Orchestrator(ContextMixin, AnalysisMixin):
             except Exception as exc:
                 logger.warning("Trace end failed: %s", exc)
 
+            if self._cancelled:
+                return await self._handle_cancelled()
+
             context_bundle = await self._prepare_writer_context(
                 project_id=project_id,
                 chapter=chapter,
@@ -236,6 +247,9 @@ class Orchestrator(ContextMixin, AnalysisMixin):
             critical_items = context_bundle["critical_items"]
             dynamic_items = context_bundle["dynamic_items"]
             context_debug = self._build_context_debug(context_bundle.get("working_memory_payload"))
+
+            if self._cancelled:
+                return await self._handle_cancelled()
 
             questions = context_bundle.get("questions") or None
             if not questions:
@@ -416,6 +430,9 @@ class Orchestrator(ContextMixin, AnalysisMixin):
         self.current_project_id = project_id
         self.current_chapter = chapter
 
+        if self._cancelled:
+            return await self._handle_cancelled()
+
         scene_brief = await self.draft_storage.get_scene_brief(project_id, chapter)
         if not scene_brief:
             archivist_result = await self.archivist.execute(
@@ -430,6 +447,9 @@ class Orchestrator(ContextMixin, AnalysisMixin):
             if not archivist_result.get("success"):
                 return await self._handle_error("Scene brief generation failed")
             scene_brief = archivist_result["scene_brief"]
+
+        if self._cancelled:
+            return await self._handle_cancelled()
 
         context_bundle = await self._prepare_writer_context(
             project_id=project_id,
@@ -702,9 +722,17 @@ class Orchestrator(ContextMixin, AnalysisMixin):
             await self._stream_task
             self._stream_task = None
         except asyncio.CancelledError:
+            # 区分用户主动取消（_cancelled=True）和其他原因的 task 取消
+            # Distinguish user-initiated cancel from other task cancellations
+            if self._cancelled:
+                return await self._handle_cancelled()
             return await self._handle_error("Stream cancelled")
         except Exception as exc:
             return await self._handle_error(f"Draft generation failed: {exc}")
+
+        # 流任务正常完成，但若中途被取消（_stream_writer_output 静默 return），也需要退出
+        if self._cancelled:
+            return await self._handle_cancelled()
 
         versions = await self.draft_storage.list_draft_versions(project_id, chapter)
         latest_version = versions[-1] if versions else "v1"
@@ -1127,7 +1155,7 @@ class Orchestrator(ContextMixin, AnalysisMixin):
         ):
             if not chunk:
                 continue
-            if self._stream_task and self._stream_task.cancelled():
+            if self._cancelled:
                 break
             chunks.append(chunk)
             if self.progress_callback:
@@ -1137,6 +1165,11 @@ class Orchestrator(ContextMixin, AnalysisMixin):
                     "chapter": chapter,
                     "content": chunk,
                 })
+
+        # 用户取消时静默退出，不保存草稿
+        # Exit silently on user cancel without saving draft
+        if self._cancelled:
+            return
 
         final_text = "".join(chunks).strip()
         if not final_text:
@@ -1213,6 +1246,27 @@ class Orchestrator(ContextMixin, AnalysisMixin):
             )
 
         return {"success": False, "status": SessionStatus.ERROR, "error": error_message}
+
+    async def _handle_cancelled(self) -> Dict[str, Any]:
+        """Handle user-initiated cancellation: reset state and broadcast cancel event."""
+        logger.info("Session cancelled by user: project=%s chapter=%s", self.current_project_id, self.current_chapter)
+        self.current_status = SessionStatus.IDLE
+        chapter = self.current_chapter
+        self.current_project_id = None
+        self.current_chapter = None
+
+        if self.progress_callback:
+            await self.progress_callback(
+                {
+                    "type": "cancelled",
+                    "status": SessionStatus.IDLE.value,
+                    "message": "Session cancelled by user",
+                    "project_id": self.current_project_id,
+                    "chapter": chapter,
+                }
+            )
+
+        return {"success": False, "status": SessionStatus.IDLE, "cancelled": True}
 
     def get_status(self) -> Dict[str, Any]:
         """Get current session status."""
