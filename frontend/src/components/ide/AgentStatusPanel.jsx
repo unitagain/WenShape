@@ -303,7 +303,7 @@ const AgentStatusPanel = ({
     // 自动滚动到底部
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages.length, progressEvents.length, contextDebug]);
+    }, [messages.length, progressEvents.length, contextDebug, diffReview]);
 
     const diffSummary = useMemo(() => {
         if (!diffReview?.hunks?.length) return null;
@@ -454,47 +454,6 @@ const AgentStatusPanel = ({
                     </div>
                 ) : (
                     <>
-                        {hasDiffActions ? (
-                            <div className="border border-[var(--vscode-sidebar-border)] rounded-[6px] bg-[var(--vscode-input-bg)] my-2 overflow-hidden">
-                                <div className="px-3 py-2 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
-                                    <div className="flex items-center justify-between">
-                                        <div className="text-xs font-bold text-[var(--vscode-fg)]">{t('agentPanel.diffDone')}</div>
-                                        <div className="text-[10px] text-[var(--vscode-fg-subtle)]">
-                                            {t('agentPanel.diffStats').replace('{add}', diffSummary.additions).replace('{del}', diffSummary.deletions)}
-                                        </div>
-                                    </div>
-                                    <div className="text-[10px] text-[var(--vscode-fg-subtle)] mt-1">
-                                        {t('agentPanel.diffSummary').replace('{total}', diffSummary.total).replace('{accepted}', diffSummary.accepted).replace('{rejected}', diffSummary.rejected).replace('{pending}', diffSummary.pending)}
-                                    </div>
-                                </div>
-                                <div className="px-3 py-2 text-[10px] text-[var(--vscode-fg-subtle)]">
-                                    {t('agentPanel.diffHint')}
-                                </div>
-                                <div className="px-3 pb-3 flex flex-wrap gap-2">
-                                    <button
-                                        type="button"
-                                        onClick={onRejectAllDiff}
-                                        className="text-[10px] px-3 py-1.5 rounded-[6px] border border-red-200 text-red-600 hover:bg-red-50 transition-colors"
-                                    >
-                                        {t('agentPanel.rejectAll')}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={onAcceptAllDiff}
-                                        className="text-[10px] px-3 py-1.5 rounded-[6px] border border-green-200 text-green-700 hover:bg-green-50 transition-colors"
-                                    >
-                                        {t('agentPanel.acceptAll')}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={onApplySelectedDiff}
-                                        className="text-[10px] px-3 py-1.5 rounded-[6px] border border-[var(--vscode-input-border)] bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] hover:opacity-90 transition-colors"
-                                    >
-                                        {t('agentPanel.applyAccepted')}
-                                    </button>
-                                </div>
-                            </div>
-                        ) : null}
                         {feedItems.map((item) => {
                             if (item.kind === 'run') {
                                 return (
@@ -564,7 +523,47 @@ const AgentStatusPanel = ({
 
                             return null;
                         })}
-
+                        {hasDiffActions ? (
+                            <div className="border border-[var(--vscode-sidebar-border)] rounded-[6px] bg-[var(--vscode-input-bg)] my-2 overflow-hidden">
+                                <div className="px-3 py-2 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
+                                    <div className="flex items-center justify-between">
+                                        <div className="text-xs font-bold text-[var(--vscode-fg)]">{t('agentPanel.diffDone')}</div>
+                                        <div className="text-[10px] text-[var(--vscode-fg-subtle)]">
+                                            {t('agentPanel.diffStats').replace('{add}', diffSummary.additions).replace('{del}', diffSummary.deletions)}
+                                        </div>
+                                    </div>
+                                    <div className="text-[10px] text-[var(--vscode-fg-subtle)] mt-1">
+                                        {t('agentPanel.diffSummary').replace('{total}', diffSummary.total).replace('{accepted}', diffSummary.accepted).replace('{rejected}', diffSummary.rejected).replace('{pending}', diffSummary.pending)}
+                                    </div>
+                                </div>
+                                <div className="px-3 py-2 text-[10px] text-[var(--vscode-fg-subtle)]">
+                                    {t('agentPanel.diffHint')}
+                                </div>
+                                <div className="px-3 pb-3 flex flex-wrap gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={onRejectAllDiff}
+                                        className="text-[10px] px-3 py-1.5 rounded-[6px] border border-red-200 text-red-600 hover:bg-red-50 transition-colors"
+                                    >
+                                        {t('agentPanel.rejectAll')}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={onAcceptAllDiff}
+                                        className="text-[10px] px-3 py-1.5 rounded-[6px] border border-green-200 text-green-700 hover:bg-green-50 transition-colors"
+                                    >
+                                        {t('agentPanel.acceptAll')}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={onApplySelectedDiff}
+                                        className="text-[10px] px-3 py-1.5 rounded-[6px] border border-[var(--vscode-input-border)] bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] hover:opacity-90 transition-colors"
+                                    >
+                                        {t('agentPanel.applyAccepted')}
+                                    </button>
+                                </div>
+                            </div>
+                        ) : null}
                     </>
                 )}
 

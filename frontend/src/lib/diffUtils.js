@@ -140,10 +140,12 @@ const buildHunksFromOps = (ops, contextLines) => {
 
         if (op.type === "context") {
             if (pending) {
-                pending.changes.push(op);
                 pending.trailingContext += 1;
                 if (pending.trailingContext >= contextLines) {
                     flushPending();
+                    preContext = [op];
+                } else {
+                    pending.changes.push(op);
                 }
             } else {
                 preContext.push(op);
@@ -152,6 +154,11 @@ const buildHunksFromOps = (ops, contextLines) => {
                 }
             }
             return;
+        }
+
+        // 遇到新的变更行：如果当前 hunk 已有 trailing context，说明中间有间隔，切分新 hunk
+        if (pending && pending.trailingContext > 0) {
+            flushPending();
         }
 
         if (!pending) {
