@@ -484,6 +484,7 @@ export default {
     modeWriterTitle: 'Chapter not empty: Writer is only available when chapter is empty',
     modeWriterHint: 'Writer: generates new prose (streaming output)',
     modeEditorHint: 'Editor: generates diff blocks you can accept or reject',
+    modeEditorDisabledTitle: 'Content is empty: please use Writer to create content first',
     contextQuick: 'Quick',
     contextFull: 'Full',
     contextQuickHint: 'Quick: use existing memory pack without rebuilding',

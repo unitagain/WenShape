@@ -264,6 +264,9 @@ function WritingSessionContent({ isEmbedded = false }) {
         if (!isGenerating && !canUseWriter && agentMode === 'create') {
             setAgentMode('edit');
         }
+        if (!isGenerating && canUseWriter && agentMode === 'edit') {
+            setAgentMode('create');
+        }
     }, [canUseWriter, agentMode, isGenerating]);
 
     useEffect(() => {
@@ -1820,6 +1823,7 @@ function WritingSessionContent({ isEmbedded = false }) {
                 mode={agentMode}
                 onModeChange={setAgentMode}
                 createDisabled={!canUseWriter}
+                editDisabled={canUseWriter}
                 inputDisabled={agentBusy && String(aiLockedChapter || '') !== activeChapterKey}
                 inputDisabledReason={
                     agentBusy && String(aiLockedChapter || '') !== activeChapterKey
