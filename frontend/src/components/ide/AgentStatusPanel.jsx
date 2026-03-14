@@ -181,6 +181,7 @@ const AgentStatusPanel = ({
     mode = 'create',
     onModeChange = () => { },
     createDisabled = false,
+    editDisabled = false,
     inputDisabled = false,
     inputDisabledReason = '',
     selectionCandidateSummary = '',
@@ -592,14 +593,14 @@ const AgentStatusPanel = ({
                     <button
                         type="button"
                         onClick={() => onModeChange('edit')}
-                        title={t('agentPanel.modeEditorHint')}
-                        disabled={inputDisabled}
+                        title={editDisabled ? t('agentPanel.modeEditorDisabledTitle') : t('agentPanel.modeEditorHint')}
+                        disabled={editDisabled || inputDisabled}
                             className={[
                                 "px-2.5 h-7 text-[11px] rounded-[6px] border transition-colors",
                                 mode === 'edit'
                                     ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]"
                                     : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]",
-                                inputDisabled ? "opacity-50 cursor-not-allowed" : ""
+                                (editDisabled || inputDisabled) ? "opacity-50 cursor-not-allowed" : ""
                             ].join(' ')}
                         >
                         {t('agentPanel.modeEditor')}

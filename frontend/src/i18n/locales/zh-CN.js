@@ -485,6 +485,7 @@ export default {
     modeWriterTitle: '正文非空：主笔仅在正文为空时可用',
     modeWriterHint: '主笔：用于撰写新正文（流式输出）',
     modeEditorHint: '编辑：生成差异块，可选择接受或撤销',
+    modeEditorDisabledTitle: '正文为空：请先使用主笔撰写内容',
     contextQuick: '快速',
     contextFull: '完整',
     contextQuickHint: '快速：直接使用本章最新记忆包（不重建）',
