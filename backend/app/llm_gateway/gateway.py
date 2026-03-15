@@ -128,7 +128,7 @@ class LLMGateway:
             elif provider_type == "anthropic":
                 return AnthropicProvider(
                     api_key=api_key,
-                    model=profile.get("model", "claude-3-5-sonnet-20241022"),
+                    model=profile.get("model", "claude-sonnet-4-6"),
                     max_tokens=profile.get("max_tokens", 8000),
                     temperature=profile.get("temperature", 0.7)
                 )

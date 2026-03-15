@@ -135,12 +135,8 @@ MODEL_CONTEXT_WINDOWS = {
     "gpt-3.5-turbo-16k": 16385,
 
     # Anthropic
-    "claude-3-5-sonnet-20241022": 200000,
-    "claude-3-5-sonnet": 200000,
-    "claude-3-opus": 200000,
-    "claude-3-sonnet": 200000,
-    "claude-3-haiku": 200000,
-    "claude-2": 100000,
+    "claude-opus-4-6": 200000,
+    "claude-sonnet-4-6": 200000,
 
     # DeepSeek
     "deepseek-chat": 64000,
@@ -198,7 +194,7 @@ def get_model_context_window(model_name: str) -> int:
     Example:
         >>> get_model_context_window("gpt-4o")
         128000
-        >>> get_model_context_window("claude-3-5-sonnet-20241022")
+        >>> get_model_context_window("claude-sonnet-4-6")
         200000
         >>> get_model_context_window("unknown-model")
         32000
