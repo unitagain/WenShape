@@ -58,7 +58,8 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
         model: '',
         base_url: '',
         temperature: 0.7,
-        max_tokens: 8000
+        max_tokens: 8000,
+        max_context_tokens: '',
     });
 
     useEffect(() => {
@@ -74,7 +75,8 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
                     model: profile.model || '',
                     base_url: profile.base_url || '',
                     temperature: profile.temperature || 0.7,
-                    max_tokens: profile.max_tokens || 8000
+                    max_tokens: profile.max_tokens || 8000,
+                    max_context_tokens: profile.max_context_tokens || '',
                 });
             } else {
                 setFormData({
@@ -84,7 +86,8 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
                     model: '',
                     base_url: '',
                     temperature: 0.7,
-                    max_tokens: 8000
+                    max_tokens: 8000,
+                    max_context_tokens: '',
                 });
             }
         }
@@ -183,7 +186,14 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
     };
 
     const handleSave = () => {
-        onSave(formData);
+        const payload = { ...formData };
+        // 空字符串转 null，后端 Optional[int] 需要 null 而非空串
+        if (!payload.max_context_tokens) {
+            payload.max_context_tokens = null;
+        } else {
+            payload.max_context_tokens = parseInt(payload.max_context_tokens, 10) || null;
+        }
+        onSave(payload);
     };
 
     const handleDelete = async () => {
@@ -478,6 +488,21 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
                                     onChange={(e) => setFormData({ ...formData, temperature: parseFloat(e.target.value) })}
                                     className="w-full accent-[var(--vscode-focus-border)]"
                                 />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-xs font-semibold text-[var(--vscode-fg-subtle)] uppercase">
+                                    {t('llmModal.maxContextTokensLabel')}
+                                </label>
+                                <Input
+                                    type="number"
+                                    value={formData.max_context_tokens}
+                                    onChange={(e) => setFormData({ ...formData, max_context_tokens: e.target.value })}
+                                    placeholder={t('llmModal.maxContextTokensPlaceholder')}
+                                    min="0"
+                                    step="1000"
+                                    className="bg-[var(--vscode-input-bg)] border-[var(--vscode-input-border)] text-[var(--vscode-fg)] focus-visible:border-[var(--vscode-focus-border)] focus-visible:ring-[var(--vscode-focus-border)]"
+                                />
+                                <p className="text-xs text-[var(--vscode-fg-subtle)]">{t('llmModal.maxContextTokensNote')}</p>
                             </div>
                         </motion.div>
 

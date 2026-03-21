@@ -20,6 +20,7 @@ class LLMProfile(BaseModel):
     model: Optional[str] = None
     temperature: float = 0.7
     max_tokens: int = 8000
+    max_context_tokens: Optional[int] = None  # 用户手动指定上下文窗口大小，覆盖模型自动推断
     
 class AgentAssignments(BaseModel):
     archivist: Optional[str] = None

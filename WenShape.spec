@@ -1,12 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files
+
+datas = [('backend/static', 'static'), ('backend/config.yaml', '.')]
+datas += collect_data_files('tiktoken_ext.openai_public')
+datas += collect_data_files('tiktoken_ext')
 
 
 a = Analysis(
     ['backend\\app\\main.py'],
     pathex=['backend'],
     binaries=[],
-    datas=[('backend/static', 'static'), ('backend/config.yaml', '.')],
-    hiddenimports=['uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto', 'uvicorn.protocols', 'uvicorn.protocols.http', 'uvicorn.protocols.http.auto', 'uvicorn.lifespan', 'uvicorn.lifespan.on'],
+    datas=datas,
+    hiddenimports=['uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto', 'uvicorn.protocols', 'uvicorn.protocols.http', 'uvicorn.protocols.http.auto', 'uvicorn.lifespan', 'uvicorn.lifespan.on', 'tiktoken', 'tiktoken_ext.openai_public', 'tiktoken_ext', 'aiohttp'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

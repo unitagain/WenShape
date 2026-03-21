@@ -155,6 +155,7 @@ export interface LLMProfile {
   base_url?: string;               // 自定义 Base URL
   model: string;                   // 模型名称
   max_tokens?: number;             // 最大输出 Token 数
+  max_context_tokens?: number;     // 上下文窗口大小（手动覆盖自动推断）
   temperature?: number;            // 温度参数（0-2）
 }
 

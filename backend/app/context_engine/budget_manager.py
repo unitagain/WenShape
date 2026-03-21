@@ -107,13 +107,15 @@ class ContextBudgetManager:
         ratios (Dict[str, float]): 各类别的预算比例 / Budget ratios for each category.
     """
 
-    def __init__(self, model_name: Optional[str] = None, max_output_tokens: int = 8000):
+    def __init__(self, model_name: Optional[str] = None, max_output_tokens: int = 8000, max_context_tokens: int = 0):
         """
         初始化预算管理器 / Initialize the budget manager.
 
         Args:
             model_name: 模型名称，用于确定上下文窗口大小 / Model name (e.g., 'gpt-4o').
             max_output_tokens: 最大输出token数 / Maximum tokens the model will generate.
+            max_context_tokens: 用户显式配置的上下文窗口大小，0 表示自动推断 /
+                User-configured context window override. 0 means auto-detect from model name.
         """
         self.model_name = model_name
         self.max_output_tokens = max_output_tokens
@@ -130,9 +132,15 @@ class ContextBudgetManager:
             "output_reserve": budget_config.get("output_reserve", 0.20),
         }
 
-        # 计算总可用预算
-        # Calculate total available budget
-        self._context_window = get_model_context_window(model_name) if model_name else 128000
+        # 上下文窗口大小：优先使用显式配置，否则从模型名推断
+        # Context window: prefer explicit config, fallback to model name inference
+        if max_context_tokens and max_context_tokens > 0:
+            self._context_window = max_context_tokens
+        elif model_name:
+            self._context_window = get_model_context_window(model_name)
+        else:
+            self._context_window = 128000
+
         self._total_budget = self._calculate_total_budget()
 
         # 使用追踪
@@ -313,7 +321,7 @@ def create_budget_manager(
     创建预算管理器的工厂函数
 
     Args:
-        profile: LLM 配置 profile
+        profile: LLM 配置 profile（可包含 max_context_tokens 覆盖上下文窗口推断）
         model_name: 模型名称（如果没有 profile）
         max_output_tokens: 最大输出 tokens
 
@@ -323,8 +331,14 @@ def create_budget_manager(
     if profile:
         model = profile.get("model", model_name)
         max_tokens = profile.get("max_tokens", max_output_tokens)
+        max_context = profile.get("max_context_tokens") or 0
     else:
         model = model_name
         max_tokens = max_output_tokens
+        max_context = 0
 
-    return ContextBudgetManager(model_name=model, max_output_tokens=max_tokens)
+    return ContextBudgetManager(
+        model_name=model,
+        max_output_tokens=max_tokens,
+        max_context_tokens=max_context,
+    )

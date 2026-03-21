@@ -136,11 +136,7 @@ export default {
     deleteFailed: 'Delete failed: {message}',
     newChapterDialog: 'New Chapter',
     typeNormal: 'Main',
-    typeExtra: 'Extra',
-    typeInterlude: 'Interlude',
     volumeLabel: 'Volume:',
-    insertAfterLabel: 'Insert after:',
-    selectChapterOption: '-- Select chapter --',
     numberLabel: 'Number:',
     resultLabel: 'Result: ',
     titleFieldLabel: 'Title:',
@@ -414,6 +410,9 @@ export default {
     customModelPlaceholder: 'e.g. llama-2-70b',
     providerCustom: 'Custom / Local Model',
     providerMock: 'Mock (Testing)',
+    maxContextTokensLabel: 'Context Window Size',
+    maxContextTokensPlaceholder: 'Leave empty for auto-detect',
+    maxContextTokensNote: 'Recommended for third-party relay APIs. Unit: tokens (e.g. 200000). Leave empty to auto-detect from model name.',
   },
 
   // ─── Title Bar ───────────────────────────────────────────

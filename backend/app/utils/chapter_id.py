@@ -221,11 +221,8 @@ class ChapterIDValidator:
 
         Args:
             existing_ids: 现有章节ID列表 / Existing chapter IDs
-            chapter_type: 章节类型 / Chapter type
-                - "normal": 正文章节 / Regular chapter
-                - "extra": 番外 / Extra chapter
-                - "interlude": 幕间 / Interlude
-            insert_after: 番外/幕间时，在哪一章后插入 / For extra/interlude, after which chapter
+            chapter_type: 章节类型 / Chapter type (only "normal" supported)
+            insert_after: 保留参数，不再使用 / Reserved, no longer used
 
         Returns:
             推荐的下一个章节ID / Suggested next chapter ID
@@ -233,29 +230,13 @@ class ChapterIDValidator:
         Example:
             >>> ChapterIDValidator.suggest_next_id(["C1", "C2"], "normal")
             "C3"
-            >>> ChapterIDValidator.suggest_next_id(["C1E1"], "extra", "C1")
-            "C1E2"
         """
-        if chapter_type == "normal":
-            max_chapter = 0
-            for cid in existing_ids:
-                parsed = ChapterIDValidator.parse(cid)
-                if parsed and not parsed["type"]:
-                    max_chapter = max(max_chapter, parsed["chapter"])
-            return f"C{max_chapter + 1}"
-
-        if chapter_type in {"extra", "interlude"}:
-            if not insert_after:
-                return ""
-            type_code = "E" if chapter_type == "extra" else "I"
-            count = 0
-            for cid in existing_ids:
-                parsed = ChapterIDValidator.parse(cid)
-                if parsed and parsed["type"] == type_code and cid.startswith(insert_after):
-                    count = max(count, parsed["seq"])
-            return f"{_normalize_chapter_id(insert_after)}{type_code}{count + 1}"
-
-        return ""
+        max_chapter = 0
+        for cid in existing_ids:
+            parsed = ChapterIDValidator.parse(cid)
+            if parsed and not parsed["type"]:
+                max_chapter = max(max_chapter, parsed["chapter"])
+        return f"C{max_chapter + 1}"
 
     @staticmethod
     def get_type_label(chapter_id: str) -> str:
@@ -272,30 +253,22 @@ class ChapterIDValidator:
             - "序章": Prologue
             - "正文": Regular chapter
             - "尾声": Epilogue
-            - "番外": Extra chapter
-            - "幕间": Interlude
             - "未知": Unknown
 
         Example:
             >>> ChapterIDValidator.get_type_label("C0")
             "序章"
-            >>> ChapterIDValidator.get_type_label("C5E1")
-            "番外"
+            >>> ChapterIDValidator.get_type_label("C5")
+            "正文"
         """
         parsed = ChapterIDValidator.parse(chapter_id)
         if not parsed:
             return "未知"
-        if not parsed["type"]:
-            if parsed["chapter"] == 0:
-                return "序章"
-            if parsed["chapter"] == 999:
-                return "尾声"
-            return "正文"
-        if parsed["type"] == "E":
-            return "番外"
-        if parsed["type"] == "I":
-            return "幕间"
-        return "未知"
+        if parsed["chapter"] == 0:
+            return "序章"
+        if parsed["chapter"] == 999:
+            return "尾声"
+        return "正文"
 
     @staticmethod
     def calculate_distance(

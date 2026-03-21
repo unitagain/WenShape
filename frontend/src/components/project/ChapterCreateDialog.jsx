@@ -16,9 +16,7 @@ export function ChapterCreateDialog({
     defaultVolumeId = 'V1',
 }) {
     const { t } = useLocale();
-    const [chapterType, setChapterType] = useState('normal');
     const [selectedVolume, setSelectedVolume] = useState('V1');
-    const [insertAfter, setInsertAfter] = useState('');
     const [suggestedId, setSuggestedId] = useState('');
     const [customId, setCustomId] = useState('');
     const [title, setTitle] = useState('');
@@ -47,36 +45,20 @@ export function ChapterCreateDialog({
 
     useEffect(() => {
         if (!open) return;
-        let suggested = '';
-        if (chapterType === 'normal') {
-            const normalChapters = normalizedChapters.filter(
-                (chapter) => chapter.volumeId === selectedVolume && /C\d+$/i.test(chapter.normalizedId)
-            );
-            let maxChapter = 0;
-            normalChapters.forEach((chapter) => {
-                const match = chapter.normalizedId.match(/C(\d+)/i);
-                if (match) maxChapter = Math.max(maxChapter, Number.parseInt(match[1], 10));
-            });
-            suggested = `${selectedVolume}C${maxChapter + 1}`;
-        } else if (chapterType === 'extra' && insertAfter) {
-            const extraCount = normalizedChapters.filter(
-                (chapter) => chapter.normalizedId.startsWith(insertAfter) && chapter.normalizedId.toUpperCase().includes('E')
-            ).length;
-            suggested = `${insertAfter}E${extraCount + 1}`;
-        } else if (chapterType === 'interlude' && insertAfter) {
-            const interludeCount = normalizedChapters.filter(
-                (chapter) => chapter.normalizedId.startsWith(insertAfter) && chapter.normalizedId.toUpperCase().includes('I')
-            ).length;
-            suggested = `${insertAfter}I${interludeCount + 1}`;
-        }
-        setSuggestedId(suggested);
+        const normalChapters = normalizedChapters.filter(
+            (chapter) => chapter.volumeId === selectedVolume && /C\d+$/i.test(chapter.normalizedId)
+        );
+        let maxChapter = 0;
+        normalChapters.forEach((chapter) => {
+            const match = chapter.normalizedId.match(/C(\d+)/i);
+            if (match) maxChapter = Math.max(maxChapter, Number.parseInt(match[1], 10));
+        });
+        setSuggestedId(`${selectedVolume}C${maxChapter + 1}`);
         setCustomId('');
-    }, [chapterType, insertAfter, normalizedChapters, open, selectedVolume]);
+    }, [normalizedChapters, open, selectedVolume]);
 
     useEffect(() => {
         if (open) {
-            setChapterType('normal');
-            setInsertAfter('');
             setTitle('');
             setCustomId('');
             const fallback = availableVolumes[0]?.id || 'V1';
@@ -84,10 +66,6 @@ export function ChapterCreateDialog({
             setSelectedVolume(target);
         }
     }, [availableVolumes, defaultVolumeId, open]);
-
-    useEffect(() => {
-        if (chapterType !== 'normal') setInsertAfter('');
-    }, [chapterType, selectedVolume]);
 
     const rawId = customId || suggestedId;
     const finalId = normalizeToVolume(rawId, selectedVolume);
@@ -111,28 +89,6 @@ export function ChapterCreateDialog({
                     </div>
 
                     <div className="space-y-3 px-2 pb-3">
-                        {/* 类型选择 */}
-                        <div className="flex gap-1 bg-[var(--vscode-sidebar-bg)] p-1 rounded-[var(--radius-sm)]">
-                            {[
-                                { id: 'normal', label: t('chapter.typeNormal') },
-                                { id: 'extra', label: t('chapter.typeExtra') },
-                                { id: 'interlude', label: t('chapter.typeInterlude') }
-                            ].map(tab => (
-                                <button
-                                    key={tab.id}
-                                    onClick={() => setChapterType(tab.id)}
-                                    className={cn(
-                                        "flex-1 text-[11px] py-1 rounded-[var(--radius-sm)] transition-none",
-                                        chapterType === tab.id
-                                            ? "bg-[var(--vscode-bg)] text-[var(--vscode-fg)] shadow-sm font-medium"
-                                            : "text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)]"
-                                    )}
-                                >
-                                    {tab.label}
-                                </button>
-                            ))}
-                        </div>
-
                         {/* 分卷选择 */}
                         <div className="grid grid-cols-[80px_1fr] items-center gap-2">
                             <label className="text-[11px] text-right text-[var(--vscode-fg-subtle)]">{t('chapter.volumeLabel')}</label>
@@ -146,23 +102,6 @@ export function ChapterCreateDialog({
                                 ))}
                             </select>
                         </div>
-
-                        {/* 插入位置 */}
-                        {chapterType !== 'normal' && (
-                            <div className="grid grid-cols-[80px_1fr] items-center gap-2">
-                                <label className="text-[11px] text-right text-[var(--vscode-fg-subtle)]">{t('chapter.insertAfterLabel')}</label>
-                                <select
-                                    value={insertAfter}
-                                    onChange={(e) => setInsertAfter(e.target.value)}
-                                    className="w-full text-xs bg-[var(--vscode-input-bg)] border border-[var(--vscode-input-border)] px-2 py-1 outline-none focus:border-[var(--vscode-focus-border)]"
-                                >
-                                    <option value="">{t('chapter.selectChapterOption')}</option>
-                                    {normalChapters.map(c => (
-                                        <option key={c.normalizedId} value={c.normalizedId}>{c.normalizedId} {c.title}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        )}
 
                         {/* 编号输入 */}
                         <div className="grid grid-cols-[80px_1fr] items-center gap-2">
@@ -200,7 +139,7 @@ export function ChapterCreateDialog({
                             {t('common.cancel')}
                         </button>
                         <button
-                            onClick={() => { if (canCreate) { onConfirm({ id: finalId, title, type: chapterType }); onClose(); } }}
+                            onClick={() => { if (canCreate) { onConfirm({ id: finalId, title, type: 'normal' }); onClose(); } }}
                             disabled={!canCreate}
                             className="px-3 py-1 text-xs text-white bg-[var(--vscode-list-active)] hover:opacity-90 disabled:opacity-50"
                         >
