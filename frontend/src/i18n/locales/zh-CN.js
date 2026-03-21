@@ -137,11 +137,7 @@ export default {
     deleteFailed: '删除失败：{message}',
     newChapterDialog: '新建章节',
     typeNormal: '正文',
-    typeExtra: '番外',
-    typeInterlude: '幕间',
     volumeLabel: '分卷：',
-    insertAfterLabel: '插入到：',
-    selectChapterOption: '-- 请选择章节 --',
     numberLabel: '编号：',
     resultLabel: '结果：',
     titleFieldLabel: '标题：',
@@ -415,6 +411,9 @@ export default {
     customModelPlaceholder: '例如：llama-2-70b',
     providerCustom: '自定义 / 本地模型',
     providerMock: '模拟测试',
+    maxContextTokensLabel: '上下文窗口大小',
+    maxContextTokensPlaceholder: '留空则自动推断',
+    maxContextTokensNote: '使用第三方中转站时建议手动设置，单位为 Token（如 200000）。留空则根据模型名自动推断。',
   },
 
   // ─── 顶部标题栏 ───────────────────────────────────────────

@@ -14,6 +14,7 @@ License: PolyForm Noncommercial License 1.0.0
 from typing import Any, Dict, List, Optional
 
 from app.config import config as app_cfg
+from app.context_engine.token_counter import count_tokens, estimate_tokens_fast
 from app.utils.logger import get_logger
 from app.utils.llm_output import parse_json_payload
 
@@ -486,15 +487,143 @@ class WriterAgent(BaseAgent):
         evidence_pack: Dict[str, Any] = None,
         include_plan: bool = True,
     ) -> List[Dict[str, str]]:
-        context_items = []
+        """
+        构建草稿生成的消息列表 - 带 token 预算感知
+
+        Build messages for draft generation with token budget awareness.
+        Context items are added by priority (high to low). Each section is
+        budget-capped so the total stays within the model's input limit.
+
+        Priority order (high → low):
+          1. chapter_goal, scene_brief     (必选 / mandatory)
+          2. working_memory                (核心上下文 / core context)
+          3. unresolved_gaps               (安全约束 / safety constraint)
+          4. style_card                    (文风一致性 / style consistency)
+          5. text_chunks                   (原文片段 / source excerpts)
+          6. evidence_pack                 (证据 / evidence)
+          7. user_answers, user_feedback   (用户输入 / user input)
+          8. character_cards, world_cards   (设定卡片 / setting cards)
+          9. facts, character_states       (事实/状态 / facts/states)
+         10. previous_summaries            (前章摘要 / chapter summaries, lowest)
+        """
+        # 获取输入 token 上限
+        input_limit = self._get_input_token_limit()
+
+        # 计算固定开销：系统提示词 + 用户指令
+        brief_goal = _get_field(scene_brief, "goal", "")
+        prompt = writer_draft_prompt(
+            include_plan=include_plan,
+            chapter_goal=chapter_goal or "",
+            brief_goal=brief_goal or "",
+            target_word_count=target_word_count,
+            language=self.language,
+        )
+        fixed_tokens = (
+            count_tokens(prompt.system) + count_tokens(prompt.user) + 200
+        )
+
+        # context 可用预算
+        context_budget = max(0, input_limit - fixed_tokens)
+
+        # 使用 ContextBudgetPacker 按优先级装填 context_items
+        packer = _ContextBudgetPacker(context_budget)
         use_compact_context = bool(working_memory and str(working_memory).strip())
 
+        # P1: 必选 — 章节目标 + 场景简要
         if chapter_goal:
-            context_items.append(
+            packer.add(
                 "GOAL PRIORITY:\n- " + str(chapter_goal).strip() + "\n"
-                "Only write content that serves the goal."
+                "Only write content that serves the goal.",
+                section="goal",
             )
 
+        brief_text = self._format_scene_brief(scene_brief)
+        packer.add(brief_text, section="scene_brief")
+
+        # P2: 核心上下文 — working_memory
+        if working_memory:
+            packer.add("Working Memory:\n" + str(working_memory), section="working_memory")
+
+        # P3: 安全约束 — 未解决缺口
+        if unresolved_gaps:
+            gap_text = self._format_unresolved_gaps(unresolved_gaps)
+            if gap_text:
+                packer.add(gap_text, section="gaps")
+
+        # P4: 文风一致性 — 风格卡
+        if style_card:
+            try:
+                packer.add("Style Card:\n" + str(style_card.model_dump()), section="style")
+            except Exception:
+                packer.add("Style Card:\n" + str(style_card), section="style")
+
+        # P5: 原文片段
+        if text_chunks:
+            chunk_text = self._format_text_chunks(text_chunks)
+            if chunk_text:
+                packer.add(chunk_text, section="text_chunks")
+
+        # P6: 证据包
+        if evidence_pack and isinstance(evidence_pack, dict):
+            evidence_text = self._format_evidence_pack(evidence_pack)
+            if evidence_text:
+                packer.add(evidence_text, section="evidence")
+
+        # P7: 用户输入
+        if user_answers:
+            answers_text = self._format_user_answers(user_answers)
+            if answers_text:
+                packer.add(answers_text, section="user_answers")
+
+        if user_feedback:
+            packer.add("User Feedback:\n" + str(user_feedback), section="user_feedback")
+
+        # P8: 设定卡片（仅在无 working_memory 时）
+        if not use_compact_context:
+            if character_cards:
+                cards_text = self._format_model_list("Character Cards:", character_cards[:10])
+                packer.add(cards_text, section="character_cards")
+
+            if world_cards:
+                cards_text = self._format_model_list("World Cards:", world_cards[:10])
+                packer.add(cards_text, section="world_cards")
+
+        # P9: 事实和状态（仅在无 working_memory 时）
+        if not use_compact_context:
+            if facts and not (evidence_pack and evidence_pack.get("items")):
+                facts_text = self._format_model_list("Canon Facts:", facts[:20])
+                packer.add(facts_text, section="facts")
+
+            if character_states:
+                states_text = self._format_model_list("Character States:", character_states[:20])
+                packer.add(states_text, section="character_states")
+
+        # P10: 前章摘要（最低优先级，最先被裁剪）
+        if previous_summaries:
+            packer.add(
+                "Previous Chapters:\n" + "\n\n".join(previous_summaries),
+                section="summaries",
+            )
+
+        if packer.dropped_sections:
+            logger.warning(
+                "Writer context budget exceeded: dropped sections %s "
+                "(used %d / budget %d tokens)",
+                packer.dropped_sections, packer.used_tokens, context_budget,
+            )
+
+        return self.build_messages(
+            system_prompt=prompt.system,
+            user_prompt=prompt.user,
+            context_items=packer.items,
+        )
+
+    # ------------------------------------------------------------------
+    # Formatting helpers
+    # ------------------------------------------------------------------
+
+    def _format_scene_brief(self, scene_brief: Optional[SceneBrief]) -> str:
+        """Format scene brief into a single context block."""
         brief_chapter = _get_field(scene_brief, "chapter", "")
         brief_title = _get_field(scene_brief, "title", "")
         brief_goal = _get_field(scene_brief, "goal", "")
@@ -504,7 +633,7 @@ class WriterAgent(BaseAgent):
         brief_style = _get_field(scene_brief, "style_reminder", "")
         brief_forbidden = _get_field(scene_brief, "forbidden", [])
 
-        brief_text = f"""Scene Brief:
+        return f"""Scene Brief:
 Chapter: {brief_chapter}
 Title: {brief_title}
 Goal: {brief_goal}
@@ -523,127 +652,73 @@ Style Reminder: {brief_style}
 FORBIDDEN:
 {self._format_list(brief_forbidden)}
 """
-        context_items.append(brief_text)
 
-        if working_memory:
-            context_items.append("Working Memory:\n" + str(working_memory))
+    @staticmethod
+    def _format_unresolved_gaps(unresolved_gaps: List[Dict[str, Any]]) -> str:
+        lines = ["未解决缺口（不得编造，请用模糊化叙事绕过或省略）:"]
+        for gap in unresolved_gaps[:6]:
+            if not isinstance(gap, dict):
+                continue
+            text = str(gap.get("text") or "").strip()
+            if text:
+                lines.append(f"- {text}")
+        return "\n".join(lines) if len(lines) > 1 else ""
 
-        if unresolved_gaps:
-            lines = ["未解决缺口（不得编造，请用模糊化叙事绕过或省略）:"]
-            for gap in unresolved_gaps[:6]:
-                if not isinstance(gap, dict):
-                    continue
-                text = str(gap.get("text") or "").strip()
-                if text:
-                    lines.append(f"- {text}")
-            if len(lines) > 1:
-                context_items.append("\n".join(lines))
+    @staticmethod
+    def _format_text_chunks(text_chunks: List[Any]) -> str:
+        lines = ["Text Chunks:"]
+        for chunk in text_chunks[:6]:
+            if isinstance(chunk, dict):
+                chapter = chunk.get("chapter") or ""
+                text = chunk.get("text") or ""
+                prefix = f"[{chapter}] " if chapter else ""
+                lines.append(prefix + text)
+            else:
+                lines.append(str(chunk))
+        return "\n".join(lines)
 
-        if style_card:
+    @staticmethod
+    def _format_evidence_pack(evidence_pack: Dict[str, Any]) -> str:
+        items = evidence_pack.get("items") or []
+        if not items:
+            return ""
+        lines = ["Evidence Pack:"]
+        for item in items[:12]:
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("type") or "").strip()
+            text = str(item.get("text") or item.get("statement") or "").strip()
+            source = item.get("source") or {}
+            chapter = str(source.get("chapter") or "").strip()
+            prefix = f"[{item_type}]" if item_type else ""
+            if chapter:
+                prefix = f"{prefix}[{chapter}]" if prefix else f"[{chapter}]"
+            line = f"{prefix} {text}".strip()
+            if line:
+                lines.append(line)
+        return "\n".join(lines) if len(lines) > 1 else ""
+
+    @staticmethod
+    def _format_user_answers(user_answers: List[Dict[str, str]]) -> str:
+        lines = ["User Answers:"]
+        for answer in user_answers:
+            if not isinstance(answer, dict):
+                continue
+            question = answer.get("question") or answer.get("text") or answer.get("type") or ""
+            reply = answer.get("answer") or ""
+            if question or reply:
+                lines.append(f"- {question}: {reply}")
+        return "\n".join(lines) if len(lines) > 1 else ""
+
+    @staticmethod
+    def _format_model_list(header: str, items: List[Any]) -> str:
+        lines = [header]
+        for item in items:
             try:
-                context_items.append("Style Card:\n" + str(style_card.model_dump()))
+                lines.append(str(item.model_dump()))
             except Exception:
-                context_items.append("Style Card:\n" + str(style_card))
-
-        if text_chunks:
-            lines = ["Text Chunks:"]
-            for chunk in text_chunks[:6]:
-                if isinstance(chunk, dict):
-                    chapter = chunk.get("chapter") or ""
-                    text = chunk.get("text") or ""
-                    prefix = f"[{chapter}] " if chapter else ""
-                    lines.append(prefix + text)
-                else:
-                    lines.append(str(chunk))
-            context_items.append("\n".join(lines))
-
-        if evidence_pack and isinstance(evidence_pack, dict):
-            items = evidence_pack.get("items") or []
-            if items:
-                lines = ["Evidence Pack:"]
-                for item in items[:12]:
-                    if not isinstance(item, dict):
-                        continue
-                    item_type = str(item.get("type") or "").strip()
-                    text = str(item.get("text") or item.get("statement") or "").strip()
-                    source = item.get("source") or {}
-                    chapter = str(source.get("chapter") or "").strip()
-                    prefix = f"[{item_type}]" if item_type else ""
-                    if chapter:
-                        prefix = f"{prefix}[{chapter}]" if prefix else f"[{chapter}]"
-                    line = f"{prefix} {text}".strip()
-                    if line:
-                        lines.append(line)
-                if len(lines) > 1:
-                    context_items.append("\n".join(lines))
-
-        if not use_compact_context:
-            if character_cards:
-                lines = ["Character Cards:"]
-                for card in character_cards[:10]:
-                    try:
-                        lines.append(str(card.model_dump()))
-                    except Exception:
-                        lines.append(str(card))
-                context_items.append("\n".join(lines))
-
-            if world_cards:
-                lines = ["World Cards:"]
-                for card in world_cards[:10]:
-                    try:
-                        lines.append(str(card.model_dump()))
-                    except Exception:
-                        lines.append(str(card))
-                context_items.append("\n".join(lines))
-
-            if facts and not (evidence_pack and evidence_pack.get("items")):
-                lines = ["Canon Facts:"]
-                for fact in facts[:20]:
-                    try:
-                        lines.append(str(fact.model_dump()))
-                    except Exception:
-                        lines.append(str(fact))
-                context_items.append("\n".join(lines))
-
-            if character_states:
-                lines = ["Character States:"]
-                for state in character_states[:20]:
-                    try:
-                        lines.append(str(state.model_dump()))
-                    except Exception:
-                        lines.append(str(state))
-                context_items.append("\n".join(lines))
-
-        if user_answers:
-            lines = ["User Answers:"]
-            for answer in user_answers:
-                if not isinstance(answer, dict):
-                    continue
-                question = answer.get("question") or answer.get("text") or answer.get("type") or ""
-                reply = answer.get("answer") or ""
-                if question or reply:
-                    lines.append(f"- {question}: {reply}")
-            if len(lines) > 1:
-                context_items.append("\n".join(lines))
-
-        if user_feedback:
-            context_items.append("User Feedback:\n" + str(user_feedback))
-
-        if previous_summaries:
-            context_items.append("Previous Chapters:\n" + "\n\n".join(previous_summaries))
-        prompt = writer_draft_prompt(
-            include_plan=include_plan,
-            chapter_goal=chapter_goal or "",
-            brief_goal=brief_goal or "",
-            target_word_count=target_word_count,
-            language=self.language,
-        )
-
-        return self.build_messages(
-            system_prompt=prompt.system,
-            user_prompt=prompt.user,
-            context_items=context_items,
-        )
+                lines.append(str(item))
+        return "\n".join(lines)
 
     def _format_characters(self, characters: List[Dict]) -> str:
         if not characters:
@@ -665,4 +740,48 @@ FORBIDDEN:
         if not items:
             return "None"
         return "\n".join([f"- {item}" for item in items])
+
+
+class _ContextBudgetPacker:
+    """
+    按 token 预算装填 context items。
+
+    Packs context items into a budget. When remaining budget is insufficient
+    for the next item, that item (and its section name) is recorded as dropped.
+    Items are added in caller-defined priority order.
+
+    Attributes:
+        budget: Total token budget for all context items.
+        items: Successfully packed items.
+        used_tokens: Tokens consumed so far.
+        dropped_sections: Section names that were dropped due to budget.
+    """
+
+    __slots__ = ("budget", "items", "used_tokens", "dropped_sections")
+
+    def __init__(self, budget: int) -> None:
+        self.budget = budget
+        self.items: List[str] = []
+        self.used_tokens = 0
+        self.dropped_sections: List[str] = []
+
+    def add(self, text: str, section: str = "") -> bool:
+        """
+        尝试添加一个 context item。
+
+        Try to add a context item within the remaining budget.
+        Returns True if added, False if dropped.
+        """
+        if not text or not text.strip():
+            return False
+
+        tokens = estimate_tokens_fast(text)
+        if self.used_tokens + tokens > self.budget:
+            if section:
+                self.dropped_sections.append(section)
+            return False
+
+        self.items.append(text)
+        self.used_tokens += tokens
+        return True
 

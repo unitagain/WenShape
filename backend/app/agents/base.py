@@ -16,10 +16,15 @@ from typing import List, Dict, Any, Optional
 from app.llm_gateway import LLMGateway
 from app.storage import CardStorage, CanonStorage, DraftStorage
 from app.context_engine.trace_collector import trace_collector, TraceEventType
+from app.context_engine.token_counter import count_tokens, get_model_context_window
 from app.prompts import base_agent_system_prompt, format_context_message
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# 安全边际：预留给 messages 格式开销（角色标记、分隔符等）
+# Safety margin for message formatting overhead (role tokens, separators, etc.)
+_MESSAGE_OVERHEAD_TOKENS = 200
 
 
 class BaseAgent(ABC):
@@ -252,10 +257,11 @@ class BaseAgent(ABC):
         context_items: Optional[List[str]] = None
     ) -> List[Dict[str, str]]:
         """
-        构建发送给大模型的消息列表 - 标准格式
+        构建发送给大模型的消息列表 - 带 token 安全网
 
-        Build message list in standard format for LLM API calls.
-        Supports system prompt + context + user prompt structure.
+        Build message list for LLM API calls with automatic token safety check.
+        If the assembled messages exceed the model's input limit, context_items
+        are trimmed from the end (lowest priority) until within budget.
 
         Args:
             system_prompt: System message content (instructions, constraints).
@@ -265,24 +271,125 @@ class BaseAgent(ABC):
         Returns:
             List of message dicts with "role" and "content" keys in order:
             1. System message
-            2. Context message (if provided)
+            2. Context message (if provided, may be trimmed)
             3. User message
         """
+        # 计算不可裁剪部分的 token 数（系统提示词 + 用户指令 + 格式开销）
+        fixed_tokens = (
+            count_tokens(system_prompt)
+            + count_tokens(user_prompt)
+            + _MESSAGE_OVERHEAD_TOKENS
+        )
+
+        # 获取模型输入 token 上限
+        input_limit = self._get_input_token_limit()
+
+        # 裁剪 context_items 使总量不超限
+        trimmed_items = self._trim_context_items(
+            context_items or [],
+            max_context_tokens=input_limit - fixed_tokens,
+        )
+
         messages = [
             {"role": "system", "content": system_prompt}
         ]
 
-        # Add context if provided
-        if context_items:
+        if trimmed_items:
             messages.append({
                 "role": "user",
-                "content": format_context_message(context_items, language=self.language)
+                "content": format_context_message(trimmed_items, language=self.language)
             })
 
-        # Add main user prompt
         messages.append({
             "role": "user",
             "content": user_prompt
         })
 
         return messages
+
+    def _get_input_token_limit(self) -> int:
+        """
+        获取当前 Agent 使用的模型的输入 token 上限。
+
+        Get the input token limit for this agent's assigned model.
+        input_limit = context_window - max_output_tokens
+
+        Returns:
+            Maximum input tokens allowed.
+        """
+        agent_name = self.get_agent_name()
+        try:
+            profile = self.gateway.get_profile_for_agent(agent_name)
+        except Exception:
+            profile = None
+
+        if profile:
+            # 优先使用用户显式配置的 max_context_tokens
+            context_window = profile.get("max_context_tokens") or 0
+            if not context_window:
+                model_name = profile.get("model") or ""
+                context_window = get_model_context_window(model_name)
+            max_output = profile.get("max_tokens") or 8000
+        else:
+            context_window = 32000
+            max_output = 8000
+
+        return max(context_window - max_output, 4096)
+
+    @staticmethod
+    def _trim_context_items(
+        context_items: List[str],
+        max_context_tokens: int,
+    ) -> List[str]:
+        """
+        按 token 预算裁剪 context_items，从末尾（低优先级）开始移除。
+
+        Trim context_items to fit within max_context_tokens.
+        Items at the end of the list are considered lower priority and removed first.
+
+        Args:
+            context_items: Context items ordered by priority (high → low).
+            max_context_tokens: Maximum tokens allowed for all context items combined.
+
+        Returns:
+            Trimmed list of context items.
+        """
+        if max_context_tokens <= 0:
+            if context_items:
+                logger.warning(
+                    "Context budget exhausted (%d tokens), dropping all %d context items",
+                    max_context_tokens, len(context_items),
+                )
+            return []
+
+        if not context_items:
+            return []
+
+        # 快速路径：计算全量 token，如果不超限直接返回
+        item_tokens = [count_tokens(str(item)) for item in context_items]
+        total = sum(item_tokens)
+        if total <= max_context_tokens:
+            return list(context_items)
+
+        # 超限：从末尾开始逐项移除
+        logger.warning(
+            "Context tokens (%d) exceed limit (%d), trimming from end",
+            total, max_context_tokens,
+        )
+
+        kept: List[str] = []
+        running = 0
+        for item, tokens in zip(context_items, item_tokens):
+            if running + tokens > max_context_tokens:
+                break
+            kept.append(item)
+            running += tokens
+
+        dropped = len(context_items) - len(kept)
+        if dropped > 0:
+            logger.warning(
+                "Dropped %d/%d context items to fit budget (%d/%d tokens)",
+                dropped, len(context_items), running, max_context_tokens,
+            )
+
+        return kept

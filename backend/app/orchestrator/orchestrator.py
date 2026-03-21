@@ -24,6 +24,7 @@ from app.llm_gateway import get_gateway
 from app.storage import CardStorage, CanonStorage, DraftStorage, MemoryPackStorage
 from app.agents import ArchivistAgent, WriterAgent, EditorAgent
 from app.context_engine.select_engine import ContextSelectEngine
+from app.context_engine.token_counter import count_tokens
 from app.context_engine.trace_collector import trace_collector
 from app.orchestrator.storage_adapter import UnifiedStorageAdapter
 from app.schemas.draft import SceneBrief
@@ -1308,11 +1309,11 @@ class Orchestrator(ContextMixin, AnalysisMixin):
         return str(chapter_id).strip()
 
     def _estimate_context_tokens(self, context_package: Dict[str, Any]) -> int:
-        """Estimate tokens for context package only."""
+        """Estimate tokens for context package using accurate token counter."""
         total = 0
         for key in ["full_facts", "summary_with_events", "summary_only", "title_only", "volume_summaries"]:
             for item in context_package.get(key, []) or []:
-                total += len(str(item)) // 2
+                total += count_tokens(str(item))
         return total
 
     def _trim_context_package(
