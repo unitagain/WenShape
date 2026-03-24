@@ -207,10 +207,11 @@ class WriterAgent(BaseAgent):
         ]
 
         if context_package:
+            _wlimits = app_cfg.get("writer", {}).get("context_limits", {})
             context_items.append("事实摘要（节选，供反问参考）：")
             for key in ["summary_with_events", "summary_only", "full_facts"]:
                 items = context_package.get(key, []) or []
-                for item in items[:2]:
+                for item in items[:int(_wlimits.get("fact_summary_items", 2))]:
                     summary = str(item.get("summary") or "").strip()
                     events = item.get("key_events") or []
                     chapter_id = item.get("chapter") or ""
@@ -220,7 +221,7 @@ class WriterAgent(BaseAgent):
                         if summary:
                             block.append(f"摘要：{summary}")
                         if events:
-                            block.append("事件：" + "；".join([str(e) for e in events[:4]]))
+                            block.append("事件：" + "；".join([str(e) for e in events[:int(_wlimits.get("event_items", 4))]]))
                         context_items.append("\n".join(block))
         prompt = writer_questions_prompt(context_items, language=self.language)
 
@@ -302,7 +303,8 @@ class WriterAgent(BaseAgent):
             if isinstance(queries, list):
                 cleaned = [str(q).strip() for q in queries if str(q).strip()]
                 if cleaned:
-                    return {"queries": cleaned[:4], "note": str(data.get("note") or "").strip()}
+                    _wl = app_cfg.get("writer", {}).get("context_limits", {})
+                    return {"queries": cleaned[:int(_wl.get("query_items", 4))], "note": str(data.get("note") or "").strip()}
 
         # Fallback: use gap texts as queries
         fallback = [t for t in gap_texts if t][:3]
@@ -579,23 +581,24 @@ class WriterAgent(BaseAgent):
             packer.add("User Feedback:\n" + str(user_feedback), section="user_feedback")
 
         # P8: 设定卡片（仅在无 working_memory 时）
+        _cl = app_cfg.get("writer", {}).get("context_limits", {})
         if not use_compact_context:
             if character_cards:
-                cards_text = self._format_model_list("Character Cards:", character_cards[:10])
+                cards_text = self._format_model_list("Character Cards:", character_cards[:int(_cl.get("character_cards", 10))])
                 packer.add(cards_text, section="character_cards")
 
             if world_cards:
-                cards_text = self._format_model_list("World Cards:", world_cards[:10])
+                cards_text = self._format_model_list("World Cards:", world_cards[:int(_cl.get("world_cards", 10))])
                 packer.add(cards_text, section="world_cards")
 
         # P9: 事实和状态（仅在无 working_memory 时）
         if not use_compact_context:
             if facts and not (evidence_pack and evidence_pack.get("items")):
-                facts_text = self._format_model_list("Canon Facts:", facts[:20])
+                facts_text = self._format_model_list("Canon Facts:", facts[:int(_cl.get("facts", 20))])
                 packer.add(facts_text, section="facts")
 
             if character_states:
-                states_text = self._format_model_list("Character States:", character_states[:20])
+                states_text = self._format_model_list("Character States:", character_states[:int(_cl.get("character_states", 20))])
                 packer.add(states_text, section="character_states")
 
         # P10: 前章摘要（最低优先级，最先被裁剪）
@@ -656,7 +659,8 @@ FORBIDDEN:
     @staticmethod
     def _format_unresolved_gaps(unresolved_gaps: List[Dict[str, Any]]) -> str:
         lines = ["未解决缺口（不得编造，请用模糊化叙事绕过或省略）:"]
-        for gap in unresolved_gaps[:6]:
+        _gap_limit = int(app_cfg.get("writer", {}).get("context_limits", {}).get("unresolved_gaps", 6))
+        for gap in unresolved_gaps[:_gap_limit]:
             if not isinstance(gap, dict):
                 continue
             text = str(gap.get("text") or "").strip()

@@ -16,6 +16,7 @@ import { Save, X, RefreshCw, Trash2 } from 'lucide-react';
 import { Button, Input } from './ui/core';
 import { configAPI } from '../api';
 import logger from '../utils/logger';
+import { extractErrorDetail } from '../utils/extractError';
 import { useLocale } from '../i18n';
 
 /**
@@ -178,8 +179,7 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
         } catch (error) {
             logger.error("Failed to fetch models", error);
             setFetchWarning('');
-            const errorMsg = error.response?.data?.detail || error.message;
-            alert(t('llmModal.fetchFailed', { message: errorMsg }));
+            alert(t('llmModal.fetchFailed', { message: extractErrorDetail(error) }));
         } finally {
             setFetchingModels(false);
         }

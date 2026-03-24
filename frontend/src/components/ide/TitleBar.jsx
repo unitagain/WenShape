@@ -3,12 +3,31 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useIDE } from '../../context/IDEContext';
 import useSWR, { mutate } from 'swr';
 import { projectsAPI } from '../../api';
-import { Bot, ChevronDown, Folder, Plus, Check, Trash2, Home, Pencil } from 'lucide-react';
+import { Bot, ChevronDown, Folder, Plus, Check, Trash2, Home, Pencil, Settings } from 'lucide-react';
 import { cn } from '../ui/core';
 import logger from '../../utils/logger';
 import { useLocale } from '../../i18n';
 
 const fetcher = (fn) => fn().then((res) => res.data);
+
+const STREAMING_PREF_KEY = 'wenshape_output_streaming';
+
+/** Read streaming preference from localStorage (default: true) */
+export function getStreamingPreference() {
+  try {
+    const val = localStorage.getItem(STREAMING_PREF_KEY);
+    return val === null ? true : val === 'true';
+  } catch {
+    return true;
+  }
+}
+
+/** Write streaming preference to localStorage */
+function setStreamingPreference(enabled) {
+  try {
+    localStorage.setItem(STREAMING_PREF_KEY, String(enabled));
+  } catch { /* ignore */ }
+}
 
 /**
  * TitleBar - 顶部标题栏
@@ -20,12 +39,13 @@ export function TitleBar({ projectName, chapterTitle, rightActions, aiHint }) {
   const { state, dispatch } = useIDE();
   const { t, locale, setLocale } = useLocale();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [langMenuOpen, setLangMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [createMode, setCreateMode] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [streamingEnabled, setStreamingEnabled] = useState(getStreamingPreference);
   const menuRef = useRef(null);
-  const langMenuRef = useRef(null);
+  const settingsRef = useRef(null);
 
   const { data: projects = [] } = useSWR(
     'all-projects',
@@ -39,8 +59,8 @@ export function TitleBar({ projectName, chapterTitle, rightActions, aiHint }) {
         setMenuOpen(false);
         setCreateMode(false);
       }
-      if (langMenuRef.current && !langMenuRef.current.contains(e.target)) {
-        setLangMenuOpen(false);
+      if (settingsRef.current && !settingsRef.current.contains(e.target)) {
+        setSettingsOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -52,15 +72,16 @@ export function TitleBar({ projectName, chapterTitle, rightActions, aiHint }) {
     { locale: 'en-US', label: t('titleBar.uiLanguageEn') },
   ];
 
-  const currentLanguageLabel =
-    languageOptions.find((opt) => opt.locale === locale)?.label || String(locale || 'zh-CN');
-
   const handleSwitchLanguage = (nextLocale) => {
     if (!nextLocale || nextLocale === locale) return;
     const targetLabel = languageOptions.find((opt) => opt.locale === nextLocale)?.label || nextLocale;
     if (!confirm(t('titleBar.switchLanguageConfirm', { target: targetLabel }))) return;
     setLocale(nextLocale);
-    setLangMenuOpen(false);
+  };
+
+  const handleToggleStreaming = (enabled) => {
+    setStreamingEnabled(enabled);
+    setStreamingPreference(enabled);
   };
 
   const handleCreateProject = async () => {
@@ -126,10 +147,11 @@ export function TitleBar({ projectName, chapterTitle, rightActions, aiHint }) {
           <span className="brand-logo text-xl text-[var(--vscode-fg)]">文枢</span>
         </button>
 
+        {/* Project menu */}
         <div className="relative" ref={menuRef}>
           <button
             onClick={() => {
-              setLangMenuOpen(false);
+              setSettingsOpen(false);
               setMenuOpen(!menuOpen);
             }}
             className={cn(
@@ -238,28 +260,33 @@ export function TitleBar({ projectName, chapterTitle, rightActions, aiHint }) {
           )}
         </div>
 
-        <div className="relative" ref={langMenuRef}>
+        {/* Settings menu */}
+        <div className="relative" ref={settingsRef}>
           <button
             onClick={() => {
               setMenuOpen(false);
               setCreateMode(false);
-              setLangMenuOpen((prev) => !prev);
+              setSettingsOpen((prev) => !prev);
             }}
             className={cn(
               'flex items-center gap-2 px-3 py-1.5 rounded-[6px] text-sm transition-colors',
-              langMenuOpen
+              settingsOpen
                 ? 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)]'
                 : 'text-[var(--vscode-fg-subtle)] hover:bg-[var(--vscode-list-hover)] hover:text-[var(--vscode-fg)]'
             )}
-            title={t('titleBar.uiLanguage')}
-            aria-label={t('titleBar.uiLanguage')}
+            title={t('titleBar.settings')}
+            aria-label={t('titleBar.settings')}
           >
-            <span className="text-xs">{currentLanguageLabel}</span>
-            <ChevronDown size={12} className={cn('transition-transform', langMenuOpen && 'rotate-180')} />
+            <Settings size={14} />
+            <ChevronDown size={12} className={cn('transition-transform', settingsOpen && 'rotate-180')} />
           </button>
 
-          {langMenuOpen && (
-            <div className="absolute left-0 top-full mt-1 w-40 glass-panel border border-[var(--vscode-sidebar-border)] rounded-[6px] py-1 z-50 soft-dropdown">
+          {settingsOpen && (
+            <div className="absolute left-0 top-full mt-1 w-64 glass-panel border border-[var(--vscode-sidebar-border)] rounded-[6px] py-1 z-50 soft-dropdown">
+              {/* Language section */}
+              <div className="px-3 py-2 text-[10px] font-bold text-[var(--vscode-fg-subtle)] uppercase tracking-wider">
+                {t('titleBar.uiLanguage')}
+              </div>
               {languageOptions.map((opt) => (
                 <button
                   key={opt.locale}
@@ -270,6 +297,33 @@ export function TitleBar({ projectName, chapterTitle, rightActions, aiHint }) {
                   {opt.locale === locale && <Check size={14} className="text-[var(--vscode-focus-border)] flex-shrink-0" />}
                 </button>
               ))}
+
+              <div className="border-t border-[var(--vscode-sidebar-border)] my-1" />
+
+              {/* Output mode section */}
+              <div className="px-3 py-2 text-[10px] font-bold text-[var(--vscode-fg-subtle)] uppercase tracking-wider">
+                {t('titleBar.settingsOutputMode')}
+              </div>
+              <button
+                onClick={() => handleToggleStreaming(true)}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] transition-colors"
+              >
+                <div className="flex-1 text-left">
+                  <div className="text-sm">{t('titleBar.outputStreaming')}</div>
+                  <div className="text-[10px] text-[var(--vscode-fg-subtle)]">{t('titleBar.outputStreamingDesc')}</div>
+                </div>
+                {streamingEnabled && <Check size={14} className="text-[var(--vscode-focus-border)] flex-shrink-0" />}
+              </button>
+              <button
+                onClick={() => handleToggleStreaming(false)}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] transition-colors"
+              >
+                <div className="flex-1 text-left">
+                  <div className="text-sm">{t('titleBar.outputDirect')}</div>
+                  <div className="text-[10px] text-[var(--vscode-fg-subtle)]">{t('titleBar.outputDirectDesc')}</div>
+                </div>
+                {!streamingEnabled && <Check size={14} className="text-[var(--vscode-focus-border)] flex-shrink-0" />}
+              </button>
             </div>
           )}
         </div>

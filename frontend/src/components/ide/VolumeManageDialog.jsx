@@ -4,6 +4,7 @@ import { Layers, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { volumesAPI } from '../../api';
 import { cn } from '../ui/core';
 import logger from '../../utils/logger';
+import { extractErrorDetail } from '../../utils/extractError';
 import { useLocale } from '../../i18n';
 
 /**
@@ -55,7 +56,7 @@ export default function VolumeManageDialog({ open, projectId, onClose }) {
       resetState();
     } catch (error) {
       logger.error(error);
-      alert(t('volume.createFailedMsg').replace('{message}', error.message));
+      alert(t('volume.createFailedMsg').replace('{message}', extractErrorDetail(error)));
     } finally {
       setSaving(false);
     }
@@ -79,7 +80,7 @@ export default function VolumeManageDialog({ open, projectId, onClose }) {
       resetState();
     } catch (error) {
       logger.error(error);
-      alert(t('volume.updateFailedMsg').replace('{message}', error.message));
+      alert(t('volume.updateFailedMsg').replace('{message}', extractErrorDetail(error)));
     } finally {
       setSaving(false);
     }
@@ -100,7 +101,7 @@ export default function VolumeManageDialog({ open, projectId, onClose }) {
       await mutate();
     } catch (error) {
       logger.error(error);
-      alert(t('volume.deleteFailedMsg').replace('{message}', error.message));
+      alert(t('volume.deleteFailedMsg').replace('{message}', extractErrorDetail(error)));
     } finally {
       setSaving(false);
     }

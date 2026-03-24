@@ -50,7 +50,6 @@ NON_RETRYABLE_PATTERNS = (
     "billing",
     "quota exceeded",
     "insufficient_quota",
-    "rate_limit_exceeded",  # Some rate limits are permanent (quota)
     "account",
 )
 
@@ -84,6 +83,7 @@ RETRYABLE_PATTERNS = (
     "capacity",
     # Temporary rate limits / 临时限流
     "rate limit",
+    "rate_limit_exceeded",
     "too many requests",
     "429",
     "throttl",
@@ -205,3 +205,37 @@ def get_retry_delay(attempt: int, base_delays: list = None, max_delay: float = 6
     jitter = delay * random.uniform(0, 0.1)
 
     return delay + jitter
+
+
+class LLMError(Exception):
+    """
+    结构化 LLM 错误，携带提供商/分类信息以便精准报告
+    Structured LLM error carrying provider/classification info for precise error reporting.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider: str = "unknown",
+        reason: str = "unknown_error",
+        status_code: int | None = None,
+        is_retryable: bool = False,
+        original: Exception | None = None,
+    ):
+        super().__init__(message)
+        self.provider = provider
+        self.reason = reason
+        self.status_code = status_code
+        self.is_retryable = is_retryable
+        self.original = original
+
+    def to_dict(self) -> dict:
+        """Return a JSON-serializable dict for API responses."""
+        return {
+            "detail": str(self),
+            "provider": self.provider,
+            "reason": self.reason,
+            "status_code": self.status_code,
+            "is_retryable": self.is_retryable,
+        }

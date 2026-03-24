@@ -27,7 +27,9 @@ import DiffReviewView from '../components/ide/DiffReviewView';
 import SaveMenu from '../components/writing/SaveMenu';
 import FanfictionView from './FanfictionView';
 import logger from '../utils/logger';
+import { extractErrorDetail } from '../utils/extractError';
 import { useLocale } from '../i18n';
+import { getStreamingPreference } from '../components/ide/TitleBar';
 import {
     fetchChapterContent,
     countWords,
@@ -326,6 +328,14 @@ function WritingSessionContent({ isEmbedded = false }) {
                     }
                     streamBufferByChapterRef.current[wsChapterKey] =
                         (streamBufferByChapterRef.current[wsChapterKey] || '') + data.content;
+                    // In direct output mode, accumulate tokens silently without UI updates
+                    if (!getStreamingPreference()) {
+                        const buffered = streamBufferByChapterRef.current[wsChapterKey] || '';
+                        const nextText = (streamTextByChapterRef.current[wsChapterKey] || '') + buffered;
+                        streamTextByChapterRef.current[wsChapterKey] = nextText;
+                        streamBufferByChapterRef.current[wsChapterKey] = '';
+                        return;
+                    }
                     if (!streamFlushRafByChapterRef.current[wsChapterKey]) {
                         streamFlushRafByChapterRef.current[wsChapterKey] = window.requestAnimationFrame(() => {
                             const buffered = streamBufferByChapterRef.current[wsChapterKey] || '';
@@ -460,6 +470,19 @@ function WritingSessionContent({ isEmbedded = false }) {
         return () => {
             if (wsController) wsController.close();
             if (traceWs) traceWs.close();
+            wsRef.current = null;
+            traceWsRef.current = null;
+            // 清理所有残留的流式 RAF，防止组件卸载后仍触发状态更新
+            // Cancel all lingering per-chapter RAFs to prevent post-unmount state updates
+            const rafMap = streamFlushRafByChapterRef.current || {};
+            for (const key of Object.keys(rafMap)) {
+                if (rafMap[key]) {
+                    window.cancelAnimationFrame(rafMap[key]);
+                }
+            }
+            streamFlushRafByChapterRef.current = {};
+            serverStreamActiveRef.current = false;
+            streamingChapterKeyRef.current = null;
         };
     }, [projectId]);
 
@@ -659,7 +682,7 @@ function WritingSessionContent({ isEmbedded = false }) {
                 payload: { type: 'chapter', id: normalizedChapter, title: chapterTitle || '' }
             });
         } catch (e) {
-            addMessage('error', t('writingSession.chapterCreateFailed') + e.message);
+            addMessage('error', t('writingSession.chapterCreateFailed') + extractErrorDetail(e));
         } finally {
             setIsSaving(false);
         }
@@ -742,7 +765,7 @@ function WritingSessionContent({ isEmbedded = false }) {
                 }
             } catch (e) {
                 dispatch({ type: 'SET_UNSAVED' });
-                addMessage('error', t('writingSession.autoSaveFailed') + (e.response?.data?.detail || e.message));
+                addMessage('error', t('writingSession.autoSaveFailed') + extractErrorDetail(e));
             } finally {
                 autosaveInFlightRef.current = false;
             }
@@ -816,6 +839,28 @@ function WritingSessionContent({ isEmbedded = false }) {
         }
 
         dispatch({ type: 'SET_UNSAVED' });
+        lastGeneratedByChapterRef.current[resolvedChapterKey] = true;
+
+        // Direct output mode: skip character-by-character animation
+        if (!getStreamingPreference()) {
+            setManualContentByChapter((prev) => ({ ...(prev || {}), [resolvedChapterKey]: safeText }));
+            if (activeChapterKeyRef.current === resolvedChapterKey) {
+                setManualContent(safeText);
+            }
+            setStreamingState({ active: false, progress: 100, current: safeText.length, total: safeText.length });
+            setIsGenerating(false);
+            streamingChapterKeyRef.current = null;
+            if (activeChapterKeyRef.current === resolvedChapterKey) {
+                dispatch({ type: 'SET_WORD_COUNT', payload: countWords(safeText, writingLanguage) });
+                dispatch({ type: 'SET_SELECTION_COUNT', payload: 0 });
+            } else {
+                pushNotice(t('writingSession.chapterDone').replace('{n}', resolvedChapterKey));
+            }
+            onComplete?.();
+            return;
+        }
+
+        // Streaming animation mode
         setIsGenerating(true);
         const total = safeText.length;
         const charsPerSecond = Math.min(420, Math.max(180, Math.round(total / 3)));
@@ -961,7 +1006,7 @@ function WritingSessionContent({ isEmbedded = false }) {
                     });
                 } catch (e) {
                     logger.error("Failed to fetch card details", e);
-                    addMessage('error', t('writingSession.loadCardFailed') + e.message);
+                    addMessage('error', t('writingSession.loadCardFailed') + extractErrorDetail(e));
                 }
             };
 
@@ -1059,7 +1104,7 @@ function WritingSessionContent({ isEmbedded = false }) {
             }
             setPendingStartPayload(null);
         } catch (e) {
-            addMessage('error', t('writingSession.startFailed') + e.message, chapterKey);
+            addMessage('error', t('writingSession.startFailed') + extractErrorDetail(e), chapterKey);
             setStatus('idle');
             setIsGenerating(false);
         }
@@ -1158,7 +1203,7 @@ function WritingSessionContent({ isEmbedded = false }) {
             }
             setPendingStartPayload(null);
         } catch (e) {
-            addMessage('error', t('writingSession.generateFailed') + e.message, chapterKey);
+            addMessage('error', t('writingSession.generateFailed') + extractErrorDetail(e), chapterKey);
             setStatus('idle');
             setIsGenerating(false);
         }
@@ -1297,7 +1342,7 @@ function WritingSessionContent({ isEmbedded = false }) {
 
             setIsGenerating(false);
         } catch (e) {
-            addMessage('error', t('writingSession.editFailed') + e.message);
+            addMessage('error', t('writingSession.editFailed') + extractErrorDetail(e));
             setIsGenerating(false);
             setStatus('waiting_feedback');
         }
@@ -1407,7 +1452,7 @@ function WritingSessionContent({ isEmbedded = false }) {
                 addMessage('system', '\u8349\u7a3f\u5df2\u4fdd\u5b58');
             }
         } catch (e) {
-            addMessage('error', '\u4fdd\u5b58\u5931\u8d25: ' + e.message);
+            addMessage('error', '\u4fdd\u5b58\u5931\u8d25: ' + extractErrorDetail(e));
         } finally {
             setIsSaving(false);
         }
@@ -1436,7 +1481,7 @@ function WritingSessionContent({ isEmbedded = false }) {
                 throw new Error(resp.data?.error || '\u5206\u6790\u5931\u8d25');
             }
         } catch (e) {
-            addMessage('error', '\u5206\u6790\u5931\u8d25: ' + e.message);
+            addMessage('error', '\u5206\u6790\u5931\u8d25: ' + extractErrorDetail(e));
         } finally {
             setAnalysisLoading(false);
         }
@@ -1469,7 +1514,7 @@ function WritingSessionContent({ isEmbedded = false }) {
             setAnalysisDialogOpen(false);
             setAnalysisItems([]);
         } catch (e) {
-            addMessage('error', '\u4fdd\u5b58\u5931\u8d25: ' + e.message);
+            addMessage('error', '\u4fdd\u5b58\u5931\u8d25: ' + extractErrorDetail(e));
         } finally {
             setAnalysisSaving(false);
         }
@@ -1554,8 +1599,7 @@ function WritingSessionContent({ isEmbedded = false }) {
             addMessage('system', t('writingSession.cardUpdated'));
             dispatch({ type: 'SET_SAVED' });
         } catch (e) {
-            const detail = e?.response?.data?.detail || e?.response?.data?.error;
-            addMessage('error', t('writingSession.cardSaveFailed') + (detail || e.message));
+            addMessage('error', t('writingSession.cardSaveFailed') + extractErrorDetail(e));
         } finally {
             setIsSaving(false);
         }

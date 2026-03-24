@@ -13,6 +13,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.utils.logger import get_logger
+from app.llm_gateway.errors import LLMError
 from app.routers import (
     projects_router,
     cards_router,
@@ -49,10 +50,10 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
-# Global exception handler — prevents leaking internal details to clients
+# Global exception handler — returns structured error details to clients
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Catch all unhandled exceptions and return a safe 500 response."""
+    """Catch all unhandled exceptions and return a structured error response."""
     logger.error(
         "Unhandled exception on %s %s: %s",
         request.method,
@@ -60,9 +61,25 @@ async def global_exception_handler(request: Request, exc: Exception):
         exc,
         exc_info=True,
     )
+
+    # LLM provider errors → 502
+    if isinstance(exc, LLMError):
+        return JSONResponse(
+            status_code=502,
+            content=exc.to_dict(),
+        )
+
+    # Client-side validation errors → 400
+    if isinstance(exc, ValueError):
+        return JSONResponse(
+            status_code=400,
+            content={"detail": str(exc)},
+        )
+
+    # All other errors → 500 with message
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error"},
+        content={"detail": str(exc)},
     )
 
 # Configure CORS / 配置跨域

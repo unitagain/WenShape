@@ -19,7 +19,11 @@ logger = get_logger(__name__)
 
 
 # 句子分隔符
-_SENTENCE_PATTERN = re.compile(r'([。！？.!?]+["\'」』）)]*|[\n]{2,})')
+_SENTENCE_PATTERN = re.compile(
+    r'([。！？.!?；;]+["\'"」』）)]*'
+    r'|(?:——|……)'
+    r'|[\n]{2,})'
+)
 
 # 关键词模式（用于识别重要句子）
 _KEY_PATTERNS = [

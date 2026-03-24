@@ -11,7 +11,7 @@ from typing import List, Dict, Any, Optional
 import app.config as app_config
 from app.utils.logger import get_logger
 from app.services.llm_config_service import llm_config_service
-from app.llm_gateway.errors import classify_error, get_retry_delay
+from app.llm_gateway.errors import classify_error, get_retry_delay, LLMError
 from app.llm_gateway.providers import (
     BaseLLMProvider,
     OpenAIProvider,
@@ -43,10 +43,13 @@ class LLMGateway:
         self._init_profiles()
         self._ensure_mock_provider()
 
-        # Retry configuration / 重试配置
-        self.max_retries = 5  # Increased from 3 to 5
-        self.retry_delays = [1, 2, 4, 8, 16]  # Exponential backoff / 指数退避
-        self.max_retry_delay = 60.0  # Maximum delay cap / 最大延迟上限
+        # Retry configuration from config.yaml / 从配置文件加载重试参数
+        gw_cfg = app_config.config.get("gateway", {})
+        self.max_retries = min(int(gw_cfg.get("max_retries", 5)), 10)  # 硬上限 10，防止无限重试
+        self.retry_delays = gw_cfg.get("retry_delays", [1, 2, 4, 8, 16])
+        if not isinstance(self.retry_delays, list):
+            self.retry_delays = [1, 2, 4, 8, 16]
+        self.max_retry_delay = float(gw_cfg.get("max_retry_delay", 60.0))
 
         # Cost tracking / 成本追踪
         self.total_tokens = 0
@@ -273,7 +276,15 @@ class LLMGateway:
                         "LLM non-retryable error (reason=%s): %s",
                         reason, e, exc_info=True
                     )
-                    raise
+                    provider_name = provider.get_provider_name() if hasattr(provider, 'get_provider_name') else "unknown"
+                    raise LLMError(
+                        str(e),
+                        provider=provider_name,
+                        reason=reason,
+                        status_code=getattr(e, 'status_code', None),
+                        is_retryable=False,
+                        original=e,
+                    ) from e
 
                 # Retryable error - log and retry with backoff
                 logger.warning(
@@ -295,7 +306,16 @@ class LLMGateway:
             "LLM request failed after %d retries: %s",
             self.max_retries, last_exception
         )
-        raise last_exception
+        provider_name = provider.get_provider_name() if hasattr(provider, 'get_provider_name') else "unknown"
+        is_retryable, reason = classify_error(last_exception)
+        raise LLMError(
+            str(last_exception),
+            provider=provider_name,
+            reason=reason,
+            status_code=getattr(last_exception, 'status_code', None),
+            is_retryable=True,
+            original=last_exception,
+        ) from last_exception
     
     async def _execute_chat(
         self,
@@ -344,15 +364,15 @@ class LLMGateway:
         max_tokens: Optional[int] = None
     ):
         """
-        Stream chat response token by token
-        流式输出聊天响应
-        
+        Stream chat response token by token, with retry before first chunk.
+        流式输出聊天响应，首个 chunk 到达前支持重试。
+
         Args:
             messages: List of messages / 消息列表
             provider: Profile ID / 配置文件ID
             temperature: Override temperature / 覆盖温度
             max_tokens: Override max tokens / 覆盖最大token数
-            
+
         Yields:
             String chunks as they arrive from the LLM
         """
@@ -367,13 +387,56 @@ class LLMGateway:
                 if hasattr(p, 'get_provider_name') and p.get_provider_name() == provider:
                     target_provider = p
                     break
-        
+
         if not target_provider:
             raise ValueError(f"Profile/Provider '{provider}' not found.")
-        
-        # Delegate to provider's stream_chat
-        async for chunk in target_provider.stream_chat(messages, temperature, max_tokens):
-            yield chunk
+
+        # Retry loop: retry only before the first chunk arrives.
+        # Once data starts streaming, do not retry to avoid duplicate output.
+        # 重试仅在首个 chunk 到达前；一旦开始接收数据则不再重试（避免重复输出）。
+        last_exception = None
+        for attempt in range(self.max_retries):
+            try:
+                first_chunk = True
+                async for chunk in target_provider.stream_chat(messages, temperature, max_tokens):
+                    first_chunk = False
+                    yield chunk
+                return  # Stream completed successfully
+            except Exception as e:
+                if not first_chunk:
+                    # Already yielded data — cannot retry without duplication
+                    raise
+                last_exception = e
+                is_retryable, reason = classify_error(e)
+                if not is_retryable:
+                    provider_name = target_provider.get_provider_name() if hasattr(target_provider, 'get_provider_name') else "unknown"
+                    raise LLMError(
+                        str(e),
+                        provider=provider_name,
+                        reason=reason,
+                        status_code=getattr(e, 'status_code', None),
+                        is_retryable=False,
+                        original=e,
+                    ) from e
+                logger.warning(
+                    "Stream retryable error before first chunk (attempt=%d/%d, reason=%s): %s",
+                    attempt + 1, self.max_retries, reason, e,
+                )
+                if attempt < self.max_retries - 1:
+                    delay = get_retry_delay(attempt, self.retry_delays, self.max_retry_delay)
+                    await asyncio.sleep(delay)
+
+        # All retries exhausted
+        provider_name = target_provider.get_provider_name() if hasattr(target_provider, 'get_provider_name') else "unknown"
+        is_retryable, reason = classify_error(last_exception)
+        raise LLMError(
+            str(last_exception),
+            provider=provider_name,
+            reason=reason,
+            status_code=getattr(last_exception, 'status_code', None),
+            is_retryable=True,
+            original=last_exception,
+        ) from last_exception
     
     def get_provider_for_agent(self, agent_name: str) -> str:
         """

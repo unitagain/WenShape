@@ -93,6 +93,24 @@ class BudgetUsage:
         return self.used / self.allocated
 
 
+# Token 校准系数：tiktoken 使用 cl100k_base (GPT-4)，不同提供商的实际 token 数有偏差。
+# 系数 > 1.0 表示该提供商的 token 数通常高于 tiktoken 计数，预算按此缩减以避免溢出截断。
+# Calibration ratios: tiktoken uses cl100k_base (GPT-4). Providers with different tokenizers
+# consume more tokens per-text; multiply budget by 1/ratio to leave a safe margin.
+PROVIDER_TOKEN_RATIO = {
+    "openai": 1.0,
+    "anthropic": 1.15,
+    "deepseek": 1.05,
+    "gemini": 1.10,
+    "qwen": 1.05,
+    "kimi": 1.05,
+    "glm": 1.05,
+    "grok": 1.05,
+    "custom": 1.10,
+    "mock": 1.0,
+}
+
+
 class ContextBudgetManager:
     """
     上下文预算管理器 / Context Budget Manager
@@ -107,7 +125,7 @@ class ContextBudgetManager:
         ratios (Dict[str, float]): 各类别的预算比例 / Budget ratios for each category.
     """
 
-    def __init__(self, model_name: Optional[str] = None, max_output_tokens: int = 8000, max_context_tokens: int = 0):
+    def __init__(self, model_name: Optional[str] = None, max_output_tokens: int = 8000, max_context_tokens: int = 0, provider: Optional[str] = None):
         """
         初始化预算管理器 / Initialize the budget manager.
 
@@ -116,9 +134,11 @@ class ContextBudgetManager:
             max_output_tokens: 最大输出token数 / Maximum tokens the model will generate.
             max_context_tokens: 用户显式配置的上下文窗口大小，0 表示自动推断 /
                 User-configured context window override. 0 means auto-detect from model name.
+            provider: 提供商类型，用于 token 校准 / Provider type for token calibration.
         """
         self.model_name = model_name
         self.max_output_tokens = max_output_tokens
+        self._token_ratio = PROVIDER_TOKEN_RATIO.get(str(provider or "").lower(), 1.0)
 
         # 从 config 加载预算比例
         # Load budget ratios from config.yaml
@@ -148,11 +168,14 @@ class ContextBudgetManager:
         self._usage: Dict[str, BudgetUsage] = {}
 
     def _calculate_total_budget(self) -> int:
-        """计算总可用预算（扣除输出预留） / Calculate total available budget (minus output reserve)."""
+        """计算总可用预算（扣除输出预留，并按提供商校准系数缩减） / Calculate total available budget."""
         output_reserve = int(self._context_window * self.ratios["output_reserve"])
         # 确保输出预留至少能容纳 max_output_tokens
         output_reserve = max(output_reserve, self.max_output_tokens)
-        return self._context_window - output_reserve
+        raw_budget = self._context_window - output_reserve
+        # 按提供商校准系数缩减，避免实际 token 超出上下文窗口
+        # Shrink by provider ratio to prevent context overflow on non-GPT-4 tokenizers
+        return int(raw_budget / self._token_ratio)
 
     def get_allocation(self) -> BudgetAllocation:
         """获取预算分配"""
@@ -332,13 +355,16 @@ def create_budget_manager(
         model = profile.get("model", model_name)
         max_tokens = profile.get("max_tokens", max_output_tokens)
         max_context = profile.get("max_context_tokens") or 0
+        provider_type = profile.get("provider")
     else:
         model = model_name
         max_tokens = max_output_tokens
         max_context = 0
+        provider_type = None
 
     return ContextBudgetManager(
         model_name=model,
         max_output_tokens=max_tokens,
         max_context_tokens=max_context,
+        provider=provider_type,
     )

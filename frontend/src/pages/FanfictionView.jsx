@@ -14,6 +14,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Search, Link as LinkIcon, Loader, CheckCircle, Library, ChevronRight, ChevronLeft, Check, ArrowLeft } from 'lucide-react';
 import axios from 'axios';
 import logger from '../utils/logger';
+import { extractErrorDetail } from '../utils/extractError';
 import { useLocale } from '../i18n';
 
 const API_BASE = '/api';
@@ -237,8 +238,7 @@ export default function FanfictionView({ embedded = false, onClose }) {
             }
         } catch (error) {
             logger.error('Extraction failed:', error);
-            const msg = error.response?.data?.error || error.response?.data?.detail || error.message;
-            alert(t('fanfiction.extractFailed') + ': ' + (msg || t('common.unknown')));
+            alert(t('fanfiction.extractFailed') + ': ' + extractErrorDetail(error));
         } finally {
             setExtracting(false);
         }
@@ -265,7 +265,7 @@ export default function FanfictionView({ embedded = false, onClose }) {
             setAcceptedProposals(prev => new Set([...prev, index]));
         } catch (error) {
             logger.error('[Fanfiction] Failed to create card:', error);
-            alert(t('fanfiction.importFailed') + ': ' + (error.response?.data?.detail || error.message));
+            alert(t('fanfiction.importFailed') + ': ' + extractErrorDetail(error));
         }
     };
 
