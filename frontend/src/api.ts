@@ -191,6 +191,8 @@ export const volumesAPI = {
     api.get(`${API_BASE}/projects/${projectId}/volumes/${volumeId}/summary`),
   saveSummary: (projectId: string, volumeId: string, data: Record<string, unknown>): Promise<AxiosResponse> =>
     api.put(`${API_BASE}/projects/${projectId}/volumes/${volumeId}/summary`, data),
+  refreshSummaries: (projectId: string, volumeIds: string[]): Promise<AxiosResponse> =>
+    llmApi.post(`${API_BASE}/projects/${projectId}/volumes/refresh-summaries`, { volume_ids: volumeIds }),
 };
 
 // ============================================================================
@@ -201,6 +203,8 @@ export const canonAPI = {
     api.post(`${API_BASE}/projects/${projectId}/canon/facts/manual`, data),
   update: (projectId: string, factId: string, data: Partial<Fact>): Promise<AxiosResponse> =>
     api.put(`${API_BASE}/projects/${projectId}/canon/facts/by-id/${factId}`, data),
+  updateStatus: (projectId: string, factId: string, status: string): Promise<AxiosResponse> =>
+    api.patch(`${API_BASE}/projects/${projectId}/canon/facts/by-id/${factId}/status`, { status }),
   delete: (projectId: string, factId: string): Promise<AxiosResponse> =>
     api.delete(`${API_BASE}/projects/${projectId}/canon/facts/by-id/${factId}`),
   getTree: (projectId: string): Promise<AxiosResponse> =>

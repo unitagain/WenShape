@@ -18,7 +18,8 @@ License: PolyForm Noncommercial License 1.0.0
 """
 
 import re
-from typing import List, Set
+import math
+from typing import List, Set, Dict, Optional
 from functools import lru_cache
 
 # 尝试导入 jieba / Try to import jieba
@@ -238,29 +239,31 @@ def calculate_bm25_score(
     avg_doc_length: float = 500.0,
     k1: float = 1.5,
     b: float = 0.75,
+    idf_table: Optional[Dict[str, float]] = None,
 ) -> float:
     """
-    计算简化的BM25分数
+    计算 BM25 分数，支持可选的 IDF 加权
 
-    Calculate simplified BM25 score.
+    Calculate BM25 score with optional IDF weighting.
 
-    BM25是一种常用的信息检索排序算法，兼顾词频、文档长度和逆文档频率。
-    BM25 is a standard ranking function for information retrieval.
-    Accounts for term frequency, document length, and inverse document frequency.
+    当提供 idf_table 时，使用语料级 IDF 区分稀有词和常用词（标准 BM25）。
+    未提供时退化为仅 TF + 长度归一化的简化版本（向后兼容）。
+
+    When idf_table is provided, uses corpus-level IDF to distinguish rare terms
+    from common ones (standard BM25). Without it, falls back to simplified
+    TF + length normalization (backward compatible).
 
     Args:
         query: 查询文本 / Query text
         content: 内容文本 / Content text
         avg_doc_length: 平均文档长度（token） / Average document length in tokens
-        k1: BM25参数（通常1.5） / BM25 parameter (typically 1.5)
-        b: BM25参数（通常0.75） / BM25 parameter (typically 0.75)
+        k1: BM25 参数（通常 1.5） / BM25 parameter (typically 1.5)
+        b: BM25 参数（通常 0.75） / BM25 parameter (typically 0.75)
+        idf_table: 词 -> IDF 值的映射（由 build_idf_table 生成） /
+            Token-to-IDF mapping (built by build_idf_table). Optional.
 
     Returns:
-        BM25分数 / BM25 score
-
-    Example:
-        >>> calculate_bm25_score("AI", "Artificial Intelligence in the world")
-        5.2
+        BM25 分数 / BM25 score
     """
     query_tokens = tokenize(query)
     content_tokens = tokenize(content)
@@ -274,11 +277,54 @@ def calculate_bm25_score(
     score = 0.0
     for token in query_tokens:
         if token in content_token_set:
-            # 简化的 TF 计算
             tf = content_tokens.count(token)
-            # BM25 公式
             numerator = tf * (k1 + 1)
             denominator = tf + k1 * (1 - b + b * (doc_length / avg_doc_length))
-            score += numerator / denominator
+            tf_norm = numerator / denominator
+            # 有 IDF 表时使用标准 BM25（IDF × TF_norm），否则仅 TF_norm
+            idf = idf_table.get(token, 1.0) if idf_table else 1.0
+            score += idf * tf_norm
 
     return score
+
+
+def build_idf_table(documents: List[str]) -> Dict[str, float]:
+    """
+    从文档集合构建 IDF（逆文档频率）表
+
+    Build an IDF (Inverse Document Frequency) table from a collection of documents.
+
+    使用 BM25 标准 IDF 公式：idf = ln((N - df + 0.5) / (df + 0.5) + 1)
+    其中 N 为文档总数，df 为包含该词的文档数。
+
+    Uses standard BM25 IDF formula: idf = ln((N - df + 0.5) / (df + 0.5) + 1)
+    where N is total document count and df is document frequency.
+
+    在 WenShape 中，每条事实/卡片的文本视为一个"文档"。
+
+    In WenShape, each fact/card text is treated as a "document".
+
+    Args:
+        documents: 文档文本列表 / List of document texts
+
+    Returns:
+        词 -> IDF 值的字典 / Dict mapping tokens to IDF values
+    """
+    if not documents:
+        return {}
+
+    n = len(documents)
+    df: Dict[str, int] = {}
+
+    for doc in documents:
+        # 每篇文档的去重 token 集合
+        doc_tokens = get_token_set(str(doc or ""))
+        for token in doc_tokens:
+            df[token] = df.get(token, 0) + 1
+
+    idf_table: Dict[str, float] = {}
+    for token, freq in df.items():
+        # BM25 标准 IDF，+1 防止负值
+        idf_table[token] = math.log((n - freq + 0.5) / (freq + 0.5) + 1)
+
+    return idf_table

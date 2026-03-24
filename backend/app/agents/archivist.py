@@ -126,22 +126,31 @@ class ArchivistAgent(FanfictionMixin, SummaryMixin, BaseAgent):
         if not text:
             return 0.0
 
+        # 从 config.yaml 加载评分权重，支持运行时调整 / Load scoring weights from config
+        fs = config.get("archivist", {}).get("fact_scoring", {})
+        length_divisor = float(fs.get("length_divisor", 18))
+        length_cap = float(fs.get("length_cap", 2.0))
+        punctuation_bonus = float(fs.get("punctuation_bonus", 0.7))
+        numeric_bonus = float(fs.get("numeric_bonus", 0.3))
+        density_hint_bonus = float(fs.get("density_hint_bonus", 0.8))
+        simple_relation_penalty = float(fs.get("simple_relation_penalty", 0.6))
+
         score = 0.0
         # Length-based scoring: longer statements tend to be more specific
-        score += min(len(text) / 18.0, 2.0)
+        score += min(len(text) / length_divisor, length_cap)
         # Complexity indicators: punctuation marks suggest multiple clauses
         if any(p in text for p in ("，", "；", "：", "（", "）", "(", ")")):
-            score += 0.7
+            score += punctuation_bonus
         # Numeric data often indicates specific, verifiable facts
         if re.search(r"\d", text):
-            score += 0.3
+            score += numeric_bonus
         # Presence of density hints (rules, secrets, decisions, etc.)
         hints = self._FACT_DENSITY_HINTS_EN if self.language == "en" else self._FACT_DENSITY_HINTS
         if any(h in text.lower() for h in hints):
-            score += 0.8
+            score += density_hint_bonus
         # Penalize simple relation facts (lower information value)
         if self._is_simple_relation_fact(text):
-            score -= 0.6
+            score -= simple_relation_penalty
         return score
 
     def _select_high_value_facts(
@@ -465,15 +474,20 @@ class ArchivistAgent(FanfictionMixin, SummaryMixin, BaseAgent):
         return blocks
 
     async def _load_chapter_texts(self, project_id: str, chapters: List[str]) -> List[str]:
+        # 限制并发数，避免大量章节同时打开文件句柄
+        # Limit concurrency to prevent too many open file handles.
+        sem = asyncio.Semaphore(20)
+
         async def _load_one(ch: str) -> str:
-            final = await self.draft_storage.get_final_draft(project_id, ch)
-            if final:
-                return final
-            versions = await self.draft_storage.list_draft_versions(project_id, ch)
-            if not versions:
-                return ""
-            draft = await self.draft_storage.get_draft(project_id, ch, versions[-1])
-            return draft.content if draft else ""
+            async with sem:
+                final = await self.draft_storage.get_final_draft(project_id, ch)
+                if final:
+                    return final
+                versions = await self.draft_storage.list_draft_versions(project_id, ch)
+                if not versions:
+                    return ""
+                draft = await self.draft_storage.get_draft(project_id, ch, versions[-1])
+                return draft.content if draft else ""
 
         return list(await asyncio.gather(*[_load_one(ch) for ch in chapters]))
 

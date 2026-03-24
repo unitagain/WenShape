@@ -4,11 +4,12 @@
  */
 import { useMemo, useState } from 'react';
 import useSWR from 'swr';
-import { ChevronDown, ChevronRight, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Loader2, Pencil, Plus, RefreshCw, RotateCcw, Sparkles, Trash2, X, XCircle } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { bindingsAPI, canonAPI, draftsAPI, volumesAPI } from '../../api';
 import { Button, Card, Input, cn } from '../ui/core';
 import logger from '../../utils/logger';
+import { extractErrorDetail } from '../../utils/extractError';
 import { useLocale } from '../../i18n';
 
 
@@ -23,6 +24,7 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
   const [editingFact, setEditingFact] = useState(null);
   const [editingSummary, setEditingSummary] = useState(null);
   const [creatingFact, setCreatingFact] = useState(null);
+  const [refreshingSummary, setRefreshingSummary] = useState(false);
 
   const { data: factsTree = { volumes: [] }, isLoading, mutate } = useSWR(
     projectId ? [projectId, 'facts-tree'] : null,
@@ -104,7 +106,18 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
       mutate();
     } catch (error) {
       logger.error(error);
-      alert(t('facts.deleteFailed'));
+      alert(t('facts.deleteFailed') + ': ' + extractErrorDetail(error));
+    }
+  };
+
+  const handleToggleStatus = async (factId, currentStatus) => {
+    const newStatus = currentStatus === 'superseded' ? 'active' : 'superseded';
+    try {
+      await canonAPI.updateStatus(projectId, factId, newStatus);
+      mutate();
+    } catch (error) {
+      logger.error(error);
+      alert(t('facts.statusUpdateFailed') + ': ' + extractErrorDetail(error));
     }
   };
 
@@ -121,7 +134,7 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
       mutate();
     } catch (error) {
       logger.error(error);
-      alert(t('facts.saveFailed'));
+      alert(t('facts.saveFailed') + ': ' + extractErrorDetail(error));
     }
   };
 
@@ -148,7 +161,7 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
       mutate();
     } catch (error) {
       logger.error(error);
-      alert(t('facts.addFailed'));
+      alert(t('facts.addFailed') + ': ' + extractErrorDetail(error));
     }
   };
 
@@ -210,7 +223,7 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
       mutate();
     } catch (error) {
       logger.error(error);
-      alert(t('facts.saveFailed'));
+      alert(t('facts.saveFailed') + ': ' + extractErrorDetail(error));
     }
   };
 
@@ -237,6 +250,13 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
               </div>
             </div>
           </div>
+          <button
+            onClick={() => setRefreshingSummary(true)}
+            className="p-2 rounded-[6px] text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] transition-none"
+            title={t('facts.refreshSummaryBtn')}
+          >
+            <RefreshCw size={14} />
+          </button>
         </div>
       </div>
 
@@ -262,6 +282,7 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
                 onEditFact={(fact) => setEditingFact(fact)}
                 onAddFact={openCreateFactDialog}
                 onDeleteFact={handleDeleteFact}
+                onToggleStatus={handleToggleStatus}
                 onFactSelect={onFactSelect}
               />
             ))
@@ -292,6 +313,14 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
         onClose={() => setEditingSummary(null)}
         onSave={handleSaveSummary}
       />
+
+      <RefreshSummaryDialog
+        open={refreshingSummary}
+        volumes={filteredTree.volumes || []}
+        projectId={projectId}
+        onClose={() => setRefreshingSummary(false)}
+        onRefreshed={() => mutate()}
+      />
     </div>
   );
 };
@@ -309,6 +338,7 @@ function VolumeSection({
   onEditFact,
   onAddFact,
   onDeleteFact,
+  onToggleStatus,
   onFactSelect,
 }) {
   const { t } = useLocale();
@@ -380,6 +410,7 @@ function VolumeSection({
             onEditFact={onEditFact}
             onAddFact={onAddFact}
             onDeleteFact={onDeleteFact}
+            onToggleStatus={onToggleStatus}
             onToggleFact={onToggleFact}
             onFactSelect={onFactSelect}
           />
@@ -402,6 +433,7 @@ function ChapterBlock({
   onEditFact,
   onAddFact,
   onDeleteFact,
+  onToggleStatus,
   onToggleFact,
   onFactSelect,
 }) {
@@ -527,6 +559,7 @@ function ChapterBlock({
                     onToggleExpand={() => onToggleFact?.(factKey)}
                     onEdit={() => onEditFact(fact)}
                     onDelete={() => onDeleteFact(fact.id)}
+                    onToggleStatus={() => onToggleStatus?.(fact.id, fact.status || 'active')}
                     onSelect={onFactSelect ? () => onFactSelect(fact) : null}
                   />
                 );
@@ -542,18 +575,20 @@ function ChapterBlock({
   );
 }
 
-function FactRow({ fact, index, expanded, onToggleExpand, onEdit, onDelete, onSelect }) {
+function FactRow({ fact, index, expanded, onToggleExpand, onEdit, onDelete, onToggleStatus, onSelect }) {
   const { t } = useLocale();
   const statement = (fact.statement || fact.content || '').trim();
   const title = (fact.title || '').trim();
   const display = title && title !== statement ? `${title}：${statement}` : (statement || title || t('facts.noContent'));
+  const isSuperseded = (fact.status || 'active') === 'superseded';
 
   return (
     <div
       className={cn(
         'group flex items-start gap-0.5 px-0.5 py-1.5 rounded-[4px] transition-none',
         'hover:bg-[var(--vscode-list-hover)]',
-        onSelect ? 'cursor-pointer' : ''
+        onSelect ? 'cursor-pointer' : '',
+        isSuperseded ? 'opacity-50' : ''
       )}
       onClick={onSelect || undefined}
     >
@@ -574,12 +609,29 @@ function FactRow({ fact, index, expanded, onToggleExpand, onEdit, onDelete, onSe
       </div>
 
       <div className="flex-1 min-w-0">
-        <div className={cn("text-[10.5px] text-[var(--vscode-fg)] leading-snug", expanded ? "" : "line-clamp-3")}>
+        <div className={cn(
+          "text-[10.5px] leading-snug",
+          isSuperseded ? "text-[var(--vscode-fg-subtle)] line-through" : "text-[var(--vscode-fg)]",
+          expanded ? "" : "line-clamp-3"
+        )}>
           {display}
         </div>
+        {isSuperseded && (
+          <span className="inline-block mt-0.5 text-[9px] text-orange-500 font-medium">{t('facts.supersededLabel')}</span>
+        )}
       </div>
 
       <div className="shrink-0 flex items-center gap-0.5 justify-end">
+        <button
+          className="w-5 h-5 inline-flex items-center justify-center rounded-[2px] hover:bg-[var(--vscode-list-hover)] text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)] opacity-50 hover:opacity-100"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleStatus?.();
+          }}
+          title={isSuperseded ? t('facts.markActive') : t('facts.markSuperseded')}
+        >
+          {isSuperseded ? <RotateCcw size={11} strokeWidth={1.7} /> : <XCircle size={11} strokeWidth={1.7} />}
+        </button>
         <button
           className="w-5 h-5 inline-flex items-center justify-center rounded-[2px] hover:bg-[var(--vscode-list-hover)] text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)] opacity-50 hover:opacity-100"
           onClick={(e) => {
@@ -757,6 +809,134 @@ function EditSummaryDialog({ open, summary, onChange, onClose, onSave }) {
             className="h-8 px-3 text-xs rounded-[4px] bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] hover:opacity-90 shadow-none"
           >
             {t('common.save')}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RefreshSummaryDialog({ open, volumes, projectId, onClose, onRefreshed }) {
+  const { t } = useLocale();
+  const [selected, setSelected] = useState(new Set());
+  const [loading, setLoading] = useState(false);
+
+  if (!open) return null;
+
+  const toggleVolume = (volumeId) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(volumeId)) next.delete(volumeId);
+      else next.add(volumeId);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (selected.size === volumes.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(volumes.map((v) => v.id)));
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (selected.size === 0) return;
+    setLoading(true);
+    try {
+      await volumesAPI.refreshSummaries(projectId, Array.from(selected));
+      onRefreshed?.();
+      onClose();
+    } catch (error) {
+      logger.error(error);
+      alert(t('facts.refreshFailed') + ': ' + extractErrorDetail(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClose = () => {
+    if (loading) return;
+    onClose();
+  };
+
+  return (
+    <div className="anti-theme fixed inset-0 z-50 flex items-center justify-center bg-black/20 px-4">
+      <div className="w-full max-w-md border border-[var(--vscode-sidebar-border)] bg-[var(--vscode-bg)] text-[var(--vscode-fg)] rounded-[6px] shadow-none overflow-hidden">
+        <div className="px-4 py-3 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)] flex items-center justify-between">
+          <div className="text-sm font-bold text-[var(--vscode-fg)]">{t('facts.refreshSummaryTitle')}</div>
+          <button
+            className="p-2 rounded-[6px] hover:bg-[var(--vscode-list-hover)] text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)] transition-none"
+            onClick={handleClose}
+            disabled={loading}
+            title={t('common.close')}
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div className="text-[11px] text-[var(--vscode-fg-subtle)]">{t('facts.refreshSummaryDesc')}</div>
+
+          <div className="space-y-1 max-h-[240px] overflow-y-auto custom-scrollbar">
+            <button
+              type="button"
+              onClick={toggleAll}
+              className={cn(
+                'w-full flex items-center gap-2 px-3 py-2 rounded-[4px] text-left transition-none',
+                selected.size === volumes.length
+                  ? 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)]'
+                  : 'hover:bg-[var(--vscode-list-hover)]'
+              )}
+            >
+              <span className="text-xs font-medium">{t('common.selectAll')}</span>
+              <span className="ml-auto text-[10px] text-[var(--vscode-fg-subtle)] tabular-nums">{volumes.length}</span>
+            </button>
+
+            {volumes.map((volume) => (
+              <button
+                key={volume.id}
+                type="button"
+                onClick={() => toggleVolume(volume.id)}
+                className={cn(
+                  'w-full flex items-center gap-2 px-3 py-2 rounded-[4px] text-left transition-none',
+                  selected.has(volume.id)
+                    ? 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)]'
+                    : 'hover:bg-[var(--vscode-list-hover)]'
+                )}
+              >
+                <span className="text-[10px] font-mono text-[var(--vscode-fg-subtle)]">{volume.id}</span>
+                <span className="text-xs text-[var(--vscode-fg)] truncate">{volume.title}</span>
+                <span className="ml-auto text-[10px] text-[var(--vscode-fg-subtle)] tabular-nums">
+                  {(volume.chapters || []).length} {t('facts.chapterUnit')}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="px-4 py-3 border-t border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)] flex justify-end gap-2">
+          <Button
+            variant="ghost"
+            onClick={handleClose}
+            disabled={loading}
+            className="h-8 px-3 text-xs rounded-[4px] border border-[var(--vscode-input-border)] text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] shadow-none"
+          >
+            {t('common.cancel')}
+          </Button>
+          <Button
+            onClick={handleRefresh}
+            disabled={selected.size === 0 || loading}
+            className="h-8 px-3 text-xs rounded-[4px] bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] hover:opacity-90 shadow-none disabled:opacity-50"
+          >
+            {loading ? (
+              <span className="flex items-center gap-1.5">
+                <Loader2 size={12} className="animate-spin" />
+                {t('facts.refreshing')}
+              </span>
+            ) : (
+              t('facts.refreshBtn')
+            )}
           </Button>
         </div>
       </div>

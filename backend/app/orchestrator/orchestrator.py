@@ -21,6 +21,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.llm_gateway import get_gateway
+from app.llm_gateway.errors import LLMError
 from app.storage import CardStorage, CanonStorage, DraftStorage, MemoryPackStorage
 from app.agents import ArchivistAgent, WriterAgent, EditorAgent
 from app.context_engine.select_engine import ContextSelectEngine
@@ -120,7 +121,7 @@ class Orchestrator(ContextMixin, AnalysisMixin):
         self.current_chapter: Optional[str] = None
         self.iteration_count = 0
         self.question_round = 0
-        self._stream_task: Optional[asyncio.Task] = None
+        self._stream_tasks: Dict[str, asyncio.Task] = {}  # 按章节隔离的流式任务
         self._last_stream_results: Dict[str, Dict[str, Any]] = {}
         self._cancelled: bool = False  # 通用取消标志，用于在所有阶段响应用户取消 / General cancel flag
 
@@ -302,7 +303,7 @@ class Orchestrator(ContextMixin, AnalysisMixin):
             return result
 
         except Exception as exc:
-            return await self._handle_error(f"Session error: {exc}")
+            return await self._handle_error(f"Session error: {exc}", exc=exc)
 
     async def run_research_only(
         self,
@@ -398,7 +399,7 @@ class Orchestrator(ContextMixin, AnalysisMixin):
                 "context_debug": context_debug,
             }
         except Exception as exc:
-            return await self._handle_error(f"Research only session error: {exc}")
+            return await self._handle_error(f"Research only session error: {exc}", exc=exc)
 
     async def answer_questions(
         self,
@@ -641,7 +642,7 @@ class Orchestrator(ContextMixin, AnalysisMixin):
             }
 
         except Exception as exc:
-            return await self._handle_error(f"Feedback processing error: {exc}")
+            return await self._handle_error(f"Feedback processing error: {exc}", exc=exc)
 
     async def _finalize_chapter(self, project_id: str, chapter: str) -> Dict[str, Any]:
         """Finalize chapter and save final draft."""
@@ -669,7 +670,7 @@ class Orchestrator(ContextMixin, AnalysisMixin):
             }
 
         except Exception as exc:
-            return await self._handle_error(f"Finalization error: {exc}")
+            return await self._handle_error(f"Finalization error: {exc}", exc=exc)
 
     async def _run_writing_flow(
         self,
@@ -707,12 +708,15 @@ class Orchestrator(ContextMixin, AnalysisMixin):
         writer_payload = dict(writer_context)
         writer_payload["target_word_count"] = target_word_count
 
-        if self._stream_task:
-            self._stream_task.cancel()
-            self._stream_task = None
+        # 取消该章节的旧流式任务（如有），按章节隔离避免跨章节竞态
+        # Cancel previous stream task for this chapter to prevent cross-chapter race
+        chapter_key = str(chapter)
+        old_task = self._stream_tasks.pop(chapter_key, None)
+        if old_task:
+            old_task.cancel()
 
         try:
-            self._stream_task = asyncio.create_task(
+            task = asyncio.create_task(
                 self._stream_writer_output(
                     project_id,
                     chapter,
@@ -720,8 +724,9 @@ class Orchestrator(ContextMixin, AnalysisMixin):
                     working_memory_payload=working_memory_payload,
                 )
             )
-            await self._stream_task
-            self._stream_task = None
+            self._stream_tasks[chapter_key] = task
+            await task
+            self._stream_tasks.pop(chapter_key, None)
         except asyncio.CancelledError:
             # 区分用户主动取消（_cancelled=True）和其他原因的 task 取消
             # Distinguish user-initiated cancel from other task cancellations
@@ -729,7 +734,7 @@ class Orchestrator(ContextMixin, AnalysisMixin):
                 return await self._handle_cancelled()
             return await self._handle_error("Stream cancelled")
         except Exception as exc:
-            return await self._handle_error(f"Draft generation failed: {exc}")
+            return await self._handle_error(f"Draft generation failed: {exc}", exc=exc)
 
         # 流任务正常完成，但若中途被取消（_stream_writer_output 静默 return），也需要退出
         if self._cancelled:
@@ -1232,8 +1237,12 @@ class Orchestrator(ContextMixin, AnalysisMixin):
                 }
             )
 
-    async def _handle_error(self, error_message: str) -> Dict[str, Any]:
+    async def _handle_error(self, error_message: str, *, exc: Exception | None = None) -> Dict[str, Any]:
         """Handle error and update status."""
+        # Enrich message with LLM provider details if available
+        if exc is not None and isinstance(exc, LLMError):
+            error_message = f"{error_message} [provider={exc.provider}, reason={exc.reason}]"
+
         self.current_status = SessionStatus.ERROR
 
         if self.progress_callback:

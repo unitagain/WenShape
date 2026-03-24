@@ -173,6 +173,37 @@ class IndexedStorageCache:
             if project_id in self._indices:
                 del self._indices[project_id]
 
+    async def append_fact(self, project_id: str, fact_data: Dict[str, Any]) -> None:
+        """
+        Incrementally append a fact to the in-memory index (O(1)).
+
+        If no index exists for the project yet, this is a no-op (the index
+        will be built lazily on the next full query). This avoids the
+        invalidate-then-rebuild cycle that costs O(N) per add_fact call.
+
+        Args:
+            project_id: Project identifier.
+            fact_data: Serialized fact dict (must contain 'id').
+        """
+        async with self._lock:
+            index = self._indices.get(project_id)
+            if index is None:
+                return
+
+            fact_id = fact_data.get("id", f"F{index.facts_count:04d}")
+            chapter = fact_data.get("introduced_in") or fact_data.get("source") or ""
+
+            entry = IndexEntry(line_number=index.facts_count, data=fact_data)
+            index.facts_by_id[fact_id] = entry
+
+            if chapter:
+                if chapter not in index.facts_by_chapter:
+                    index.facts_by_chapter[chapter] = []
+                index.facts_by_chapter[chapter].append(fact_id)
+
+            index.facts_count += 1
+            index.last_updated = datetime.now()
+
     async def invalidate_all(self) -> None:
         """使所有索引失效"""
         async with self._lock:

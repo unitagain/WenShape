@@ -1,4 +1,4 @@
-﻿"""
+"""
 Draft Storage
 Manages scene briefs, drafts, reviews, and summaries.
 """
@@ -527,7 +527,11 @@ class DraftStorage(BaseStorage):
         return sorted(chapters, key=chapter_sort_key)
 
     async def delete_chapter(self, project_id: str, chapter: str) -> bool:
-        """Delete all draft artifacts for a chapter."""
+        """Delete all draft artifacts for a chapter, with cascade cleanup.
+
+        级联清理关联数据：事实表中该章节引入的事实、章节绑定、记忆包。
+        Cascades: canon facts introduced in this chapter, chapter bindings, memory pack.
+        """
         project_path = self.get_project_path(project_id)
         canonical = self._canonicalize_chapter_id(chapter)
         deleted_any = False
@@ -546,7 +550,52 @@ class DraftStorage(BaseStorage):
                     path.unlink()
                     deleted_any = True
 
+        # 级联清理关联数据 / Cascade cleanup of related data
+        if deleted_any:
+            await self._cascade_delete(project_id, canonical)
+
         return deleted_any
+
+    async def _cascade_delete(self, project_id: str, chapter: str) -> None:
+        """Clean up canon facts, bindings, and memory pack for a deleted chapter."""
+        from app.storage.canon import CanonStorage
+        from app.storage.memory_pack import MemoryPackStorage
+        from app.storage.bindings import ChapterBindingStorage
+        from app.utils.logger import get_logger
+
+        logger = get_logger(__name__)
+
+        # 1. 删除该章节引入的事实 / Delete facts introduced in this chapter
+        try:
+            canon = CanonStorage(str(self.data_dir))
+            count = await canon.delete_facts_by_chapter(project_id, chapter)
+            if count:
+                logger.info("Cascade: deleted %d facts for chapter %s", count, chapter)
+        except Exception as exc:
+            logger.warning("Cascade: failed to delete facts for chapter %s: %s", chapter, exc)
+
+        # 2. 删除章节绑定 / Delete chapter bindings
+        try:
+            binding_storage = ChapterBindingStorage(str(self.data_dir))
+            binding_path = binding_storage.get_bindings_path(project_id, chapter)
+            if binding_path.exists():
+                binding_path.unlink()
+                # 清理空的父目录
+                parent = binding_path.parent
+                if parent.exists() and not any(parent.iterdir()):
+                    parent.rmdir()
+                logger.info("Cascade: deleted bindings for chapter %s", chapter)
+        except Exception as exc:
+            logger.warning("Cascade: failed to delete bindings for chapter %s: %s", chapter, exc)
+
+        # 3. 删除记忆包 / Delete memory pack
+        try:
+            memory_pack = MemoryPackStorage(str(self.data_dir))
+            deleted = await memory_pack.delete_pack(project_id, chapter)
+            if deleted:
+                logger.info("Cascade: deleted memory pack for chapter %s", chapter)
+        except Exception as exc:
+            logger.warning("Cascade: failed to delete memory pack for chapter %s: %s", chapter, exc)
 
     async def get_context_for_writing(self, project_id: str, current_chapter: str) -> Dict[str, Any]:
         """Get structured context for writing."""

@@ -35,12 +35,22 @@ import { useLocale } from '../../../i18n';
  * @returns {JSX.Element} 编排器控制台元素 / Orchestrator console element
  */
 
-// --- 子组件 / Subcomponents ---
+const INPUT_MAX_LENGTH = 10000;
+const MESSAGE_COLLAPSE_LENGTH = 500;
+const VISIBLE_MESSAGES_LIMIT = 50;
 
 const ConsoleMessage = ({ msg }) => {
+    const { t } = useLocale();
     const isUser = msg.type === 'user';
     const isSystem = msg.type === 'system';
     const isError = msg.type === 'error';
+
+    const content = String(msg.content || '');
+    const isLong = content.length > MESSAGE_COLLAPSE_LENGTH;
+    const [expanded, setExpanded] = useState(false);
+    const displayContent = isLong && !expanded
+        ? content.slice(0, MESSAGE_COLLAPSE_LENGTH) + '...'
+        : content;
 
     return (
         <motion.div
@@ -74,7 +84,16 @@ const ConsoleMessage = ({ msg }) => {
                         isSystem ? "bg-[var(--vscode-input-bg)] border-[var(--vscode-sidebar-border)] text-[var(--vscode-fg)] rounded-tl-sm font-mono text-xs" :
                             "bg-red-50 border-red-100 text-red-600"
                 )}>
-                    {msg.content}
+                    {displayContent}
+                    {isLong && (
+                        <button
+                            type="button"
+                            onClick={() => setExpanded(!expanded)}
+                            className="ml-1 text-[var(--vscode-focus-border)] hover:underline text-xs"
+                        >
+                            {expanded ? t('common.collapse') : t('common.expand')}
+                        </button>
+                    )}
                 </div>
                 <span className="text-[10px] text-[var(--vscode-fg-subtle)] mt-1 px-1">
                     {new Date(msg.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -270,9 +289,9 @@ export const OrchestratorConsole = ({
                     isGenerating={isGenerating}
                 />
 
-                {/* 2. Message Stream */}
+                {/* 2. Message Stream — only render the most recent messages */}
                 <div className="space-y-2">
-                    {messages.map((m, i) => (
+                    {(messages.length > VISIBLE_MESSAGES_LIMIT ? messages.slice(-VISIBLE_MESSAGES_LIMIT) : messages).map((m, i) => (
                         <ConsoleMessage key={i} msg={m} />
                     ))}
                 </div>
@@ -303,6 +322,7 @@ export const OrchestratorConsole = ({
                                     handleSend();
                                 }
                             }}
+                            maxLength={INPUT_MAX_LENGTH}
                             placeholder={
                                 status === 'waiting_feedback' ? t('panels.console.placeholderFeedback') :
                                     t('panels.console.placeholderInput')
@@ -313,7 +333,7 @@ export const OrchestratorConsole = ({
                         <div className="absolute right-2 bottom-2">
                             <Button
                                 size="icon"
-                                className="h-7 w-7 rounded-[6px]" // specific override
+                                className="h-7 w-7 rounded-[6px]"
                                 onClick={handleSend}
                                 disabled={!input.trim() || isGenerating}
                             >
@@ -326,19 +346,31 @@ export const OrchestratorConsole = ({
                     <span className="text-[10px] text-[var(--vscode-fg-subtle)] font-mono">
                         {t('panels.console.engineVersion')}
                     </span>
-                    <span className="text-[10px] text-[var(--vscode-fg-subtle)]">
-                        {status === 'idle'
-                            ? t('panels.console.statusIdle')
-                            : status === 'starting'
-                                ? t('panels.console.statusStarting')
-                                : status === 'editing'
-                                    ? t('panels.console.statusEditing')
-                                    : status === 'waiting_feedback'
-                                        ? t('panels.console.statusWaitingFeedback')
-                                        : status === 'completed'
-                                            ? t('panels.console.statusCompleted')
-                                            : status}
-                    </span>
+                    <div className="flex items-center gap-3">
+                        <span className={cn(
+                            "text-[10px] tabular-nums",
+                            input.length > INPUT_MAX_LENGTH * 0.9
+                                ? "text-red-500"
+                                : input.length > INPUT_MAX_LENGTH * 0.7
+                                    ? "text-amber-500"
+                                    : "text-[var(--vscode-fg-subtle)]"
+                        )}>
+                            {input.length > 0 && `${input.length}/${INPUT_MAX_LENGTH}`}
+                        </span>
+                        <span className="text-[10px] text-[var(--vscode-fg-subtle)]">
+                            {status === 'idle'
+                                ? t('panels.console.statusIdle')
+                                : status === 'starting'
+                                    ? t('panels.console.statusStarting')
+                                    : status === 'editing'
+                                        ? t('panels.console.statusEditing')
+                                        : status === 'waiting_feedback'
+                                            ? t('panels.console.statusWaitingFeedback')
+                                            : status === 'completed'
+                                                ? t('panels.console.statusCompleted')
+                                                : status}
+                        </span>
+                    </div>
                 </div>
             </div>
         </div>

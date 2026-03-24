@@ -555,12 +555,20 @@ class ContextMixin:
         except Exception as exc:
             logger.warning("Seed entity lookup failed: %s", exc)
             seeds = []
+        # 获取总章节数以动态调整候选池上限
+        try:
+            all_chapters = await self.draft_storage.list_chapters(project_id)
+            total_chapters = len(all_chapters) if all_chapters else 0
+        except Exception:
+            total_chapters = 0
         dynamic_items = await self.select_engine.retrieval_select(
             project_id=project_id,
             query=query,
             item_types=["character", "world", "fact", "text_chunk"],
             storage=self.storage_adapter,
             top_k=10,
+            current_chapter=chapter,
+            total_chapters=total_chapters,
         ) or []
 
         style_card = next((item.content for item in critical_items if item.type.value == "style_card"), None)

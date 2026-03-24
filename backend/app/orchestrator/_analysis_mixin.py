@@ -138,7 +138,7 @@ class AnalysisMixin:
             await self._update_status(SessionStatus.IDLE, "Analysis completed.")
             return {"success": True, "analysis": analysis}
         except Exception as exc:
-            return await self._handle_error(f"Analysis failed: {exc}")
+            return await self._handle_error(f"Analysis failed: {exc}", exc=exc)
 
     async def _build_analysis(
         self,
@@ -393,20 +393,22 @@ class AnalysisMixin:
         chapter: str,
         analysis: Dict[str, Any],
         overwrite: bool = False,
-        rebuild_volume_summary: bool = True,
+        rebuild_volume_summary: bool = False,
     ) -> Dict[str, Any]:
         """
         持久化分析输出（摘要、事实、卡片） / Persist analysis output (summary, facts, cards).
 
         Saves chapter analysis including summaries, canonical facts, timeline events,
         and character states to storage. Optionally creates cards from proposals.
+        Volume summary rebuild is off by default for speed; callers that need it
+        (e.g. _analyze_content, _refresh_volume_summaries) enable it explicitly.
 
         Args:
             project_id: 项目ID / Project identifier.
             chapter: 章节ID / Chapter identifier.
             analysis: 分析载荷 / Analysis result dictionary.
-            overwrite: 覆盖现有事实/设定 / Overwrite existing facts and settings.
-            rebuild_volume_summary: 重建分卷摘要 / Rebuild volume summary afterward.
+            overwrite: 覆盖现有数据 / Overwrite existing facts and settings.
+            rebuild_volume_summary: 重建分卷摘要（默认关闭以加速保存） / Rebuild volume summary (off by default for speed).
 
         Returns:
             Save result dict with success flag and statistics.
@@ -441,10 +443,11 @@ class AnalysisMixin:
             timeline_saved = 0
             states_saved = 0
 
+            # Overwrite: normalize + delete in a single read-write pass
             if overwrite:
-                await self.canon_storage.normalize_fact_records(project_id)
-                await self.canon_storage.delete_facts_by_chapter(project_id, summary.chapter)
+                await self.canon_storage.delete_and_normalize_by_chapter(project_id, summary.chapter)
 
+            # Load existing fact IDs once before the loop (avoid N × O(M) scans)
             existing_facts = await self.canon_storage.get_all_facts_raw(project_id)
             existing_ids = {item.get("id") for item in existing_facts if item.get("id")}
             next_fact_index = len(existing_facts) + 1
@@ -498,7 +501,7 @@ class AnalysisMixin:
                 },
             }
         except Exception as exc:
-            return await self._handle_error(f"Analysis save failed: {exc}")
+            return await self._handle_error(f"Analysis save failed: {exc}", exc=exc)
 
     async def _analyze_content(self, project_id: str, chapter: str, content: str):
         """

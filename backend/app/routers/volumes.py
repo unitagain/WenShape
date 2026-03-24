@@ -12,6 +12,7 @@ License: PolyForm Noncommercial License 1.0.0
 """
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from typing import List
 from app.dependencies import get_volume_storage
 from app.schemas.volume import Volume, VolumeCreate, VolumeSummary, VolumeStats
@@ -101,3 +102,28 @@ async def get_volume_stats(project_id: str, volume_id: str):
     if not stats:
         raise HTTPException(status_code=404, detail=f"Volume {volume_id} not found")
     return stats
+
+
+class RefreshSummaryRequest(BaseModel):
+    """刷新卷摘要请求"""
+    volume_ids: List[str]
+
+
+@router.post("/refresh-summaries")
+async def refresh_volume_summaries(project_id: str, request: RefreshSummaryRequest):
+    """
+    AI 重新生成选定分卷的摘要 / AI-regenerate volume summaries for selected volumes.
+
+    Uses the archivist agent to aggregate chapter summaries into volume-level summaries.
+    This is an LLM operation that may take 10-30 seconds per volume.
+    """
+    from app.routers.session import get_orchestrator
+
+    volume_ids = [v.strip() for v in (request.volume_ids or []) if v.strip()]
+    if not volume_ids:
+        raise HTTPException(status_code=400, detail="No volume IDs provided")
+
+    orchestrator = get_orchestrator(project_id)
+    await orchestrator._refresh_volume_summaries(project_id, volume_ids)
+
+    return {"success": True, "refreshed": volume_ids}

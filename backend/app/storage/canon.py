@@ -125,15 +125,23 @@ class CanonStorage(BaseStorage):
         """
         Add a new fact.
 
+        Appends to facts.jsonl and incrementally updates the in-memory index
+        (O(1)) instead of invalidating the entire index.
+        If the index update fails, the index is marked dirty and will be
+        rebuilt on next access (data file is the source of truth).
+
         Args:
             project_id: Project ID.
             fact: Fact to add.
-
         """
         file_path = self.get_project_path(project_id) / "canon" / "facts.jsonl"
-        await self.append_jsonl(file_path, fact.model_dump())
-        # 使索引失效
-        await get_index_cache().invalidate(project_id)
+        fact_data = fact.model_dump()
+        await self.append_jsonl(file_path, fact_data)
+        # Incremental index update; invalidate on failure so next access rebuilds
+        try:
+            await get_index_cache().append_fact(project_id, fact_data)
+        except Exception:
+            await get_index_cache().invalidate(project_id)
 
 
     async def update_fact(self, project_id: str, fact_data: Dict[str, Any]) -> bool:
@@ -185,8 +193,62 @@ class CanonStorage(BaseStorage):
             kept.append(item)
         if deleted > 0:
             await self.write_jsonl(file_path, kept)
-            # 使索引失效
             await get_index_cache().invalidate(project_id)
+        return deleted
+
+    async def delete_and_normalize_by_chapter(self, project_id: str, chapter: str) -> int:
+        """
+        Normalize all facts and delete those belonging to a chapter in a single pass.
+
+        Combines normalize_fact_records() + delete_facts_by_chapter() into one
+        read-process-write cycle, halving file I/O for overwrite scenarios.
+
+        Args:
+            project_id: Project ID.
+            chapter: Chapter ID whose facts should be deleted.
+
+        Returns:
+            Number of facts deleted.
+        """
+        file_path = self.get_project_path(project_id) / "canon" / "facts.jsonl"
+        items = await self.read_jsonl(file_path)
+
+        target = self._extract_chapter_id(chapter)
+        kept = []
+        deleted = 0
+
+        for item in items:
+            if not isinstance(item, dict):
+                kept.append(item)
+                continue
+
+            # --- normalize fields ---
+            source = item.get("source")
+            introduced = item.get("introduced_in")
+            chapter_ref = item.get("chapter_ref") or item.get("chapterRef") or item.get("chapter_id")
+            norm_source = self._extract_chapter_id(source) if source else ""
+            norm_intro = self._extract_chapter_id(introduced) if introduced else ""
+            norm_ref = self._extract_chapter_id(chapter_ref) if chapter_ref else ""
+            canonical = norm_intro or norm_source or norm_ref
+
+            if canonical:
+                item = dict(item)
+                item["source"] = canonical
+                item["introduced_in"] = canonical
+                item["chapter_ref"] = canonical
+
+            # --- delete matching chapter ---
+            candidates = [norm_source, norm_intro, norm_ref]
+            if target and any(val == target for val in candidates if val):
+                deleted += 1
+                continue
+
+            kept.append(item)
+
+        if deleted > 0 or len(kept) != len(items):
+            await self.write_jsonl(file_path, kept)
+            await get_index_cache().invalidate(project_id)
+
         return deleted
 
     async def normalize_fact_records(self, project_id: str) -> int:

@@ -109,4 +109,7 @@ async def fetch_models(request: FetchModelsRequest):
         
     except Exception as e:
         logger.warning("Fetch Models Error: %s", str(e))
-        raise HTTPException(status_code=400, detail=str(e))
+        detail = str(e)
+        # Extract status code from provider SDK exceptions when available
+        status_code = getattr(e, 'status_code', None) or 400
+        raise HTTPException(status_code=status_code, detail=detail)

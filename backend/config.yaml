@@ -58,6 +58,10 @@ context_budget:
   summaries: 0.20
   current_draft: 0.30
   output_reserve: 0.20
+  # 事实距离衰减系数 / Fact distance decay alpha
+  # 公式: decay = 1 / (1 + alpha * ln(1 + distance))
+  # 越大则远距离事实权重衰减越快，0 表示禁用距离衰减
+  fact_distance_alpha: 0.3
 
 # Archivist Configuration / 档案员配置
 archivist:
@@ -75,11 +79,38 @@ archivist:
   max_world_constraints: 5
   # 每章提取的最大事实数 / Max facts extracted per chapter
   max_facts: 5
+  # 事实质量评分权重 / Fact quality scoring weights
+  fact_scoring:
+    length_divisor: 18        # 长度评分除数 / Length score divisor
+    length_cap: 2.0           # 长度评分上限 / Length score cap
+    punctuation_bonus: 0.7    # 复合句标点加分 / Punctuation complexity bonus
+    numeric_bonus: 0.3        # 含数字加分 / Numeric data bonus
+    density_hint_bonus: 0.8   # 密度提示词加分 / Density hint keyword bonus
+    simple_relation_penalty: 0.6  # 简单关系惩罚 / Simple relation penalty
 
 # Writer Configuration / 撰稿人配置
 writer:
   # 默认目标字数 / Default target word count
   default_target_word_count: 3000
+  # 上下文截断上限 / Context truncation limits
+  context_limits:
+    fact_summary_items: 2       # 事实摘要最多条数 / Max fact summary items
+    event_items: 4              # 事件列表最多条数 / Max event items
+    query_items: 4              # 查询列表最多条数 / Max query items
+    character_cards: 10         # 角色卡上限 / Max character cards
+    world_cards: 10             # 世界观卡上限 / Max world cards
+    facts: 20                   # 事实上限 / Max facts
+    character_states: 20        # 角色状态上限 / Max character states
+    unresolved_gaps: 6          # 未解决缺口上限 / Max unresolved gaps
+
+# LLM Gateway Configuration / LLM 网关配置
+gateway:
+  # 最大重试次数（硬上限 10，防止无限重试） / Max retries (hard cap 10)
+  max_retries: 5
+  # 指数退避延迟序列（秒） / Exponential backoff delays in seconds
+  retry_delays: [1, 2, 4, 8, 16]
+  # 最大单次延迟（秒） / Maximum single delay in seconds
+  max_retry_delay: 60.0
 
 # Retrieval Configuration / 检索配置
 retrieval:
