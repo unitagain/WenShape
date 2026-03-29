@@ -88,6 +88,9 @@ class CardStorage(BaseStorage):
     async def save_world_card(self, project_id: str, card: WorldCard) -> None:
         file_path = self.get_project_path(project_id) / "cards" / "world" / f"{card.name}.yaml"
         payload = card.model_dump(exclude_none=True)
+        # World cards are now description-first; stop writing deprecated fields.
+        payload.pop("rules", None)
+        payload.pop("immutable", None)
         if file_path.exists():
             try:
                 existing = await self.read_yaml(file_path)
@@ -178,41 +181,32 @@ class CardStorage(BaseStorage):
         stars = self._normalize_stars(data.get("stars"))
         category = str(data.get("category", "")).strip()
         category = category if category else None
-        rules = data.get("rules") or []
-        if isinstance(rules, str):
-            rules = [item.strip() for item in re.split(r"[,\n，;；]+", rules) if item.strip()]
-        if not isinstance(rules, list):
-            rules = []
-        rules = [str(item).strip() for item in rules if str(item).strip()]
-        immutable = data.get("immutable")
-        if not isinstance(immutable, bool):
-            immutable = None
-        if description:
-            return {
-                "name": name,
-                "description": description,
-                "aliases": aliases,
-                "category": category,
-                "rules": rules,
-                "immutable": immutable,
-                "stars": stars,
-            }
+        legacy_rules = data.get("rules") or []
+        if isinstance(legacy_rules, str):
+            legacy_rules = [item.strip() for item in re.split(r"[,\n，;；]+", legacy_rules) if item.strip()]
+        if not isinstance(legacy_rules, list):
+            legacy_rules = []
+        legacy_rules = [str(item).strip() for item in legacy_rules if str(item).strip()]
 
-        parts = []
-        if category:
-            parts.append(f"类型: {category}")
-        if isinstance(rules, list) and rules:
-            parts.append(f"规则: {', '.join([str(item) for item in rules if item])}")
-        if isinstance(immutable, bool):
-            parts.append("不可变: 是" if immutable else "不可变: 否")
+        if legacy_rules:
+            rules_text = "；".join(legacy_rules)
+            if description:
+                if rules_text not in description:
+                    description = f"{description}\n规则补充: {rules_text}".strip()
+            else:
+                description = f"规则补充: {rules_text}"
+
+        if not description:
+            parts = []
+            if category:
+                parts.append(f"类型: {category}")
+            description = "\n".join([item for item in parts if item]).strip()
 
         return {
             "name": name,
-            "description": "\n".join([item for item in parts if item]).strip(),
+            "description": description,
             "aliases": aliases,
             "category": category,
-            "rules": rules,
-            "immutable": immutable,
             "stars": stars,
         }
 

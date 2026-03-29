@@ -26,19 +26,17 @@ python -m pip install -r requirements.txt
 
 # Check if .env exists / 检查 .env 是否存在
 if [ ! -f ".env" ]; then
-    echo "Warning: .env file not found. Creating a safe default for demo mode..."
+    echo "Warning: .env file not found. Creating default backend config..."
     cat > ".env" <<'EOF'
 # Auto-generated on first run
 HOST=127.0.0.1
 PORT=8000
 DEBUG=True
 
-WENSHAPE_LLM_PROVIDER=mock
-
-# See .env.example for provider settings and API keys.
+# Configure provider API keys below. See .env.example
 EOF
     echo "Created: $SCRIPT_DIR/.env"
-    echo "Running in demo mode (mock). Edit .env to enable real providers."
+    echo "Please edit .env and fill real provider API keys before using writing features."
 fi
 
 # Start server / 启动服务器

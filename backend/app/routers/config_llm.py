@@ -14,10 +14,11 @@ router = APIRouter(prefix="/config", tags=["config"])
 class LLMProfile(BaseModel):
     id: Optional[str] = None
     name: str = "New Profile"
-    provider: str  # openai, anthropic, deepseek, gemini, custom
+    provider: str  # openai, anthropic, deepseek, gemini, qwen, kimi, glm, grok, wenxin, aistudio, custom
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     model: Optional[str] = None
+    deployed_models: Optional[List[str]] = None
     temperature: float = 0.7
     max_tokens: int = 8000
     max_context_tokens: Optional[int] = None  # 用户手动指定上下文窗口大小，覆盖模型自动推断
@@ -68,9 +69,11 @@ async def get_providers_meta():
     return [
         {"id": "openai", "label": "OpenAI", "fields": ["api_key", "model"]},
         {"id": "anthropic", "label": "Anthropic (Claude)", "fields": ["api_key", "model"]},
-        {"id": "deepseek", "label": "DeepSeek", "fields": ["api_key", "model"]},
+        {"id": "deepseek", "label": "DeepSeek \u6df1\u5ea6\u6c42\u7d22", "fields": ["api_key", "model"]},
         {"id": "gemini", "label": "Gemini (Google)", "fields": ["api_key", "model"]},
-        {"id": "custom", "label": "Custom / OpenAI Compatible", "fields": ["base_url", "api_key", "model"]},
+        {"id": "aistudio", "label": "AI Studio \u98de\u6868", "fields": ["api_key", "model", "base_url"]},
+        {"id": "wenxin", "label": "Wenxin \u6587\u5fc3\u4e00\u8a00", "fields": ["api_key", "model", "base_url"]},
+        {"id": "custom", "label": "Custom (OpenAI Format)", "fields": ["base_url", "api_key", "model"]},
     ]
 
 # --- Legacy Endpoint Support (Optional, keep if frontend needs partial compatibility during transition) ---

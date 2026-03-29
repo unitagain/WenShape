@@ -599,17 +599,11 @@ class EvidenceIndexService:
 
         description = data.get("description")
         category = data.get("category")
-        rules = data.get("rules")
-        immutable = data.get("immutable")
 
         items.extend(_attach_stars(_build_card_lines(name, "world", "description", description, entities), stars))
         items.extend(_attach_stars(_build_card_lines(name, "world", "category", category, entities), stars))
-        items.extend(_attach_stars(_build_card_list(name, "world", "rules", rules, entities), stars))
-        if isinstance(immutable, bool):
-            value = "不可变" if immutable else "可变"
-            items.extend(_attach_stars(_build_card_lines(name, "world", "immutable", value, entities), stars))
 
-        rule_items = _attach_stars(_extract_world_rules(name, description, rules, immutable, entities), stars)
+        rule_items = _attach_stars(_extract_world_rules(name, description, entities), stars)
         entity_items = _attach_stars(_extract_world_entities(name, description, category, entities), stars)
         items.extend(rule_items)
         items.extend(entity_items)
@@ -740,31 +734,19 @@ def _split_text_blocks(text: str, max_len: int = 140) -> List[str]:
 def _extract_world_rules(
     name: str,
     description: Any,
-    rules: Any,
-    immutable: Any,
     entities: List[str],
 ) -> List[EvidenceItem]:
     # World rule extraction:
-    # - Prefer explicit rules[] entries.
-    # - Fall back to pattern-matched sentences in description.
+    # - Extract pattern-matched rule sentences from description only.
     # - Deduplicate by normalized text.
     items: List[EvidenceItem] = []
     rule_texts = []
-
-    if isinstance(rules, list):
-        for item in rules:
-            text = str(item).strip()
-            if text:
-                rule_texts.append(text)
 
     desc_text = str(description or "").strip()
     if desc_text:
         for sentence in _split_text_blocks(desc_text, max_len=200):
             if _is_rule_sentence(sentence):
                 rule_texts.append(sentence)
-
-    if isinstance(immutable, bool) and immutable:
-        rule_texts.append("不可变")
 
     normalized = set()
     for text in rule_texts:
@@ -777,7 +759,7 @@ def _extract_world_rules(
                 id=f"world_rule:{name}:{len(items) + 1}",
                 type="world_rule",
                 text=text,
-                source={"card": name, "field": "rules"},
+                source={"card": name, "field": "description"},
                 scope="global",
                 entities=entities,
                 meta={"doc_len": _estimate_doc_len(text)},

@@ -333,13 +333,6 @@ export default function FanfictionView({ embedded = false, onClose }) {
                     <div className="max-w-2xl mx-auto mt-12">
                         <div className="text-center mb-8">
                             <h2 className="text-xl font-bold text-[var(--vscode-fg)] mb-2">{t('fanfiction.searchLabel')}</h2>
-                            <p className="text-sm text-[var(--vscode-fg-subtle)]">{t('fanfiction.searchPlaceholder')}</p>
-                        </div>
-
-                        <div className="flex gap-4 mb-4 justify-center">
-                            <div className="flex items-center gap-2 p-2 rounded-[6px] bg-[var(--vscode-bg)] border border-[var(--vscode-sidebar-border)]">
-                                <span className="text-sm text-[var(--vscode-fg)]">{t('fanfiction.supportedSites')}</span>
-                            </div>
                         </div>
 
                         <div className="flex gap-2 mb-6">

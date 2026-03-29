@@ -27,18 +27,16 @@ if exist ".env" goto :start_server
 
 :create_env
 echo.
-echo [!] .env file not found. Creating a safe default (.env) for demo mode...
+echo [!] .env file not found. Creating default backend config (.env)...
 echo # Auto-generated on first run> ".env"
 echo HOST=127.0.0.1>> ".env"
 echo PORT=8000>> ".env"
 echo DEBUG=True>> ".env"
 echo.>> ".env"
-echo WENSHAPE_LLM_PROVIDER=mock>> ".env"
-echo.>> ".env"
-echo # See .env.example for provider settings and API keys.>> ".env"
+echo # Configure provider API keys below. See .env.example>> ".env"
 if errorlevel 1 goto :env_failed
 echo [!] Created: %CD%\.env
-echo [!] Running in demo mode (mock). Edit .env to enable real providers.
+echo [!] Please edit .env and fill real provider API keys before using writing features.
 echo.
 goto :start_server
 

@@ -343,11 +343,6 @@ class ContextSelectEngine:
                 # Logarithmic distance decay: recent facts score higher,
                 # distant facts are down-weighted but never zeroed out.
                 s *= self._calculate_distance_decay(current_chapter, introduced_in)
-                # 已取代事实降权：superseded 事实大幅降权但保留可追溯性
-                # Superseded facts are heavily penalized but not excluded.
-                status = str(getattr(fact, "status", "active") or "active").strip()
-                if status != "active":
-                    s *= 0.1
                 candidates.append(
                     ContextItem(
                         id=fact_id,

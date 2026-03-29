@@ -49,8 +49,26 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
     const { t } = useLocale();
     const [fetchedModels, setFetchedModels] = useState([]);
     const [fetchingModels, setFetchingModels] = useState(false);
+    const [testingModel, setTestingModel] = useState(false);
     const [fetchWarning, setFetchWarning] = useState('');
     const [deleting, setDeleting] = useState(false);
+    const [customModelInput, setCustomModelInput] = useState(false);
+
+    const PROVIDER_DEFAULT_BASE_URLS = {
+        openai: 'https://api.openai.com/v1',
+        anthropic: 'https://api.anthropic.com',
+        deepseek: 'https://api.deepseek.com/v1',
+        gemini: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+        qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        kimi: 'https://api.moonshot.cn/v1',
+        glm: 'https://open.bigmodel.cn/api/paas/v4',
+        grok: 'https://api.x.ai/v1',
+        wenxin: 'https://qianfan.baidubce.com/v2',
+        aistudio: 'https://aistudio.baidu.com/llm/lmapi/v3',
+        custom: '',
+    };
+
+    const getDefaultBaseUrl = (provider) => PROVIDER_DEFAULT_BASE_URLS[provider] || '';
 
     const [formData, setFormData] = useState({
         name: '',
@@ -58,6 +76,7 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
         api_key: '',
         model: '',
         base_url: '',
+        deployed_models: [],
         temperature: 0.7,
         max_tokens: 8000,
         max_context_tokens: '',
@@ -65,8 +84,12 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
 
     useEffect(() => {
         if (open) {
-            setFetchedModels([]);
+            const persistedModels = Array.isArray(profile?.deployed_models)
+                ? profile.deployed_models.filter((m) => typeof m === 'string' && m.trim())
+                : [];
+            setFetchedModels(persistedModels);
             setFetchWarning('');
+            setCustomModelInput(false);
             if (profile) {
                 setFormData({
                     id: profile.id,
@@ -74,7 +97,8 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
                     provider: profile.provider || 'openai',
                     api_key: profile.api_key || '',
                     model: profile.model || '',
-                    base_url: profile.base_url || '',
+                    base_url: profile.base_url || getDefaultBaseUrl(profile.provider),
+                    deployed_models: persistedModels,
                     temperature: profile.temperature || 0.7,
                     max_tokens: profile.max_tokens || 8000,
                     max_context_tokens: profile.max_context_tokens || '',
@@ -85,7 +109,8 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
                     provider: 'openai',
                     api_key: '',
                     model: '',
-                    base_url: '',
+                    base_url: getDefaultBaseUrl('openai'),
+                    deployed_models: [],
                     temperature: 0.7,
                     max_tokens: 8000,
                     max_context_tokens: '',
@@ -97,66 +122,99 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
     if (!open) return null;
 
     const PROVIDERS = [
-        { id: 'anthropic', label: 'Anthropic（Claude）' },
-        { id: 'deepseek', label: 'DeepSeek' },
-        { id: 'gemini', label: 'Gemini（Google，含免费试用模型）' },
-        { id: 'glm', label: 'GLM（智谱）' },
-        { id: 'grok', label: 'Grok（xAI）' },
-        { id: 'kimi', label: 'Kimi（月之暗面）' },
+        { id: 'anthropic', label: 'Anthropic' },
+        { id: 'deepseek', label: 'DeepSeek \u6df1\u5ea6\u6c42\u7d22' },
+        { id: 'gemini', label: 'Gemini' },
+        { id: 'glm', label: 'GLM \u667a\u8c31' },
+        { id: 'grok', label: 'Grok' },
+        { id: 'kimi', label: 'Kimi \u6708\u4e4b\u6697\u9762' },
         { id: 'openai', label: 'OpenAI' },
-        { id: 'qwen', label: 'Qwen（通义千问）' },
+        { id: 'qwen', label: 'Qwen \u901a\u4e49\u5343\u95ee' },
+        { id: 'wenxin', label: 'Wenxin \u6587\u5fc3\u4e00\u8a00' },
+        { id: 'aistudio', label: 'AI Studio \u98de\u6868' },
         { id: 'custom', label: t('llmModal.providerCustom') },
-        { id: 'mock', label: t('llmModal.providerMock') },
     ].sort((a, b) => a.label.localeCompare(b.label));
 
+
     const OPENAI_MODELS = [
+        { id: 'gpt-5.4', label: 'GPT-5.4' },
+        { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
+        { id: 'gpt-5.4-nano', label: 'GPT-5.4 Nano' },
+        { id: 'gpt-5.2', label: 'GPT-5.2' },
+        { id: 'gpt-5', label: 'GPT-5' },
+        { id: 'gpt-5-mini', label: 'GPT-5 Mini' },
+        { id: 'o3', label: 'o3' },
+        { id: 'o3-mini', label: 'o3-mini' },
+        { id: 'o4-mini', label: 'o4-mini' },
+        { id: 'gpt-4.1', label: 'GPT-4.1' },
         { id: 'gpt-4o', label: 'GPT-4o' },
-        { id: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
-        { id: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
     ];
 
     const ANTHROPIC_MODELS = [
-        { id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
-        { id: 'claude-3-opus-20240229', label: 'Claude 3 Opus' },
-        { id: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' },
+        { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
+        { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+        { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
+        { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
     ];
 
     const DEEPSEEK_MODELS = [
         { id: 'deepseek-chat', label: 'DeepSeek-V3' },
-        { id: 'deepseek-reasoner', label: 'DeepSeek-R1 (Reasoner)' },
+        { id: 'deepseek-reasoner', label: 'DeepSeek-R1' },
     ];
 
     const GEMINI_MODELS = [
-        { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash（免费对话20次）' },
-        { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview（免费对话20次）' },
+        { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview' },
+        { id: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite Preview' },
+        { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
+        { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
     ];
 
     const GROK_MODELS = [
-        { id: 'grok-2', label: 'Grok 2' },
-        { id: 'grok-beta', label: 'Grok Beta' },
+        { id: 'grok-4', label: 'Grok 4' },
+        { id: 'grok-4.1-fast', label: 'Grok 4.1 Fast' },
+        { id: 'grok-3', label: 'Grok 3' },
+        { id: 'grok-3-mini', label: 'Grok 3 Mini' },
     ];
 
     const KIMI_MODELS = [
-        { id: 'moonshot-v1-8k', label: 'Moonshot V1 8k' },
-        { id: 'moonshot-v1-32k', label: 'Moonshot V1 32k' },
-        { id: 'moonshot-v1-128k', label: 'Moonshot V1 128k' },
+        { id: 'kimi-k2.5', label: 'Kimi K2.5' },
+        { id: 'kimi-k2-turbo-preview', label: 'Kimi K2 Turbo' },
+        { id: 'kimi-k2-thinking', label: 'Kimi K2 Thinking' },
     ];
 
     const GLM_MODELS = [
-        { id: 'glm-4', label: 'GLM-4' },
-        { id: 'glm-4-air', label: 'GLM-4 Air' },
-        { id: 'glm-4-flash', label: 'GLM-4 Flash' },
+        { id: 'glm-5', label: 'GLM-5' },
+        { id: 'glm-4.7', label: 'GLM-4.7' },
+        { id: 'glm-4-plus', label: 'GLM-4 Plus' },
     ];
 
     const QWEN_MODELS = [
+        { id: 'qwen3.5-plus', label: 'Qwen 3.5 Plus' },
+        { id: 'qwen3-max', label: 'Qwen 3 Max' },
         { id: 'qwen-turbo', label: 'Qwen Turbo' },
         { id: 'qwen-plus', label: 'Qwen Plus' },
-        { id: 'qwen-max', label: 'Qwen Max' },
+    ];
+
+    const WENXIN_MODELS = [
+        { id: 'ernie-4.5-turbo-32k', label: 'ERNIE 4.5 Turbo 32K' },
+        { id: 'ernie-x1-turbo-32k', label: 'ERNIE X1 Turbo 32K' },
+        { id: 'ernie-4.5-8k', label: 'ERNIE 4.5 8K' },
+        { id: 'ernie-4.5-8k-preview', label: 'ERNIE 4.5 8K Preview' },
+        { id: 'ernie-5.0', label: 'ERNIE 5.0' },
+    ];
+
+    const AISTUDIO_MODELS = [
+        { id: 'ernie-5.0-thinking-preview', label: 'ERNIE 5.0 Thinking Preview' },
+        { id: 'ernie-5.0', label: 'ERNIE 5.0' },
     ];
 
     const handleFetchModels = async () => {
         if (!formData.api_key) {
             alert(t('llmModal.pleaseEnterKey'));
+            return;
+        }
+        if (!formData.base_url) {
+            alert(t('llmModal.fillRequiredBeforeTest'));
             return;
         }
 
@@ -167,15 +225,23 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
                 api_key: formData.api_key,
                 base_url: formData.base_url
             });
-
             if (res.data && res.data.models) {
-                setFetchedModels(res.data.models);
+                const models = Array.from(
+                    new Set(
+                        res.data.models
+                            .map((m) => String(m || '').trim())
+                            .filter(Boolean)
+                    )
+                );
+                setFetchedModels(models);
+                setFormData((prev) => ({ ...prev, deployed_models: models }));
                 setFetchWarning(res.data.warning ? String(res.data.warning) : '');
-                // 当前未选择时自动填充第一个模型
-                if (!formData.model && res.data.models.length > 0) {
-                    setFormData(prev => ({ ...prev, model: res.data.models[0] }));
+                // ????????????????????????
+                if (!formData.model && models.length > 0) {
+                    setFormData(prev => ({ ...prev, model: models[0] }));
                 }
             }
+
         } catch (error) {
             logger.error("Failed to fetch models", error);
             setFetchWarning('');
@@ -183,6 +249,50 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
         } finally {
             setFetchingModels(false);
         }
+    };
+
+    const canTestModel = Boolean(
+        String(formData.provider || '').trim() &&
+        String(formData.api_key || '').trim() &&
+        String(formData.model || '').trim() &&
+        String(formData.base_url || '').trim()
+    );
+
+    const handleTestModel = async () => {
+        if (!canTestModel) {
+            alert(t('llmModal.fillRequiredBeforeTest'));
+            return;
+        }
+
+        setTestingModel(true);
+        try {
+            const res = await configAPI.testModel({
+                provider: formData.provider,
+                api_key: formData.api_key,
+                base_url: formData.base_url,
+                model: formData.model,
+            });
+            const message = res?.data?.message ? `\n${String(res.data.message)}` : '';
+            alert(t('llmModal.testSuccess') + message);
+        } catch (error) {
+            logger.error("Failed to test model", error);
+            alert(t('llmModal.testFailed', { message: extractErrorDetail(error) }));
+        } finally {
+            setTestingModel(false);
+        }
+    };
+
+    /**
+     * 合并预设模型列表与用户已保存的模型 ID。
+     * 解决问题：用户通过"获取模型"选了一个不在预设列表中的模型并保存后，
+     * 再次打开编辑时 <select> 找不到匹配的 option 导致显示空白。
+     * Merge preset models with the user's persisted model to ensure <select> always shows it.
+     */
+    const mergeWithCurrent = (presetModels) => {
+        if (!formData.model) return presetModels;
+        const ids = new Set(presetModels.map(m => m.id || m));
+        if (ids.has(formData.model)) return presetModels;
+        return [{ id: formData.model, label: formData.model }, ...presetModels];
     };
 
     const handleSave = () => {
@@ -275,20 +385,27 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
                                 onChange={(e) => {
                                     const newProvider = e.target.value;
                                     let defaultModel = '';
-                                    if (newProvider === 'openai') defaultModel = 'gpt-4o';
-                                    if (newProvider === 'anthropic') defaultModel = 'claude-3-5-sonnet-20241022';
+                                    if (newProvider === 'openai') defaultModel = 'gpt-5.4-mini';
+                                    if (newProvider === 'anthropic') defaultModel = 'claude-sonnet-4-6';
                                     if (newProvider === 'deepseek') defaultModel = 'deepseek-chat';
-                                    if (newProvider === 'gemini') defaultModel = 'gemini-2.5-flash';
-                                    if (newProvider === 'grok') defaultModel = 'grok-beta';
-                                    if (newProvider === 'kimi') defaultModel = 'moonshot-v1-8k';
-                                    if (newProvider === 'glm') defaultModel = 'glm-4';
-                                    if (newProvider === 'qwen') defaultModel = 'qwen-turbo';
+                                    if (newProvider === 'gemini') defaultModel = 'gemini-3.1-pro-preview';
+                                    if (newProvider === 'grok') defaultModel = 'grok-4';
+                                    if (newProvider === 'kimi') defaultModel = 'kimi-k2.5';
+                                    if (newProvider === 'glm') defaultModel = 'glm-5';
+                                    if (newProvider === 'qwen') defaultModel = 'qwen3.5-plus';
+                                    if (newProvider === 'wenxin') defaultModel = 'ernie-4.5-turbo-32k';
+                                    if (newProvider === 'aistudio') defaultModel = 'ernie-5.0-thinking-preview';
+                                    const defaultBaseUrl = getDefaultBaseUrl(newProvider);
 
                                     setFormData({
                                         ...formData,
                                         provider: newProvider,
-                                        model: defaultModel
+                                        model: defaultModel,
+                                        base_url: defaultBaseUrl,
+                                        deployed_models: []
                                     });
+                                    setCustomModelInput(false);
+                                    setFetchedModels([]);
                                 }}
                                 className="w-full px-3 py-2 border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:border-[var(--vscode-focus-border)] transition-none"
                             >
@@ -303,46 +420,40 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
                     <div className="space-y-4 pt-4 border-t border-[var(--vscode-sidebar-border)]">
                         {/* 接口密钥 */}
                         <AnimatePresence>
-                            {formData.provider !== 'mock' && (
-                                <motion.div
-                                    initial={{ opacity: 0, height: 0 }}
-                                    animate={{ opacity: 1, height: 'auto' }}
-                                    exit={{ opacity: 0, height: 0 }}
-                                    transition={{ duration: 0.2 }}
-                                    className="space-y-2"
-                                >
-                                    <label className="text-xs font-semibold text-[var(--vscode-fg-subtle)] uppercase">{t('llmModal.apiKeyLabel')}</label>
-                                    <Input
-                                        type="password"
-                                        value={formData.api_key}
-                                        onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
-                                        placeholder="sk-..."
-                                        className="bg-[var(--vscode-input-bg)] border-[var(--vscode-input-border)] text-[var(--vscode-fg)] focus-visible:border-[var(--vscode-focus-border)] focus-visible:ring-[var(--vscode-focus-border)]"
-                                    />
-                                    <p className="text-xs text-[var(--vscode-fg-subtle)]">{t('llmModal.apiKeyNote')}</p>
-                                </motion.div>
-                            )}
+                            <motion.div
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: 'auto' }}
+                                exit={{ opacity: 0, height: 0 }}
+                                transition={{ duration: 0.2 }}
+                                className="space-y-2"
+                            >
+                                <label className="text-xs font-semibold text-[var(--vscode-fg-subtle)] uppercase">{t('llmModal.apiKeyLabel')}</label>
+                                <Input
+                                    type="password"
+                                    value={formData.api_key}
+                                    onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
+                                    placeholder="sk-..."
+                                    className="bg-[var(--vscode-input-bg)] border-[var(--vscode-input-border)] text-[var(--vscode-fg)] focus-visible:border-[var(--vscode-focus-border)] focus-visible:ring-[var(--vscode-focus-border)]"
+                                />
+                                <p className="text-xs text-[var(--vscode-fg-subtle)]">{t('llmModal.apiKeyNote')}</p>
+                            </motion.div>
                         </AnimatePresence>
 
                         {/* 接口地址（仅自定义） */}
-                        <AnimatePresence>
-                            {formData.provider === 'custom' && (
-                                <motion.div
-                                    initial={{ opacity: 0, height: 0 }}
-                                    animate={{ opacity: 1, height: 'auto' }}
-                                    exit={{ opacity: 0, height: 0 }}
-                                    className="space-y-2"
-                                >
-                                    <label className="text-xs font-semibold text-[var(--vscode-fg-subtle)] uppercase">{t('llmModal.baseUrlLabel')}</label>
-                                    <Input
-                                        value={formData.base_url}
-                                        onChange={(e) => setFormData({ ...formData, base_url: e.target.value })}
-                                        placeholder="https://api.example.com/v1"
-                                        className="bg-[var(--vscode-input-bg)] border-[var(--vscode-input-border)] text-[var(--vscode-fg)] focus-visible:border-[var(--vscode-focus-border)] focus-visible:ring-[var(--vscode-focus-border)]"
-                                    />
-                                </motion.div>
-                            )}
-                        </AnimatePresence>
+                        <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="space-y-2"
+                        >
+                            <label className="text-xs font-semibold text-[var(--vscode-fg-subtle)] uppercase">{t('llmModal.baseUrlLabel')}</label>
+                            <Input
+                                value={formData.base_url}
+                                onChange={(e) => setFormData({ ...formData, base_url: e.target.value })}
+                                placeholder="https://api.example.com/v1"
+                                className="bg-[var(--vscode-input-bg)] border-[var(--vscode-input-border)] text-[var(--vscode-fg)] focus-visible:border-[var(--vscode-focus-border)] focus-visible:ring-[var(--vscode-focus-border)]"
+                            />
+                        </motion.div>
 
                         {/* 模型选择 */}
                         <motion.div
@@ -353,117 +464,97 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
                         >
                             <div className="flex items-center justify-between">
                                 <label className="text-xs font-semibold text-[var(--vscode-fg-subtle)] uppercase">{t('llmModal.modelLabel')}</label>
-                                <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-6 px-2 text-[10px] text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] border border-[var(--vscode-input-border)] shadow-none"
-                                    onClick={handleFetchModels}
-                                    disabled={fetchingModels || !formData.api_key}
-                                >
-                                    {fetchingModels ? (
-                                        <RefreshCw size={10} className="animate-spin mr-1" />
-                                    ) : (
-                                        <RefreshCw size={10} className="mr-1" />
-                                    )}
-                                    {fetchingModels ? t('llmModal.fetching') : t('llmModal.fetchModels')}
-                                </Button>
+                                <div className="flex items-center gap-2">
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-6 px-2 text-[10px] text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] border border-[var(--vscode-input-border)] shadow-none"
+                                        onClick={handleTestModel}
+                                        disabled={testingModel || !canTestModel}
+                                    >
+                                        {testingModel ? (
+                                            <RefreshCw size={10} className="animate-spin mr-1" />
+                                        ) : null}
+                                        {testingModel ? t('llmModal.testingModel') : t('llmModal.testModel')}
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-6 px-2 text-[10px] text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] border border-[var(--vscode-input-border)] shadow-none"
+                                        onClick={handleFetchModels}
+                                        disabled={fetchingModels || !formData.api_key || !formData.base_url}
+                                    >
+                                        {fetchingModels ? (
+                                            <RefreshCw size={10} className="animate-spin mr-1" />
+                                        ) : (
+                                            <RefreshCw size={10} className="mr-1" />
+                                        )}
+                                        {fetchingModels ? t('llmModal.fetching') : t('llmModal.fetchModels')}
+                                    </Button>
+                                </div>
                             </div>
-                            {formData.provider === 'openai' ? (
-                                <select
-                                    value={formData.model}
-                                    onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                                    className="w-full px-3 py-2 border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:border-[var(--vscode-focus-border)] transition-none"
-                                >
-                                    <option value="">{t('llmModal.modelPlaceholder')}</option>
-                                    {(fetchedModels.length > 0 ? fetchedModels : OPENAI_MODELS).map(m => (
-                                        <option key={m.id || m} value={m.id || m}>{m.label || m}</option>
-                                    ))}
-                                </select>
-                            ) : formData.provider === 'anthropic' ? (
-                                <select
-                                    value={formData.model}
-                                    onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                                    className="w-full px-3 py-2 border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:border-[var(--vscode-focus-border)] transition-none"
-                                >
-                                    <option value="">{t('llmModal.modelPlaceholder')}</option>
-                                    {(fetchedModels.length > 0 ? fetchedModels : ANTHROPIC_MODELS).map(m => (
-                                        <option key={m.id || m} value={m.id || m}>{m.label || m}</option>
-                                    ))}
-                                </select>
-                            ) : formData.provider === 'deepseek' ? (
-                                <select
-                                    value={formData.model}
-                                    onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                                    className="w-full px-3 py-2 border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:border-[var(--vscode-focus-border)] transition-none"
-                                >
-                                    <option value="">{t('llmModal.modelPlaceholder')}</option>
-                                    {(fetchedModels.length > 0 ? fetchedModels : DEEPSEEK_MODELS).map(m => (
-                                        <option key={m.id || m} value={m.id || m}>{m.label || m}</option>
-                                    ))}
-                                </select>
-                            ) : formData.provider === 'gemini' ? (
-                                <select
-                                    value={formData.model}
-                                    onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                                    className="w-full px-3 py-2 border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:border-[var(--vscode-focus-border)] transition-none"
-                                >
-                                    <option value="">{t('llmModal.modelPlaceholder')}</option>
-                                    {GEMINI_MODELS.map(m => (
-                                        <option key={m.id} value={m.id}>{m.label}</option>
-                                    ))}
-                                </select>
-                            ) : formData.provider === 'grok' ? (
-                                <select
-                                    value={formData.model}
-                                    onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                                    className="w-full px-3 py-2 border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:border-[var(--vscode-focus-border)] transition-none"
-                                >
-                                    <option value="">{t('llmModal.modelPlaceholder')}</option>
-                                    {GROK_MODELS.map(m => (
-                                        <option key={m.id} value={m.id}>{m.label}</option>
-                                    ))}
-                                </select>
-                            ) : formData.provider === 'kimi' ? (
-                                <select
-                                    value={formData.model}
-                                    onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                                    className="w-full px-3 py-2 border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:border-[var(--vscode-focus-border)] transition-none"
-                                >
-                                    <option value="">{t('llmModal.modelPlaceholder')}</option>
-                                    {KIMI_MODELS.map(m => (
-                                        <option key={m.id} value={m.id}>{m.label}</option>
-                                    ))}
-                                </select>
-                            ) : formData.provider === 'glm' ? (
-                                <select
-                                    value={formData.model}
-                                    onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                                    className="w-full px-3 py-2 border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:border-[var(--vscode-focus-border)] transition-none"
-                                >
-                                    <option value="">{t('llmModal.modelPlaceholder')}</option>
-                                    {GLM_MODELS.map(m => (
-                                        <option key={m.id} value={m.id}>{m.label}</option>
-                                    ))}
-                                </select>
-                            ) : formData.provider === 'qwen' ? (
-                                <select
-                                    value={formData.model}
-                                    onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                                    className="w-full px-3 py-2 border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:border-[var(--vscode-focus-border)] transition-none"
-                                >
-                                    <option value="">{t('llmModal.modelPlaceholder')}</option>
-                                    {QWEN_MODELS.map(m => (
-                                        <option key={m.id} value={m.id}>{m.label}</option>
-                                    ))}
-                                </select>
-                            ) : (
-                                <Input
-                                    value={formData.model}
-                                    onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                                placeholder={t('llmModal.customModelPlaceholder')}
-                                    className="bg-[var(--vscode-input-bg)] border-[var(--vscode-input-border)] text-[var(--vscode-fg)] focus-visible:border-[var(--vscode-focus-border)] focus-visible:ring-[var(--vscode-focus-border)]"
-                                />
-                            )}
+                            {(() => {
+                                const PRESET_MAP = {
+                                    openai: OPENAI_MODELS,
+                                    anthropic: ANTHROPIC_MODELS,
+                                    deepseek: DEEPSEEK_MODELS,
+                                    gemini: GEMINI_MODELS,
+                                    grok: GROK_MODELS,
+                                    kimi: KIMI_MODELS,
+                                    glm: GLM_MODELS,
+                                    qwen: QWEN_MODELS,
+                                    wenxin: WENXIN_MODELS,
+                                    aistudio: AISTUDIO_MODELS,
+                                };
+                                const presetModels = PRESET_MAP[formData.provider];
+                                const selectCls = "w-full px-3 py-2 border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:border-[var(--vscode-focus-border)] transition-none";
+                                const inputCls = "bg-[var(--vscode-input-bg)] border-[var(--vscode-input-border)] text-[var(--vscode-fg)] focus-visible:border-[var(--vscode-focus-border)] focus-visible:ring-[var(--vscode-focus-border)]";
+
+                                if (!presetModels || customModelInput) {
+                                    return (
+                                        <div className="flex gap-2">
+                                            <Input
+                                                value={formData.model}
+                                                onChange={(e) => setFormData({ ...formData, model: e.target.value })}
+                                                placeholder={t('llmModal.customModelPlaceholder')}
+                                                className={inputCls + " flex-1"}
+                                            />
+                                            {presetModels && (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-9 px-2 text-xs text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] border border-[var(--vscode-input-border)] shadow-none whitespace-nowrap"
+                                                    onClick={() => { setCustomModelInput(false); }}
+                                                >
+                                                    {t('llmModal.backToList')}
+                                                </Button>
+                                            )}
+                                        </div>
+                                    );
+                                }
+
+                                const models = fetchedModels.length > 0 ? fetchedModels : presetModels;
+                                return (
+                                    <select
+                                        value={formData.model}
+                                        onChange={(e) => {
+                                            if (e.target.value === '__custom__') {
+                                                setCustomModelInput(true);
+                                                setFormData({ ...formData, model: '' });
+                                            } else {
+                                                setFormData({ ...formData, model: e.target.value });
+                                            }
+                                        }}
+                                        className={selectCls}
+                                    >
+                                        <option value="">{t('llmModal.modelPlaceholder')}</option>
+                                        {mergeWithCurrent(models).map(m => (
+                                            <option key={m.id || m} value={m.id || m}>{m.label || m}</option>
+                                        ))}
+                                        <option value="__custom__">{t('llmModal.customModelOption')}</option>
+                                    </select>
+                                );
+                            })()}
                             {fetchWarning ? (
                                 <div className="text-[11px] leading-snug text-[var(--vscode-fg-subtle)]">
                                     {fetchWarning}

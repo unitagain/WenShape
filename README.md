@@ -167,7 +167,7 @@ data/{project_id}/
 1. 前往 [Releases](https://github.com/unitagain/WenShape/releases) 下载最新版本 `WenShape_vX.X.X.zip`
 2. 解压到任意目录
 3. 双击运行 `WenShape.exe`，浏览器自动打开
-4. 在 **设置 → 智能体配置** 中填入 API Key（支持 OpenAI / Anthropic / DeepSeek 等，也可选 Mock 模式体验）
+4. 在 **设置 → 智能体配置** 中填入 API Key（支持 OpenAI / Anthropic / DeepSeek 等真实模型提供商）
 5. 创建项目，开始写作
 
 ### 方式二：从源码运行

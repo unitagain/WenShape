@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
     # LLM Provider / 大模型供应商选择
-    # 可选值：openai, anthropic, deepseek, gemini, mock, custom
+    # 可选值：openai, anthropic, deepseek, gemini, custom
     wenshape_llm_provider: str = os.getenv("WENSHAPE_LLM_PROVIDER", "")
 
     # Per-Agent LLM provider override / 按Agent指定LLM供应商
@@ -192,7 +192,7 @@ except FileNotFoundError as e:
     # 回退：最小化配置结构
     config = {
         "llm": {
-            "default_provider": settings.wenshape_llm_provider or "mock",
+            "default_provider": settings.wenshape_llm_provider or "openai",
             "providers": {}
         },
         "session": {
@@ -236,7 +236,7 @@ def reload_runtime_config() -> None:
         # Fallback: minimal config structure
         config = {
             "llm": {
-                "default_provider": settings.wenshape_llm_provider or "mock",
+                "default_provider": settings.wenshape_llm_provider or "openai",
                 "providers": {}
             },
             "session": {

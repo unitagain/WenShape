@@ -832,10 +832,6 @@ class ArchivistAgent(FanfictionMixin, SummaryMixin, BaseAgent):
 
     async def extract_style_profile(self, sample_text: str) -> str:
         """Extract writing style guidance from sample text."""
-        provider = self.gateway.get_provider_for_agent(self.get_agent_name())
-        if provider == "mock":
-            return ""
-
         sampled = self._sample_text_for_style_profile(sample_text, max_chars=20000)
         prompt = archivist_style_profile_prompt(sample_text=sampled, language=self.language)
         messages = self.build_messages(

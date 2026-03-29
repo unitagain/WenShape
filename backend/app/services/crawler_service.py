@@ -49,6 +49,8 @@ class CrawlerService:
     MOEGIRL_MAX_LINKS = 900
     MOEGIRL_API_PRIMARY = "https://mzh.moegirl.org.cn/api.php"
     MOEGIRL_API_FALLBACK = "https://zh.moegirl.org.cn/api.php"
+    MOEGIRL_WEB_PRIMARY = "https://mzh.moegirl.org.cn"
+    MOEGIRL_WEB_FALLBACK = "https://zh.moegirl.org.cn"
 
     def __init__(self):
         self.headers = {
@@ -143,6 +145,10 @@ class CrawlerService:
     def _build_moegirl_page_url(self, title: str) -> str:
         safe = quote(str(title or "").replace(" ", "_"), safe="")
         return f"https://mzh.moegirl.org.cn/index.php?title={safe}"
+
+    def _build_moegirl_raw_url(self, title: str, base: str) -> str:
+        safe = quote(str(title or "").replace(" ", "_"), safe="")
+        return f"{base}/index.php?title={safe}&action=raw"
 
     def _is_mediawiki_namespace_title(self, title: str) -> bool:
         """Filter out non-article namespaces (Category/File/Special/模板/分类等)."""
@@ -328,6 +334,70 @@ class CrawlerService:
             links.append({"title": item["title"], "url": item["url"]})
         return links
 
+    def _extract_moegirl_links_from_raw(self, raw_text: str, cap: int) -> List[Dict[str, str]]:
+        links: List[Dict[str, str]] = []
+        seen = set()
+        for m in re.finditer(r"\[\[([^\]\|#]+)(?:#[^\]\|]*)?(?:\|[^\]]*)?\]\]", str(raw_text or "")):
+            title = str(m.group(1) or "").strip()
+            if not title or self._is_mediawiki_namespace_title(title):
+                continue
+            page_url = self._build_moegirl_page_url(title)
+            if page_url in seen:
+                continue
+            seen.add(page_url)
+            links.append({"title": title, "url": page_url})
+            if len(links) >= cap:
+                break
+        return links
+
+    def _normalize_raw_wikitext(self, text: str) -> str:
+        content = str(text or "")
+        # Remove comments/refs and simple templates to reduce noise while preserving entities.
+        content = re.sub(r"<!--.*?-->", "", content, flags=re.S)
+        content = re.sub(r"<ref[^>]*>.*?</ref>", "", content, flags=re.S | re.I)
+        content = re.sub(r"<ref[^/>]*/>", "", content, flags=re.I)
+        content = re.sub(r"\{\{[^{}]{0,300}\}\}", "", content)
+        # Convert wiki links/external links to plain text labels.
+        content = re.sub(r"\[\[([^\]\|#]+)(?:#[^\]\|]*)?\|([^\]]+)\]\]", r"\2", content)
+        content = re.sub(r"\[\[([^\]\|#]+)(?:#[^\]\|]*)?\]\]", r"\1", content)
+        content = re.sub(r"\[https?://[^\s\]]+\s+([^\]]+)\]", r"\1", content)
+        content = re.sub(r"\[https?://[^\s\]]+\]", "", content)
+        # Strip heading markers.
+        content = re.sub(r"(?m)^\s*=+\s*(.*?)\s*=+\s*$", r"\1", content)
+        content = re.sub(r"\n{3,}", "\n\n", content)
+        return content.strip()
+
+    def _scrape_moegirl_raw(self, title: str) -> Optional[Dict[str, Any]]:
+        for base in [self.MOEGIRL_WEB_PRIMARY, self.MOEGIRL_WEB_FALLBACK]:
+            raw_url = self._build_moegirl_raw_url(title, base)
+            try:
+                response = self.session.get(raw_url, timeout=(6, 20))
+                response.raise_for_status()
+                response.encoding = "utf-8"
+                raw_text = str(response.text or "").strip()
+                if not raw_text:
+                    continue
+                # Some anti-bot pages return HTML instead of raw wikitext.
+                if raw_text.lstrip().startswith("<!DOCTYPE") or "<html" in raw_text[:300].lower():
+                    continue
+                llm_content = self._normalize_raw_wikitext(raw_text)
+                if not llm_content:
+                    continue
+                links = self._extract_moegirl_links_from_raw(raw_text, cap=self.MOEGIRL_MAX_LINKS)
+                return {
+                    "success": True,
+                    "title": title,
+                    "content": self._clean_content(llm_content[: self.MAX_PREVIEW_CHARS]),
+                    "llm_content": self._clean_content(llm_content[: self.MAX_LLM_CHARS]),
+                    "links": links,
+                    "is_list_page": len(links) > 10,
+                    "url": self._build_moegirl_page_url(title),
+                }
+            except Exception as exc:
+                logger.info("Moegirl raw fetch failed url=%s err=%s", raw_url, exc)
+                continue
+        return None
+
     def _fetch_moegirl_html_outgoing_links(self, page_url: str, cap: int) -> List[Dict[str, str]]:
         """
         Fetch the actual page HTML and extract outgoing links.
@@ -435,6 +505,36 @@ class CrawlerService:
         if not title:
             return self._scrape_html(normalized_url or url)
 
+        # Preferred path for Moegirl now: raw wikitext (more stable than parse API).
+        raw_result = self._scrape_moegirl_raw(title)
+        if raw_result and raw_result.get("success"):
+            logger.info("Moegirl raw extraction succeeded title=%s links=%s", title, len(raw_result.get("links") or []))
+            return raw_result
+
+        # HTML fallback path (multi-domain + printable mode) before parse API.
+        html_candidates: List[str] = []
+        safe_title = quote(str(title).replace(" ", "_"), safe="")
+        html_candidates.append(self._normalize_url(normalized_url or url))
+        html_candidates.append(f"{self.MOEGIRL_WEB_PRIMARY}/index.php?title={safe_title}")
+        html_candidates.append(f"{self.MOEGIRL_WEB_FALLBACK}/index.php?title={safe_title}")
+        html_candidates.append(f"{self.MOEGIRL_WEB_PRIMARY}/index.php?title={safe_title}&printable=yes")
+        html_candidates.append(f"{self.MOEGIRL_WEB_FALLBACK}/index.php?title={safe_title}&printable=yes")
+
+        seen = set()
+        for candidate in html_candidates:
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            html_result = self._scrape_html(candidate)
+            if html_result.get("success"):
+                content = str(html_result.get("content") or "").strip()
+                llm_content = str(html_result.get("llm_content") or "").strip()
+                links = html_result.get("links") or []
+                if content or llm_content or links:
+                    logger.info("Moegirl HTML extraction succeeded url=%s links=%s", candidate, len(links))
+                    return html_result
+
+        # Last resort: parse API (some mirrors may still allow it).
         for api_url in [self.MOEGIRL_API_PRIMARY, self.MOEGIRL_API_FALLBACK]:
             try:
                 params = {
@@ -521,11 +621,17 @@ class CrawlerService:
                     "url": base_page_url,
                 }
             except Exception as exc:
-                logger.warning("Moegirl API parse failed api=%s url=%s err=%s", api_url, url, exc)
+                logger.info("Moegirl API parse failed api=%s url=%s err=%s", api_url, url, exc)
                 continue
 
-        # Final fallback: direct HTML
-        return self._scrape_html(normalized_url or url)
+        return {
+            "success": False,
+            "error": "Moegirl extraction failed: parse API is blocked and raw/HTML fallback returned empty content.",
+            "url": normalized_url or url,
+            "content": "",
+            "links": [],
+            "llm_content": "",
+        }
 
     def _extract_moegirl_links(self, parse_data: Dict[str, Any]) -> List[Dict[str, str]]:
         raw_links = parse_data.get("links") or []
@@ -917,11 +1023,25 @@ class CrawlerService:
             fallback_text = self._extract_text_from_soup(soup)
             if fallback_text:
                 llm_content = f"{llm_content}\n\n{fallback_text[:20000]}"
+        links: List[Dict[str, str]]
+        parsed_check = urlparse(str(url or ""))
+        if self._is_moegirl_domain(parsed_check.netloc):
+            content_root = soup.find("div", class_="mw-parser-output") or soup.find("body")
+            links = self._extract_moegirl_outgoing_links_from_html(content_root, url, cap=self.MOEGIRL_MAX_LINKS) if content_root else []
+        else:
+            links = self._extract_links(soup, url)
+
         preview_content = wiki_parser.format_for_preview(parsed_data, max_chars=self.MAX_PREVIEW_CHARS)
         if not preview_content:
             preview_content = llm_content[: self.MAX_PREVIEW_CHARS]
 
-        links = self._extract_links(soup, url)
+        # For JS-heavy pages (e.g., Moegirl), text may be empty while anchors are still available.
+        if (not preview_content or len(preview_content.strip()) < 20) and links:
+            link_lines = "\n".join([f"- {item.get('title')}" for item in links[:80] if item.get("title")])
+            fallback_title = parsed_data.get("title") or title or "Untitled"
+            preview_content = f"{fallback_title}\n\n页面正文提取受限，以下为页面可识别词条：\n{link_lines}".strip()
+            llm_content = preview_content if not llm_content or len(llm_content.strip()) < 20 else llm_content
+
         is_list_page = len(links) > 10
 
         return {
@@ -1012,7 +1132,7 @@ class CrawlerService:
         if not content:
             return []
 
-        def add_link(href: str, link_text: str) -> None:
+        def add_link(href: str, link_text: str, link_title: str = "") -> None:
             full_url = urljoin(base_url, href)
             full_url, _ = urldefrag(full_url)
             full_domain = urlparse(full_url).netloc
@@ -1024,16 +1144,25 @@ class CrawlerService:
                     return
             if any(x in href.lower() for x in ["special:", "file:", "talk:", "template:", "user:"]):
                 return
-            if not link_text or len(link_text) < 2:
+            text = str(link_text or "").strip()
+            title_attr = str(link_title or "").strip()
+            if (not text or len(text) < 2) and title_attr:
+                text = title_attr
+            if (not text or len(text) < 2) and "moegirl.org" in (full_domain or ""):
+                parsed = urlparse(full_url)
+                guessed = self._moegirl_article_title_from_url(parsed)
+                if guessed:
+                    text = guessed
+            if not text or len(text) < 2:
                 return
             if full_url not in seen_urls:
                 seen_urls.add(full_url)
-                links.append({"title": link_text, "url": full_url})
+                links.append({"title": text, "url": full_url})
 
         tables = content.find_all("table")
         for table in tables[:20]:
             for a_tag in table.find_all("a", href=True):
-                add_link(a_tag["href"], a_tag.get_text(strip=True))
+                add_link(a_tag["href"], a_tag.get_text(strip=True), a_tag.get("title"))
                 if len(links) >= self.MAX_LINKS:
                     break
             if len(links) >= self.MAX_LINKS:
@@ -1043,7 +1172,7 @@ class CrawlerService:
             lists = content.find_all(["ul", "ol"])
             for lst in lists[:20]:
                 for a_tag in lst.find_all("a", href=True):
-                    add_link(a_tag["href"], a_tag.get_text(strip=True))
+                    add_link(a_tag["href"], a_tag.get_text(strip=True), a_tag.get("title"))
                     if len(links) >= self.MAX_LINKS:
                         break
                 if len(links) >= self.MAX_LINKS:
@@ -1051,7 +1180,7 @@ class CrawlerService:
 
         if len(links) < self.MAX_LINKS:
             for a_tag in content.find_all("a", href=True):
-                add_link(a_tag["href"], a_tag.get_text(strip=True))
+                add_link(a_tag["href"], a_tag.get_text(strip=True), a_tag.get("title"))
                 if len(links) >= self.MAX_LINKS:
                     break
 

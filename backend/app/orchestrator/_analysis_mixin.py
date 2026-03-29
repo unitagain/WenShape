@@ -190,14 +190,13 @@ class AnalysisMixin:
         if len(facts) > 5:
             facts = facts[:5]
 
-        proposals = await self._detect_proposals(project_id, content)
-
         return {
             "summary": summary.model_dump(),
             "facts": [fact.model_dump() for fact in facts],
             "timeline_events": [event.model_dump() for event in canon_updates.get("timeline_events", []) or []],
             "character_states": [state.model_dump() for state in canon_updates.get("character_states", []) or []],
-            "proposals": proposals or [],
+            # Auto card creation has been removed from analysis flow.
+            "proposals": [],
         }
 
     async def analyze_sync(self, project_id: str, chapters: List[str]) -> Dict[str, Any]:
@@ -218,8 +217,9 @@ class AnalysisMixin:
             Batch result dict with per-chapter status and statistics.
         """
         results = []
+        # Keep caller-selected chapter order stable to avoid UI reorder surprises.
         chapter_list = [str(ch).strip() for ch in (chapters or []) if str(ch).strip()]
-        chapters = ChapterIDValidator.sort_chapters(chapter_list)
+        chapters = list(dict.fromkeys(chapter_list))
         total = len(chapters)
         completed = 0
         volume_ids_to_refresh: List[str] = []
@@ -238,6 +238,8 @@ class AnalysisMixin:
         if total == 0:
             return {"success": True, "results": []}
 
+        chapter_list = [str(ch).strip() for ch in (chapters or []) if str(ch).strip()]
+        chapters = list(dict.fromkeys(chapter_list))
         for chapter in chapters:
             try:
                 completed += 1
@@ -415,9 +417,16 @@ class AnalysisMixin:
         """
         try:
             summary_data = analysis.get("summary", {}) or {}
-            summary_data["chapter"] = self._normalize_chapter_id(
-                summary_data.get("chapter") or chapter
-            )
+            summary_data["chapter"] = self._normalize_chapter_id(summary_data.get("chapter") or chapter)
+            existing_summary = await self.draft_storage.get_chapter_summary(project_id, summary_data["chapter"])
+            if existing_summary:
+                # Preserve manual chapter ordering and stable metadata during analysis overwrite.
+                if summary_data.get("order_index") is None:
+                    summary_data["order_index"] = existing_summary.order_index
+                if not summary_data.get("volume_id"):
+                    summary_data["volume_id"] = existing_summary.volume_id
+                if not summary_data.get("title"):
+                    summary_data["title"] = existing_summary.title
             summary = ChapterSummary(**summary_data)
             summary.new_facts = []
             if not summary.volume_id:
@@ -485,19 +494,13 @@ class AnalysisMixin:
                 await self.canon_storage.update_character_state(project_id, CharacterState(**state_data))
                 states_saved += 1
 
-            cards_created = await self._create_cards_from_proposals(
-                project_id=project_id,
-                proposals=analysis.get("proposals", []) or [],
-                overwrite=overwrite,
-            )
-
             return {
                 "success": True,
                 "stats": {
                     "facts_saved": facts_saved,
                     "timeline_saved": timeline_saved,
                     "states_saved": states_saved,
-                    "cards_created": cards_created,
+                    "cards_created": 0,
                 },
             }
         except Exception as exc:
@@ -589,24 +592,8 @@ class AnalysisMixin:
         Returns:
             设定建议列表 / List of setting proposal dicts.
         """
-        try:
-            if hasattr(content, "content"):
-                content_text = content.content
-            else:
-                content_text = str(content)
-
-            chars = await self.card_storage.list_character_cards(project_id)
-            worlds = await self.card_storage.list_world_cards(project_id)
-            existing = chars + worlds
-
-            proposals = await self.archivist.detect_setting_changes(content_text, existing)
-            # 按产品需求：分析阶段不再自动识别/建议“新增角色卡”，但保留 proposals 接口以支持世界观类新增设定。
-            # （用户仍可在卡片库手动新建角色卡；同人导入等功能不受影响）
-            dumped = [p.model_dump() for p in proposals]
-            return [item for item in dumped if str(item.get("type") or "").lower() != "character"]
-        except Exception as exc:
-            logger.warning("Proposal detection failed: %s", exc)
-            return []
+        # Product decision: disable auto proposal generation in analysis flow entirely.
+        return []
 
     async def _create_cards_from_proposals(
         self,
@@ -628,6 +615,9 @@ class AnalysisMixin:
         Returns:
             创建的卡片数量 / Number of cards created.
         """
+        # Hard-stop safeguard: never auto-create cards from analysis proposals.
+        return 0
+
         created = 0
         for item in proposals:
             try:

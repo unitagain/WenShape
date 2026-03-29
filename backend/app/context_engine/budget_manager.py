@@ -106,8 +106,9 @@ PROVIDER_TOKEN_RATIO = {
     "kimi": 1.05,
     "glm": 1.05,
     "grok": 1.05,
+    "wenxin": 1.05,
+    "aistudio": 1.05,
     "custom": 1.10,
-    "mock": 1.0,
 }
 
 

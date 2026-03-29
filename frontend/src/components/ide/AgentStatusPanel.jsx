@@ -354,6 +354,7 @@ const AgentStatusPanel = ({
         const maxHeight = 160;
         const nextHeight = Math.min(el.scrollHeight, maxHeight);
         el.style.height = `${Math.max(nextHeight, 40)}px`;
+        el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
     };
 
     const handleCopyContextDebug = async () => {
@@ -737,7 +738,7 @@ const AgentStatusPanel = ({
                             disabled={inputDisabled}
                             placeholder={mode === 'edit' ? t('agentPanel.inputPlaceholderEdit') : t('agentPanel.inputPlaceholderCreate')}
                             className={[
-                                "flex-1 px-3 py-2 text-sm border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)] resize-none overflow-hidden min-h-[40px]",
+                                "flex-1 px-3 py-2 text-sm border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)] resize-none min-h-[40px] overscroll-contain",
                                 inputDisabled ? "opacity-60 cursor-not-allowed" : ""
                             ].join(' ')}
                         />

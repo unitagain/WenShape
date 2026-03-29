@@ -321,7 +321,7 @@ export default function AnalysisSyncDialog({
             disabled={loading || selected.size === 0}
             className="h-6 px-3 text-xs bg-[var(--vscode-bg)] text-[var(--vscode-fg)] border border-[var(--vscode-input-border)] hover:bg-[var(--vscode-list-hover)] rounded-[2px] shadow-none transition-none"
           >
-            {loading ? t('common.processing') : t('writingSession.reorderMode')}
+            {loading ? t('common.processing') : t('analysisSyncDialog.rebuildBindingsBtn')}
           </Button>
           <Button
             onClick={handleRebuildIndexes}
@@ -329,7 +329,7 @@ export default function AnalysisSyncDialog({
             className="h-6 px-3 text-xs bg-[var(--vscode-bg)] text-[var(--vscode-fg)] border border-[var(--vscode-input-border)] hover:bg-[var(--vscode-list-hover)] rounded-[2px] shadow-none transition-none"
             title={t('analysisSyncDialog.rebuildIndexTitle')}
           >
-            {indexRebuildLoading ? t('common.processing') : t('common.refresh')}
+            {indexRebuildLoading ? t('common.processing') : t('analysisSyncDialog.rebuildIndexBtn')}
           </Button>
         </div>
       </div>

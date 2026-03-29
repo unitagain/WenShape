@@ -327,7 +327,7 @@ export const OrchestratorConsole = ({
                                 status === 'waiting_feedback' ? t('panels.console.placeholderFeedback') :
                                     t('panels.console.placeholderInput')
                             }
-                            className="w-full min-h-[44px] max-h-[120px] py-3 pl-4 pr-10 bg-[var(--vscode-input-bg)] border border-[var(--vscode-input-border)] rounded-[6px] text-sm focus:ring-1 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)] resize-none outline-none transition-colors placeholder:text-[var(--vscode-fg-subtle)] font-sans"
+                            className="w-full min-h-[44px] max-h-[120px] py-3 pl-4 pr-10 bg-[var(--vscode-input-bg)] border border-[var(--vscode-input-border)] rounded-[6px] text-sm focus:ring-1 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)] resize-none overflow-y-auto outline-none transition-colors placeholder:text-[var(--vscode-fg-subtle)] font-sans"
                             disabled={isGenerating}
                         />
                         <div className="absolute right-2 bottom-2">

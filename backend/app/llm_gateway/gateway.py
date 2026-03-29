@@ -5,7 +5,6 @@ Unified interface with retry, rate limiting, and cost tracking
 """
 
 import asyncio
-import os
 import time
 from typing import List, Dict, Any, Optional
 import app.config as app_config
@@ -17,13 +16,14 @@ from app.llm_gateway.providers import (
     OpenAIProvider,
     AnthropicProvider,
     DeepSeekProvider,
-    MockProvider,
     CustomProvider,
     QwenProvider,
     KimiProvider,
     GLMProvider,
     GeminiProvider,
     GrokProvider,
+    WenxinProvider,
+    AIStudioProvider,
 )
 
 logger = get_logger(__name__)
@@ -41,7 +41,6 @@ class LLMGateway:
         # We don't pre-initialize all providers anymore, or we initialize all profiles?
         # Let's initialize all valid profiles for cache
         self._init_profiles()
-        self._ensure_mock_provider()
 
         # Retry configuration from config.yaml / 从配置文件加载重试参数
         gw_cfg = app_config.config.get("gateway", {})
@@ -55,23 +54,6 @@ class LLMGateway:
         self.total_tokens = 0
         self.total_requests = 0
 
-    def _is_mock_mode(self) -> bool:
-        """
-        Whether the system should run in mock/demo mode.
-
-        In mock mode, we must not require any persisted LLM profiles/assignments,
-        otherwise the app becomes unusable on first run (fresh checkout / packaged build).
-        """
-        try:
-            return str(getattr(app_config.settings, "wenshape_llm_provider", "") or "").strip().lower() == "mock"
-        except Exception:
-            return str(os.getenv("WENSHAPE_LLM_PROVIDER", "") or "").strip().lower() == "mock"
-
-    def _ensure_mock_provider(self) -> None:
-        """Ensure mock provider exists when running in mock mode or as fallback."""
-        if "mock" not in self.providers:
-            self.providers["mock"] = MockProvider()
-    
     def _init_profiles(self) -> None:
         """Initialize LLM providers from stored profiles"""
         self.providers = {}
@@ -124,14 +106,14 @@ class LLMGateway:
             if provider_type == "openai":
                 return OpenAIProvider(
                     api_key=api_key,
-                    model=profile.get("model", "gpt-4o"),
+                    model=profile.get("model", "gpt-5.4-mini"),
                     max_tokens=profile.get("max_tokens", 8000),
                     temperature=profile.get("temperature", 0.7)
                 )
             elif provider_type == "anthropic":
                 return AnthropicProvider(
                     api_key=api_key,
-                    model=profile.get("model", "claude-3-5-sonnet-20241022"),
+                    model=profile.get("model", "claude-sonnet-4-6"),
                     max_tokens=profile.get("max_tokens", 8000),
                     temperature=profile.get("temperature", 0.7)
                 )
@@ -146,7 +128,7 @@ class LLMGateway:
                 return QwenProvider(
                     api_key=api_key,
                     base_url=profile.get("base_url"),
-                    model=profile.get("model", "qwen-turbo"),
+                    model=profile.get("model", "qwen3.5-plus"),
                     max_tokens=profile.get("max_tokens", 8000),
                     temperature=profile.get("temperature", 0.7)
                 )
@@ -154,7 +136,7 @@ class LLMGateway:
                 return KimiProvider(
                     api_key=api_key,
                     base_url=profile.get("base_url"),
-                    model=profile.get("model", "moonshot-v1-8k"),
+                    model=profile.get("model", "kimi-k2.5"),
                     max_tokens=profile.get("max_tokens", 8000),
                     temperature=profile.get("temperature", 0.7)
                 )
@@ -162,14 +144,14 @@ class LLMGateway:
                 return GLMProvider(
                     api_key=api_key,
                     base_url=profile.get("base_url"),
-                    model=profile.get("model", "glm-4"),
+                    model=profile.get("model", "glm-5"),
                     max_tokens=profile.get("max_tokens", 8000),
                     temperature=profile.get("temperature", 0.7)
                 )
             elif provider_type == "gemini":
                 return GeminiProvider(
                     api_key=api_key,
-                    model=profile.get("model", "gemini-2.5-flash"),
+                    model=profile.get("model", "gemini-3.1-pro-preview"),
                     max_tokens=profile.get("max_tokens", 8000),
                     temperature=profile.get("temperature", 0.7)
                 )
@@ -177,7 +159,23 @@ class LLMGateway:
                 return GrokProvider(
                     api_key=api_key,
                     base_url=profile.get("base_url"),
-                    model=profile.get("model", "grok-beta"),
+                    model=profile.get("model", "grok-4"),
+                    max_tokens=profile.get("max_tokens", 8000),
+                    temperature=profile.get("temperature", 0.7)
+                )
+            elif provider_type == "wenxin":
+                return WenxinProvider(
+                    api_key=api_key,
+                    base_url=profile.get("base_url"),
+                    model=profile.get("model", "ernie-4.5-turbo-32k"),
+                    max_tokens=profile.get("max_tokens", 8000),
+                    temperature=profile.get("temperature", 0.7)
+                )
+            elif provider_type == "aistudio":
+                return AIStudioProvider(
+                    api_key=api_key,
+                    base_url=profile.get("base_url"),
+                    model=profile.get("model", "ernie-5.0-thinking-preview"),
                     max_tokens=profile.get("max_tokens", 8000),
                     temperature=profile.get("temperature", 0.7)
                 )
@@ -442,16 +440,10 @@ class LLMGateway:
         """
         Get configured PROFILE ID for specific agent
         """
-        if self._is_mock_mode():
-            self._ensure_mock_provider()
-            return "mock"
-
         assignments = llm_config_service.get_assignments()
         profile_id = assignments.get(agent_name)
 
         if not profile_id:
-            if "mock" in self.providers:
-                return "mock"
             raise ValueError(f"No LLM profile assigned for agent '{agent_name}'.")
 
         if profile_id not in self.providers:

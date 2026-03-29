@@ -174,7 +174,7 @@ No need to install Python or Node.js — it works out of the box.
 1. Go to [Releases](https://github.com/unitagain/WenShape/releases) and download the latest `WenShape_vX.X.X.zip`
 2. Extract it to any directory
 3. Run `WenShape.exe` (your browser will open automatically)
-4. In **Settings → Agent Configuration**, fill in your API key (supports OpenAI / Anthropic / DeepSeek, etc.; you can also use Mock mode to try it out)
+4. In **Settings → Agent Configuration**, fill in your API key (supports real providers such as OpenAI / Anthropic / DeepSeek)
 5. Create a project and start writing
 
 ### Option 2: Run from source

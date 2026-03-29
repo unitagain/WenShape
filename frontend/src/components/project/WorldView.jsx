@@ -50,16 +50,6 @@ const parseListInput = (value) => {
 };
 
 /**
- * 格式化规则输入函数 / Format rules with newlines
- * @param {*} value - 规则值 / Rules value
- * @returns {string} 格式化字符串 / Formatted string
- */
-const formatRulesInput = (value) => {
-  if (Array.isArray(value)) return value.filter(Boolean).join('\n');
-  return value || '';
-};
-
-/**
  * 世界观卡片视图组件 - 展示和编辑世界观设定
  *
  * Component for displaying and editing worldview cards (locations, organizations, items).
@@ -108,8 +98,6 @@ export function WorldView({ projectId }) {
     description: '',
     aliases: '',
     category: '',
-    rules: '',
-    immutable: 'unset',
     stars: 1
   });
   const [loading, setLoading] = useState(false);
@@ -136,8 +124,6 @@ export function WorldView({ projectId }) {
       description: card.description || '',
       aliases: formatAliases(card.aliases),
       category: card.category || '',
-      rules: formatRulesInput(card.rules),
-      immutable: card.immutable === true ? 'true' : card.immutable === false ? 'false' : 'unset',
       stars: normalizeStars(card.stars)
     });
   };
@@ -146,21 +132,14 @@ export function WorldView({ projectId }) {
     e.preventDefault();
     if (!formData.name.trim()) return;
 
-    const rules = parseListInput(formData.rules);
     const aliases = parseListInput(formData.aliases);
-    const immutableValue =
-      formData.immutable === 'true' ? true : formData.immutable === 'false' ? false : undefined;
     const payload = {
       name: formData.name.trim(),
       description: (formData.description || '').trim(),
       aliases,
       category: (formData.category || '').trim(),
-      rules,
       stars: normalizeStars(formData.stars)
     };
-    if (immutableValue !== undefined) {
-      payload.immutable = immutableValue;
-    }
 
     if (editing?.name) {
       await cardsAPI.updateWorld(projectId, editing.name, payload);
@@ -174,8 +153,6 @@ export function WorldView({ projectId }) {
       description: '',
       aliases: '',
       category: '',
-      rules: '',
-      immutable: 'unset',
       stars: 1
     });
     await loadCards();
@@ -277,29 +254,6 @@ export function WorldView({ projectId }) {
                     onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                     placeholder={t('card.categoryPlaceholder')}
                   />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-[var(--vscode-fg-subtle)] uppercase">{t('card.fieldRules')}</label>
-                  <textarea
-                    className="flex min-h-[160px] w-full rounded-[6px] border border-[var(--vscode-input-border)] bg-[var(--vscode-input-bg)] px-3 py-2 text-sm text-[var(--vscode-fg)] placeholder:text-[var(--vscode-fg-subtle)] focus-visible:outline-none focus-visible:border-[var(--vscode-focus-border)] transition-colors resize-none"
-                    value={formData.rules || ''}
-                    onChange={(e) => setFormData({ ...formData, rules: e.target.value })}
-                    placeholder={t('card.rulesPlaceholder')}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-[var(--vscode-fg-subtle)] uppercase">{t('card.fieldImmutable')}</label>
-                  <select
-                    value={formData.immutable}
-                    onChange={(e) => setFormData({ ...formData, immutable: e.target.value })}
-                    className="w-full h-10 px-3 rounded-[6px] border border-[var(--vscode-input-border)] bg-[var(--vscode-input-bg)] text-sm text-[var(--vscode-fg)] focus-visible:outline-none focus-visible:border-[var(--vscode-focus-border)] transition-colors"
-                  >
-                    <option value="unset">{t('card.immutableUnset')}</option>
-                    <option value="true">{t('card.immutableTrue')}</option>
-                    <option value="false">{t('card.immutableFalse')}</option>
-                  </select>
                 </div>
 
                 <div className="space-y-2">

@@ -1570,122 +1570,135 @@ def editor_revision_prompt(original_draft: str, user_feedback: str, language: st
 
 def editor_patch_ops_prompt(
     excerpts: str,
-    user_feedback: str, language: str = "zh") -> PromptPair:
-    """
-    编辑补丁模式：输出结构化 patch ops，而不是整稿重写。
-
-    设计目标：
-    - 让模型“只改需要改的地方”，降低幻觉与波及面
-    - 支持前端基于原文展示 diff，并允许逐块接受/撤销
-
-    输出 schema（JSON，不要 Markdown）：
-    {
-      "ops": [
-        {
-          "op": "replace" | "delete" | "insert_before" | "insert_after",
-          "before": "原文中将被替换/删除的精确片段（必须来自提供的摘录）",
-          "after": "替换后的新片段（replace 必填）",
-          "anchor": "用于插入的精确锚点片段（insert_* 必填）",
-          "content": "要插入的新内容（insert_* 必填）",
-          "reason": "一句话解释（可选，仅用于审阅）"
-        }
-      ]
-    }
-    """
+    user_feedback: str,
+    language: str = "zh",
+) -> PromptPair:
+    """Prompt for minimal patch operations."""
     if language == "en":
-        critical = "\n".join(
+        rules = "\n".join(
             [
-                "=" * 50,
-                "### Edit Task (Patch-Ops Mode)",
-                "=" * 50,
-                "",
-                "Generate minimal local patch operations for the provided excerpts.",
-                "",
-                "### Constraints",
-                "",
-                "[P0-MUST] Minimal edits only; avoid broad rewrites.",
-                "[P0-MUST] Do not output full rewritten draft.",
-                "[P0-MUST] before/anchor must exactly match provided excerpts.",
-                f"[P0-MUST] For ending continuation, use insert_after with anchor={EDITOR_PATCH_END_ANCHOR}.",
-                "[P0-MUST] replace/delete require before; insert_* require anchor.",
-                "[P0-MUST] Newly added text must be English prose.",
-                "",
-                "### Output",
-                "",
-                _json_only_rules('Top-level JSON object must include "ops" array.', language=language),
+                "### Edit Task (Patch Ops)",
+                "[P0-MUST] Generate minimal local patch operations only.",
+                "[P0-MUST] Do not rewrite the full draft.",
+                "[P0-MUST] Any `before` or `anchor` text must be copied exactly from the excerpts.",
+                f"[P0-MUST] For ending continuation, use `insert_after` with anchor `{EDITOR_PATCH_END_ANCHOR}`.",
+                "[P0-MUST] Output JSON only, with top-level key `ops`.",
             ]
         )
         user = "\n".join(
             [
-                critical,
+                rules,
                 "",
                 "### Source Excerpts",
-                "",
                 "<<<EXCERPTS_START>>>",
                 excerpts or "",
                 "<<<EXCERPTS_END>>>",
                 "",
                 "### User Feedback",
-                "",
                 "<<<FEEDBACK_START>>>",
                 user_feedback or "",
                 "<<<FEEDBACK_END>>>",
                 "",
-                "### Start Output",
-                "Output JSON directly:",
-                "",
-                "─" * 40,
-                "[Rules Repeated]",
-                critical,
+                "Output JSON directly.",
             ]
         )
         return PromptPair(system=get_editor_system_prompt(language=language), user=user)
-    critical = "\n".join(
+
+    rules = "\n".join(
         [
-            "=" * 50,
-            "### 编辑任务（补丁模式）",
-            "=" * 50,
-            "",
-            "根据【用户反馈】对【原文摘录】提出最小化的局部补丁操作（patch ops）。",
-            "",
-            "### 核心约束",
-            "",
-            f"{P0_MARKER} 最小改动：只对必要句段做替换/插入/删除，其他内容保持原样。",
-            f"{P0_MARKER} 严禁整稿重写：禁止输出完整正文、禁止大范围改写、禁止无关润色。",
-            f"{P0_MARKER} 锚点必须精确：before/anchor 必须是【原文摘录】中出现的原句/片段（逐字匹配）。",
-            f"{P0_MARKER} 结尾追加：若用户反馈要求“续写/补全/扩写结尾”，优先使用 insert_after 在文末追加；可将 anchor 设置为特殊值 {EDITOR_PATCH_END_ANCHOR} 表示全文末尾。",
-            f"{P0_MARKER} 安全性：replace/delete 必须提供 before；insert_* 必须提供 anchor。",
-            f"{P0_MARKER} 中文输出：所有新增 content/after 必须中文。",
-            "",
-            "### 输出格式",
-            "",
-            f"{P0_MARKER} 仅输出 JSON（不要代码块/不要解释/不要多余文本）",
-            f"{P0_MARKER} JSON 顶层必须包含 ops 数组（允许为空，但尽量给出可执行补丁）",
+            "### 编辑任务（Patch Ops）",
+            f"{P0_MARKER} 只输出最小化局部修改，不要整章重写。",
+            f"{P0_MARKER} `before` / `anchor` 必须逐字复制自原文摘录。",
+            f"{P0_MARKER} 如果用户要求续写结尾，请使用 `insert_after`，并把 anchor 设为 `{EDITOR_PATCH_END_ANCHOR}`。",
+            f"{P0_MARKER} 顶层只输出 JSON，对象中必须包含 `ops` 数组。",
+            f"{P1_MARKER} 尽量减少操作条数，只改必要位置。",
         ]
     )
-
     user = "\n".join(
         [
-            critical,
+            rules,
             "",
-            "### 原文摘录（仅供定位与补丁，不要尝试重写整章）",
-            "",
+            "### 原文摘录",
             "<<<EXCERPTS_START>>>",
             excerpts or "",
             "<<<EXCERPTS_END>>>",
             "",
-            "### 用户反馈（需执行的修改）",
-            "",
+            "### 用户反馈",
             "<<<FEEDBACK_START>>>",
             user_feedback or "",
             "<<<FEEDBACK_END>>>",
             "",
-            "### 开始输出",
-            "请直接输出 JSON：",
+            "输出格式示例：",
+            '{"ops":[{"op":"replace","before":"原句","after":"修改后句子"}]}',
             "",
-            "─" * 40,
-            "【规则重复】",
-            critical,
+            "现在请直接输出 JSON，不要解释。",
+        ]
+    )
+    return PromptPair(system=get_editor_system_prompt(language=language), user=user)
+
+
+def editor_locate_blocks_prompt(
+    indexed_document: str,
+    user_feedback: str,
+    language: str = "zh",
+) -> PromptPair:
+    """Prompt for locating editable blocks in a numbered document."""
+    if language == "en":
+        rules = "\n".join(
+            [
+                "### Edit Locate Task",
+                "[P0-MUST] Read the numbered document and choose the block ids that should be edited.",
+                "[P0-MUST] Output JSON only with keys `block_ids` and `reason`.",
+                "[P0-MUST] `block_ids` must use ids already present in the document, such as `P1`, `P2`.",
+                "[P1-SHOULD] Choose the smallest continuous span that can satisfy the request.",
+                "[P1-SHOULD] If the user requests a whole-section rewrite, you may return multiple consecutive blocks.",
+            ]
+        )
+        user = "\n".join(
+            [
+                rules,
+                "",
+                "### Numbered Document",
+                "<<<DOCUMENT_START>>>",
+                indexed_document or "",
+                "<<<DOCUMENT_END>>>",
+                "",
+                "### User Feedback",
+                "<<<FEEDBACK_START>>>",
+                user_feedback or "",
+                "<<<FEEDBACK_END>>>",
+                "",
+                'Output JSON directly, for example: {"block_ids":["P1","P2"],"reason":"revise the opening tone"}',
+            ]
+        )
+        return PromptPair(system=get_editor_system_prompt(language=language), user=user)
+
+    rules = "\n".join(
+        [
+            "### 编辑定位任务",
+            f"{P0_MARKER} 阅读带编号的全文段落，判断应该修改哪些段落。",
+            f"{P0_MARKER} 只输出 JSON，且仅包含 `block_ids` 与 `reason` 两个键。",
+            f"{P0_MARKER} `block_ids` 只能使用文档中已有的段落编号，例如 `P1`、`P2`。",
+            f"{P1_MARKER} 优先选择满足要求的最小连续范围。",
+            f"{P1_MARKER} 如果用户要求整体性重写，可以返回多个连续段落。",
+        ]
+    )
+    user = "\n".join(
+        [
+            rules,
+            "",
+            "### 带编号的全文段落",
+            "<<<DOCUMENT_START>>>",
+            indexed_document or "",
+            "<<<DOCUMENT_END>>>",
+            "",
+            "### 用户反馈",
+            "<<<FEEDBACK_START>>>",
+            user_feedback or "",
+            "<<<FEEDBACK_END>>>",
+            "",
+            '示例：{"block_ids":["P1","P2"],"reason":"用户要求调整开头两段的语气"}',
+            "现在请直接输出 JSON，不要解释。",
         ]
     )
     return PromptPair(system=get_editor_system_prompt(language=language), user=user)
@@ -1695,127 +1708,83 @@ def editor_selection_replace_prompt(
     selection_text: str,
     user_feedback: str,
     prefix_hint: str = "",
-    suffix_hint: str = "", language: str = "zh") -> PromptPair:
-    """
-    选区编辑替换模式：让模型只输出“替换后的选区文本”，由程序按 index 范围应用。
-
-    设计动机：
-    - 避免要求模型逐字复制超长 before/anchor（JSON patch 在长选区下极不可靠）
-    - 保证“只改选区”的边界可被程序强制执行
-    """
+    suffix_hint: str = "",
+    language: str = "zh",
+) -> PromptPair:
+    """Prompt for replacing a specific selected range."""
     if language == "en":
-        critical = "\n".join(
+        rules = "\n".join(
             [
-                "=" * 50,
-                "### Edit Task (Selection Replace Mode)",
-                "=" * 50,
-                "",
-                "Modify only the selected text and output the replacement text only.",
-                "",
-                "### Constraints",
-                "",
-                "[P0-MUST] Do not edit outside the selected range.",
-                "[P0-MUST] Output must differ from the original selection and reflect user feedback.",
-                "[P0-MUST] Keep continuity with prefix/suffix context (tone, POV, naming).",
-                "[P0-MUST] Output English prose only.",
-                "",
-                "### Output",
-                "",
-                "[P0-MUST] Output plain replacement text only; no JSON, no explanation, no title.",
+                "### Edit Task (Selection Replace)",
+                "[P0-MUST] Edit only the selected text and output the replacement text only.",
+                "[P0-MUST] The replacement must differ from the original selection.",
+                "[P0-MUST] Keep continuity with the prefix and suffix hints.",
+                "[P0-MUST] Do not output JSON, explanations, or titles.",
             ]
         )
         user = "\n".join(
             [
-                critical,
+                rules,
                 "",
-                "### Prefix Hint (for continuity)",
-                "",
+                "### Prefix Hint",
                 "<<<PREFIX_START>>>",
                 prefix_hint or "",
                 "<<<PREFIX_END>>>",
                 "",
                 "### Selected Text",
-                "",
                 "<<<SELECTION_START>>>",
                 selection_text or "",
                 "<<<SELECTION_END>>>",
                 "",
-                "### Suffix Hint (for continuity)",
-                "",
+                "### Suffix Hint",
                 "<<<SUFFIX_START>>>",
                 suffix_hint or "",
                 "<<<SUFFIX_END>>>",
                 "",
                 "### User Feedback",
-                "",
                 "<<<FEEDBACK_START>>>",
                 user_feedback or "",
                 "<<<FEEDBACK_END>>>",
                 "",
-                "### Start Output",
-                "Output replacement text directly:",
-                "",
-                "─" * 40,
-                "[Rules Repeated]",
-                critical,
+                "Output the replacement text directly.",
             ]
         )
         return PromptPair(system=get_editor_system_prompt(language=language), user=user)
-    critical = "\n".join(
+
+    rules = "\n".join(
         [
-            "=" * 50,
-            "### 编辑任务（选区替换模式）",
-            "=" * 50,
-            "",
-            "你将只对用户选中的【选区文本】进行修改，并输出“替换后的选区文本”。",
-            "",
-            "### 核心约束",
-            "",
-            f"{P0_MARKER} 修改边界：只能修改选区文本所覆盖的内容，不得引入选区之外的新段落结构要求。",
-            f"{P0_MARKER} 必须可见：输出必须与选区原文不同（删/改/扩写均可，但必须执行用户反馈）。",
-            f"{P0_MARKER} 保持上下文连贯：需与前后文（提示的前缀/后缀）语气、视角、称谓一致。",
-            f"{P0_MARKER} 中文输出：只输出中文正文。",
-            "",
-            "### 输出格式",
-            "",
-            f"{P0_MARKER} 仅输出“替换后的选区文本”（纯文本），不要输出 JSON、不要输出解释、不要加标题。",
+            "### 编辑任务（选区替换）",
+            f"{P0_MARKER} 只修改选区文本，不能越界改动。",
+            f"{P0_MARKER} 输出必须与原选区不同，并真实执行用户要求。",
+            f"{P0_MARKER} 要与前后文保持语气、视角、称谓连续。",
+            f"{P0_MARKER} 只返回替换后的正文，不要输出 JSON、解释或标题。",
         ]
     )
-
     user = "\n".join(
         [
-            critical,
+            rules,
             "",
-            "### 前缀提示（用于连贯，不要复述）",
-            "",
+            "### 前文提示",
             "<<<PREFIX_START>>>",
             prefix_hint or "",
             "<<<PREFIX_END>>>",
             "",
-            "### 选区文本（需要被替换）",
-            "",
+            "### 选区文本",
             "<<<SELECTION_START>>>",
             selection_text or "",
             "<<<SELECTION_END>>>",
             "",
-            "### 后缀提示（用于连贯，不要复述）",
-            "",
+            "### 后文提示",
             "<<<SUFFIX_START>>>",
             suffix_hint or "",
             "<<<SUFFIX_END>>>",
             "",
-            "### 用户反馈（需执行的修改）",
-            "",
+            "### 用户反馈",
             "<<<FEEDBACK_START>>>",
             user_feedback or "",
             "<<<FEEDBACK_END>>>",
             "",
-            "### 开始输出",
-            "请直接输出替换后的选区文本：",
-            "",
-            "─" * 40,
-            "【规则重复】",
-            critical,
+            "现在请直接输出替换后的选区文本。",
         ]
     )
     return PromptPair(system=get_editor_system_prompt(language=language), user=user)
@@ -1823,100 +1792,63 @@ def editor_selection_replace_prompt(
 
 def editor_append_only_prompt(
     tail_excerpt: str,
-    user_feedback: str, language: str = "zh") -> PromptPair:
-    """
-    结尾续写模式：当补丁 ops 生成失败或为空时兜底。
-    仅生成“要追加到全文末尾的新内容”，不重复原文、不改动原文。
-    """
+    user_feedback: str,
+    language: str = "zh",
+) -> PromptPair:
+    """Prompt for append-only continuation fallback."""
     if language == "en":
-        critical = "\n".join(
+        rules = "\n".join(
             [
-                "=" * 50,
-                "### Edit Task (Append-Only Fallback)",
-                "=" * 50,
-                "",
-                "Generate only new content to append at the very end of the draft.",
-                "",
-                "### Constraints",
-                "",
-                "[P0-MUST] Append only: do not alter, reorder, or repeat existing text.",
-                "[P0-MUST] Output appended content only; no full draft, no diff notes, no JSON.",
-                "[P0-MUST] The continuation must connect naturally to the tail excerpt.",
-                "[P0-MUST] Output English prose only.",
-                "",
-                "### Output",
-                "",
-                "[P0-MUST] Plain text paragraphs only; no title, no quotes, no explanation.",
+                "### Edit Task (Append Only)",
+                "[P0-MUST] Generate only new content to append at the end.",
+                "[P0-MUST] Do not rewrite or repeat existing content.",
+                "[P0-MUST] Keep continuity with the tail excerpt.",
+                "[P0-MUST] Output plain prose only.",
             ]
         )
         user = "\n".join(
             [
-                critical,
+                rules,
                 "",
-                "### Tail Excerpt (for continuity)",
-                "",
+                "### Tail Excerpt",
                 "<<<TAIL_START>>>",
                 tail_excerpt or "",
                 "<<<TAIL_END>>>",
                 "",
                 "### User Feedback",
-                "",
                 "<<<FEEDBACK_START>>>",
                 user_feedback or "",
                 "<<<FEEDBACK_END>>>",
                 "",
-                "### Start Output",
-                "Output appended paragraphs directly:",
-                "",
-                "─" * 40,
-                "[Rules Repeated]",
-                critical,
+                "Output appended paragraphs directly.",
             ]
         )
         return PromptPair(system=get_editor_system_prompt(language=language), user=user)
-    critical = "\n".join(
+
+    rules = "\n".join(
         [
-            "=" * 50,
-            "### 编辑任务（结尾续写模式）",
-            "=" * 50,
-            "",
-            "你将为正文“只在末尾追加内容”，以满足【用户反馈】。",
-            "",
-            "### 核心约束",
-            "",
-            f"{P0_MARKER} 只追加：不得改动原文任何已有句子，不得重排原文，不得复述原文。",
-            f"{P0_MARKER} 只输出新增内容：不要输出完整正文、不要输出差异说明、不要输出 JSON。",
-            f"{P0_MARKER} 必须与结尾衔接自然：承接【结尾摘录】的最后一句，语气与叙事视角保持一致。",
-            f"{P0_MARKER} 中文输出：新增内容必须为中文正文。",
-            "",
-            "### 输出格式",
-            "",
-            f"{P0_MARKER} 直接输出要追加的新段落文本（纯文本），不要加标题、不要加引号、不要加解释。",
+            "### 编辑任务（仅追加续写）",
+            f"{P0_MARKER} 只生成要追加到全文末尾的新内容。",
+            f"{P0_MARKER} 不要改写、重复或重排已有正文。",
+            f"{P0_MARKER} 必须与结尾摘录自然衔接。",
+            f"{P0_MARKER} 只输出正文段落，不要解释。",
         ]
     )
-
     user = "\n".join(
         [
-            critical,
+            rules,
             "",
-            "### 结尾摘录（用于对齐衔接，不要复述）",
-            "",
+            "### 结尾摘录",
             "<<<TAIL_START>>>",
             tail_excerpt or "",
             "<<<TAIL_END>>>",
             "",
-            "### 用户反馈（续写目标）",
-            "",
+            "### 用户反馈",
             "<<<FEEDBACK_START>>>",
             user_feedback or "",
             "<<<FEEDBACK_END>>>",
             "",
-            "### 开始输出",
-            "请直接输出要追加的新段落：",
-            "",
-            "─" * 40,
-            "【规则重复】",
-            critical,
+            "现在请直接输出要追加的内容。",
         ]
     )
     return PromptPair(system=get_editor_system_prompt(language=language), user=user)

@@ -85,9 +85,7 @@ def start_backend(backend_port: int):
                     "HOST=127.0.0.1",
                     "DEBUG=True",
                     "",
-                    "WENSHAPE_LLM_PROVIDER=mock",
-                    "",
-                    "# See .env.example for provider settings and API keys.",
+                    "# Configure provider API keys below. See .env.example",
                     "",
                 ]
             ),

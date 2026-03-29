@@ -38,7 +38,6 @@ import {
     normalizeStars,
     parseListInput,
     formatListInput,
-    formatRulesInput,
     hasDeletionIntent,
     stabilizeRevisionTail,
 } from '../utils/writingSessionHelpers';
@@ -493,9 +492,7 @@ function WritingSessionContent({ isEmbedded = false }) {
         description: '',
         aliases: '',
         stars: 1,
-        category: '',
-        rules: '',
-        immutable: 'unset'
+        category: ''
     });
 
     // SWR for Chapter Content
@@ -979,9 +976,7 @@ function WritingSessionContent({ isEmbedded = false }) {
                 description: '',
                 aliases: formatListInput(cardData.aliases),
                 stars: normalizeStars(cardData.stars),
-                category: cardData.category || '',
-                rules: formatRulesInput(cardData.rules),
-                immutable: cardData.immutable === true ? 'true' : cardData.immutable === false ? 'false' : 'unset'
+                category: cardData.category || ''
             });
             setStatus('card_editing');
 
@@ -1000,9 +995,7 @@ function WritingSessionContent({ isEmbedded = false }) {
                         description: fullData.description || '',
                         aliases: formatListInput(fullData.aliases),
                         stars: normalizeStars(fullData.stars),
-                        category: fullData.category || '',
-                        rules: formatRulesInput(fullData.rules),
-                        immutable: fullData.immutable === true ? 'true' : fullData.immutable === false ? 'false' : 'unset'
+                        category: fullData.category || ''
                     });
                 } catch (e) {
                     logger.error("Failed to fetch card details", e);
@@ -1548,20 +1541,13 @@ function WritingSessionContent({ isEmbedded = false }) {
                     await cardsAPI.updateCharacter(projectId, activeCard.originalName, payload);
                 }
             } else {
-                const rules = parseListInput(cardForm.rules);
-                const immutableValue =
-                    cardForm.immutable === 'true' ? true : cardForm.immutable === 'false' ? false : undefined;
                 const payload = {
                     name,
                     description: cardForm.description || '',
                     aliases,
                     category: (cardForm.category || '').trim(),
-                    rules,
                     stars
                 };
-                if (immutableValue !== undefined) {
-                    payload.immutable = immutableValue;
-                }
                 if (activeCard.isNew || !activeCard.originalName) {
                     await cardsAPI.createWorld(projectId, payload);
                 } else if (activeCard.originalName !== name) {
@@ -1588,9 +1574,7 @@ function WritingSessionContent({ isEmbedded = false }) {
                         description: refreshedData.description || '',
                         aliases: formatListInput(refreshedData.aliases),
                         stars: normalizeStars(refreshedData.stars),
-                        category: refreshedData.category || '',
-                        rules: formatRulesInput(refreshedData.rules),
-                        immutable: refreshedData.immutable === true ? 'true' : refreshedData.immutable === false ? 'false' : 'unset'
+                        category: refreshedData.category || ''
                     });
                 }
             } catch (error) {
@@ -1691,35 +1675,6 @@ function WritingSessionContent({ isEmbedded = false }) {
                                             placeholder={t('card.categoryPlaceholder')}
                                             className="bg-[var(--vscode-input-bg)]"
                                         />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-ink-500 tracking-wider">{t('card.fieldRules')}</label>
-                                        <textarea
-                                            className="w-full min-h-[140px] p-3 rounded-[6px] border border-[var(--vscode-input-border)] bg-[var(--vscode-input-bg)] text-sm focus:ring-1 focus:ring-[var(--vscode-focus-border)] resize-none overflow-hidden"
-                                            value={cardForm.rules || ''}
-                                            onChange={e => {
-                                                setCardForm(prev => ({ ...prev, rules: e.target.value }));
-                                                e.target.style.height = 'auto';
-                                                e.target.style.height = e.target.scrollHeight + 'px';
-                                            }}
-                                            onFocus={e => {
-                                                e.target.style.height = 'auto';
-                                                e.target.style.height = e.target.scrollHeight + 'px';
-                                            }}
-                                            placeholder={t('card.rulesPlaceholder')}
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-ink-500 tracking-wider">{t('card.fieldImmutable')}</label>
-                                        <select
-                                            value={cardForm.immutable}
-                                            onChange={e => setCardForm(prev => ({ ...prev, immutable: e.target.value }))}
-                                            className="w-full h-10 px-3 rounded-[6px] border border-[var(--vscode-input-border)] bg-[var(--vscode-input-bg)] text-sm focus:ring-1 focus:ring-[var(--vscode-focus-border)]"
-                                        >
-                                            <option value="unset">{t('card.immutableUnset')}</option>
-                                            <option value="true">{t('card.immutableTrue')}</option>
-                                            <option value="false">{t('card.immutableFalse')}</option>
-                                        </select>
                                     </div>
                                 </>
                             )}

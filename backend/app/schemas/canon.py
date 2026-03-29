@@ -13,7 +13,6 @@ class Fact(BaseModel):
     source: str = Field(..., description="Source chapter / 来源章节")
     introduced_in: str = Field(..., description="Chapter where introduced / 引入章节")
     confidence: float = Field(1.0, ge=0.0, le=1.0, description="Confidence level / 可信度")
-    status: str = Field("active", description="Fact status: active | superseded / 事实状态")
 
     class Config:
         json_schema_extra = {
@@ -22,8 +21,7 @@ class Fact(BaseModel):
                 "statement": "李明的妹妹在三年前失踪",
                 "source": "ch01",
                 "introduced_in": "ch01",
-                "confidence": 1.0,
-                "status": "active"
+                "confidence": 1.0
             }
         }
 
