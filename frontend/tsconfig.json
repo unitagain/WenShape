@@ -18,8 +18,8 @@
     "strict": false,
     "allowJs": true,
     "checkJs": false,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
 
     /* Paths */

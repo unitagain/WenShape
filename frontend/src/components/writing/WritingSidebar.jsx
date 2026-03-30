@@ -7,8 +7,8 @@
  */
 
 import React from 'react';
-import { cn, Card, Button } from '../ui/core';
-import { X, MessageSquare, Terminal } from 'lucide-react';
+import { cn, Button } from '../ui/core';
+import { X, Terminal } from 'lucide-react';
 
 /**
  * 写作侧栏组件 - 可折叠的侧栏容器，负责内容承载与关闭入口
@@ -38,7 +38,7 @@ import { X, MessageSquare, Terminal } from 'lucide-react';
  * @param {React.ComponentType} [props.icon=Terminal] - 标题图标组件 / Icon component for title
  * @returns {JSX.Element} 写作侧栏元素 / Writing sidebar element
  */
-export const WritingSidebar = ({ isOpen, onClose, title, children, icon: Icon = Terminal }) => {
+export const WritingSidebar = ({ isOpen: _isOpen, onClose, title, children, icon: Icon = Terminal }) => {
     return (
         <div
             className={cn(

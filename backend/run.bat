@@ -19,26 +19,33 @@ python --version >nul 2>&1
 if errorlevel 1 goto :python_missing
 
 echo [1/3] Checking dependencies...
-python -m pip install -r requirements.txt -q
+python "scripts/check_requirements_installed.py" "requirements.txt" >nul 2>&1
+if errorlevel 1 goto :install_deps
+echo [OK] Pinned backend dependencies already installed.
+goto :deps_ready
+
+:install_deps
+echo [INFO] Missing or mismatched packages detected. Installing pinned dependencies...
+python -m pip install -r requirements.txt -q --disable-pip-version-check
 if errorlevel 1 goto :pip_failed
+
+:deps_ready
 
 REM Check if .env exists
 if exist ".env" goto :start_server
 
 :create_env
 echo.
-echo [!] .env file not found. Creating a safe default (.env) for demo mode...
+echo [!] .env file not found. Creating default backend config (.env)...
 echo # Auto-generated on first run> ".env"
 echo HOST=127.0.0.1>> ".env"
 echo PORT=8000>> ".env"
 echo DEBUG=True>> ".env"
 echo.>> ".env"
-echo WENSHAPE_LLM_PROVIDER=mock>> ".env"
-echo.>> ".env"
-echo # See .env.example for provider settings and API keys.>> ".env"
+echo # Configure provider API keys below. See .env.example>> ".env"
 if errorlevel 1 goto :env_failed
 echo [!] Created: %CD%\.env
-echo [!] Running in demo mode (mock). Edit .env to enable real providers.
+echo [!] Please edit .env and fill real provider API keys before using writing features.
 echo.
 goto :start_server
 
@@ -77,7 +84,9 @@ exit /b 1
 :pip_failed
 echo.
 echo ERROR: Dependency installation failed.
-echo Try running: python -m pip install -r requirements.txt
+echo This usually means your network/proxy cannot reach PyPI, or some pinned wheel is temporarily unavailable.
+echo If dependencies are already installed, rerun backend\\run.bat and the offline checker will skip pip.
+echo Otherwise try running: python -m pip install -r requirements.txt
 echo to see detailed error messages.
 pause
 exit /b 1

@@ -25,6 +25,21 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return undefined;
+            if (id.includes('react') || id.includes('scheduler')) return 'vendor-react';
+            if (id.includes('framer-motion')) return 'vendor-motion';
+            if (id.includes('lucide-react')) return 'vendor-icons';
+            if (id.includes('axios') || id.includes('swr')) return 'vendor-data';
+            if (id.includes('tailwind-merge') || id.includes('clsx')) return 'vendor-ui';
+            return 'vendor-misc';
+          },
+        },
+      },
+    },
     server: {
       port: frontendPort,
       strictPort: false,

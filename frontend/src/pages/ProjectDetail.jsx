@@ -6,7 +6,7 @@
  * License: PolyForm Noncommercial License 1.0.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import useSWR from 'swr';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -58,11 +58,7 @@ function ProjectDetail() {
   const [characters, setCharacters] = useState([]);
   const [editingCharacter, setEditingCharacter] = useState(null);
 
-  useEffect(() => {
-    if (activeTab === 'characters') loadCharacters();
-  }, [projectId, activeTab]);
-
-  const loadCharacters = async () => {
+  const loadCharacters = useCallback(async () => {
     try {
       const response = await cardsAPI.listCharactersIndex(projectId);
       const loaded = Array.isArray(response.data) ? response.data : [];
@@ -70,7 +66,11 @@ function ProjectDetail() {
     } catch (error) {
       logger.error('Failed to load characters:', error);
     }
-  };
+  }, [projectId]);
+
+  useEffect(() => {
+    if (activeTab === 'characters') loadCharacters();
+  }, [activeTab, loadCharacters]);
 
   const saveCharacter = async (character) => {
     try {

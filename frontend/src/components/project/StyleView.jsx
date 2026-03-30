@@ -10,7 +10,7 @@
  *   Style view component for managing writing style guidelines and auto-extraction.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { cardsAPI } from '../../api';
 import { Button, Card } from '../ui/core';
 import { RefreshCw, Feather, Sparkles, Save } from 'lucide-react';
@@ -53,19 +53,7 @@ export function StyleView({ projectId }) {
     };
   }, []);
 
-  useEffect(() => {
-    loadStyle();
-  }, [projectId]);
-
-  useEffect(() => {
-    autoResizeTextarea(styleTextareaRef.current);
-  }, [autoResizeTextarea, formData.style]);
-
-  useEffect(() => {
-    autoResizeTextarea(sampleTextareaRef.current);
-  }, [autoResizeTextarea, sampleText]);
-
-  const loadStyle = async () => {
+  const loadStyle = useCallback(async () => {
     setLoading(true);
     try {
       const response = await cardsAPI.getStyle(projectId);
@@ -77,7 +65,19 @@ export function StyleView({ projectId }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [projectId]);
+
+  useEffect(() => {
+    loadStyle();
+  }, [loadStyle]);
+
+  useEffect(() => {
+    autoResizeTextarea(styleTextareaRef.current);
+  }, [autoResizeTextarea, formData.style]);
+
+  useEffect(() => {
+    autoResizeTextarea(sampleTextareaRef.current);
+  }, [autoResizeTextarea, sampleText]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();

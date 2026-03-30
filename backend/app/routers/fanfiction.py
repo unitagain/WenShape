@@ -11,7 +11,7 @@ License: PolyForm Noncommercial License 1.0.0
   Fanfiction router - Provides Wiki search, crawling, and character card generation APIs for fanfiction import with batch processing support.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse

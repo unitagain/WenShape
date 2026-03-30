@@ -1,5 +1,7 @@
 """
-Custom LLM Provider / 自定义模型适配器 (OpenAI 兼容)
+中文说明：该模块为 WenShape 后端组成部分，详细行为见下方英文说明。
+
+OpenAI-compatible custom provider adapter.
 """
 
 from typing import List, Dict, Any, Optional, AsyncGenerator

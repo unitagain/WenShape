@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 import time
 from collections import OrderedDict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from app.orchestrator import Orchestrator, SessionStatus

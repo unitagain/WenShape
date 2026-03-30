@@ -1,24 +1,18 @@
 #!/usr/bin/env python3
-"""
-WenShape 一键启动脚本 / One-click launcher
+"""One-click local launcher for WenShape development."""
 
-- 启动后端（FastAPI/uvicorn）
-- 启动前端（Vite dev server）
+from __future__ import annotations
 
-说明：
-首次运行时后端可能需要安装依赖，启动耗时较长。为了避免前端在后端未就绪时反复报
-`ECONNREFUSED` 代理错误，本脚本会在后端真正就绪后再启动前端。
-"""
-
-import subprocess
-import sys
-import time
 import os
 import platform
 import socket
+import subprocess
+import sys
+import time
 import urllib.request
-from typing import Tuple
 from pathlib import Path
+from typing import Tuple
+
 
 def _pick_free_port(host: str, preferred: int, max_tries: int = 30) -> int:
     preferred = int(preferred or 0)
@@ -32,6 +26,7 @@ def _pick_free_port(host: str, preferred: int, max_tries: int = 30) -> int:
             continue
     return preferred or 0
 
+
 def pick_ports() -> Tuple[int, int]:
     host = "127.0.0.1"
     backend_preferred = int(os.environ.get("WENSHAPE_BACKEND_PORT") or os.environ.get("PORT") or 8000)
@@ -40,8 +35,9 @@ def pick_ports() -> Tuple[int, int]:
     frontend_port = _pick_free_port(host, frontend_preferred) or frontend_preferred
     return backend_port, frontend_port
 
-def check_python():
-    """Check if Python 3.10+ is available"""
+
+def check_python() -> bool:
+    """Ensure Python 3.10+ is available."""
     version = sys.version_info
     if version.major < 3 or (version.major == 3 and version.minor < 10):
         print("[ERROR] Python 3.10+ is required")
@@ -49,67 +45,72 @@ def check_python():
     print(f"[OK] Python {version.major}.{version.minor}.{version.micro}")
     return True
 
-def check_node():
-    """Check if Node.js 18+ is available"""
+
+def check_node() -> bool:
+    """Ensure Node.js 18+ is available."""
     try:
-        result = subprocess.run(['node', '--version'], capture_output=True, text=True)
-        version_str = result.stdout.strip()
-        # Parse version like "v22.19.0"
-        version_parts = version_str.lstrip('v').split('.')
-        major = int(version_parts[0])
-        if major < 18:
-            print(f"[ERROR] Node.js 18+ is required, found {version_str}")
-            return False
-        print(f"[OK] Node.js {version_str}")
-        return True
+        result = subprocess.run(["node", "--version"], capture_output=True, text=True, check=False)
     except FileNotFoundError:
         print("[ERROR] Node.js is not installed or not in PATH")
         return False
 
-def start_backend(backend_port: int):
-    """Start backend service"""
+    version_str = result.stdout.strip()
+    version_parts = version_str.lstrip("v").split(".")
+    major = int(version_parts[0])
+    if major < 18:
+        print(f"[ERROR] Node.js 18+ is required, found {version_str}")
+        return False
+
+    print(f"[OK] Node.js {version_str}")
+    return True
+
+
+def _ensure_default_env(backend_dir: Path) -> None:
+    """Create a minimal `.env` on first run for local development."""
+    env_path = backend_dir / ".env"
+    if env_path.exists():
+        return
+
+    env_path.write_text(
+        "\n".join(
+            [
+                "# Auto-generated on first run",
+                "HOST=127.0.0.1",
+                "DEBUG=True",
+                "",
+                "# Fill your provider keys below. See .env.example for details.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def start_backend(backend_port: int) -> int:
+    """Start the backend service."""
     print("\n[1/2] Starting backend service...")
-    backend_dir = os.path.join(os.path.dirname(__file__), 'backend')
+    backend_dir = Path(__file__).resolve().parent / "backend"
     env = dict(os.environ)
     env["PORT"] = str(backend_port)
     env["WENSHAPE_BACKEND_PORT"] = str(backend_port)
     env["WENSHAPE_AUTO_PORT"] = "1"
 
-    # Ensure a safe default .env exists for first-time users / 首次运行自动生成安全的演示配置
-    env_path = Path(backend_dir) / ".env"
-    if not env_path.exists():
-        env_path.write_text(
-            "\n".join(
-                [
-                    "# Auto-generated on first run",
-                    "HOST=127.0.0.1",
-                    "DEBUG=True",
-                    "",
-                    "WENSHAPE_LLM_PROVIDER=mock",
-                    "",
-                    "# See .env.example for provider settings and API keys.",
-                    "",
-                ]
-            ),
-            encoding="utf-8",
-        )
+    _ensure_default_env(backend_dir)
 
-    if platform.system() == 'Windows':
-        # Windows: start in new window
+    if platform.system() == "Windows":
         subprocess.Popen(
-            ['cmd', '/k', 'run.bat'],
-            cwd=backend_dir,
+            ["cmd", "/k", "run.bat"],
+            cwd=str(backend_dir),
             env=env,
-            creationflags=subprocess.CREATE_NEW_CONSOLE
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
         )
     else:
-        # Unix: start in background
         subprocess.Popen(
-            ['bash', 'run.sh'],
-            cwd=backend_dir,
+            ["bash", "run.sh"],
+            cwd=str(backend_dir),
             env=env,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
+            stderr=subprocess.DEVNULL,
         )
 
     print(f"  Backend: http://localhost:{backend_port}")
@@ -117,31 +118,28 @@ def start_backend(backend_port: int):
 
 
 def wait_for_backend_ready(host: str, port: int, timeout_s: int = 180) -> bool:
-    """
-    Wait until the backend /health endpoint becomes reachable.
-
-    Returns True if ready within timeout; otherwise False.
-    """
+    """Wait until the backend `/health` endpoint becomes reachable."""
     url = f"http://{host}:{port}/health"
     deadline = time.monotonic() + max(1, int(timeout_s))
 
     print(f"  Waiting for backend readiness: {url}")
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(url, timeout=2) as resp:
-                if getattr(resp, "status", 200) == 200:
+            with urllib.request.urlopen(url, timeout=2) as response:
+                if getattr(response, "status", 200) == 200:
                     print("  Backend is ready.")
                     return True
         except Exception:
             time.sleep(1)
 
-    print("  Backend not ready yet (timeout). Starting frontend anyway.")
+    print("  Backend readiness timed out. Starting frontend anyway.")
     return False
 
-def start_frontend(backend_port: int, frontend_port: int):
-    """Start frontend service"""
+
+def start_frontend(backend_port: int, frontend_port: int) -> int:
+    """Start the frontend service."""
     print("[2/2] Starting frontend service...")
-    frontend_dir = os.path.join(os.path.dirname(__file__), 'frontend')
+    frontend_dir = Path(__file__).resolve().parent / "frontend"
     env = dict(os.environ)
     env["VITE_DEV_PORT"] = str(frontend_port)
     env["WENSHAPE_FRONTEND_PORT"] = str(frontend_port)
@@ -149,34 +147,32 @@ def start_frontend(backend_port: int, frontend_port: int):
     env["WENSHAPE_BACKEND_PORT"] = str(backend_port)
     env["VITE_BACKEND_URL"] = env.get("VITE_BACKEND_URL") or f"http://localhost:{backend_port}"
 
-    if platform.system() == 'Windows':
-        # Windows: start in new window
+    if platform.system() == "Windows":
         subprocess.Popen(
-            ['cmd', '/k', 'run.bat'],
-            cwd=frontend_dir,
+            ["cmd", "/k", "run.bat"],
+            cwd=str(frontend_dir),
             env=env,
-            creationflags=subprocess.CREATE_NEW_CONSOLE
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
         )
     else:
-        # Unix: start in background
         subprocess.Popen(
-            ['bash', 'run.sh'],
-            cwd=frontend_dir,
+            ["bash", "run.sh"],
+            cwd=str(frontend_dir),
             env=env,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
+            stderr=subprocess.DEVNULL,
         )
 
     print(f"  Frontend: http://localhost:{frontend_port}")
     return frontend_port
 
-def main():
+
+def main() -> None:
     print("=" * 50)
     print("  WenShape - Context-Aware Novel Writing System")
     print("=" * 50)
     print()
 
-    # Check requirements
     print("Checking requirements...")
     if not check_python():
         sys.exit(1)
@@ -185,7 +181,6 @@ def main():
 
     print()
 
-    # Start services
     try:
         backend_port, frontend_port = pick_ports()
         backend_port = start_backend(backend_port)
@@ -202,19 +197,18 @@ def main():
         print(f"  Backend:    http://localhost:{backend_port}")
         print(f"  API Docs:   http://localhost:{backend_port}/docs")
         print()
-        print("Tip: Close the service windows to stop the services.")
+        print("Tip: close the spawned service windows to stop the services.")
         print()
 
-        # Keep script running
         try:
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
             print("\nShutting down...")
-
-    except Exception as e:
-        print(f"[ERROR] Failed to start services: {e}")
+    except Exception as exc:
+        print(f"[ERROR] Failed to start services: {exc}")
         sys.exit(1)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

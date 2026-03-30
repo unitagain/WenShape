@@ -203,8 +203,6 @@ export const canonAPI = {
     api.post(`${API_BASE}/projects/${projectId}/canon/facts/manual`, data),
   update: (projectId: string, factId: string, data: Partial<Fact>): Promise<AxiosResponse> =>
     api.put(`${API_BASE}/projects/${projectId}/canon/facts/by-id/${factId}`, data),
-  updateStatus: (projectId: string, factId: string, status: string): Promise<AxiosResponse> =>
-    api.patch(`${API_BASE}/projects/${projectId}/canon/facts/by-id/${factId}/status`, { status }),
   delete: (projectId: string, factId: string): Promise<AxiosResponse> =>
     api.delete(`${API_BASE}/projects/${projectId}/canon/facts/by-id/${factId}`),
   getTree: (projectId: string): Promise<AxiosResponse> =>
@@ -249,6 +247,8 @@ export const configAPI = {
     api.post(`${API_BASE}/config/llm/profiles`, data),
   fetchModels: (data: Record<string, unknown>): Promise<AxiosResponse> =>
     api.post(`${API_BASE}/proxy/fetch-models`, data),
+  testModel: (data: Record<string, unknown>): Promise<AxiosResponse> =>
+    api.post(`${API_BASE}/proxy/test-model`, data),
   deleteProfile: (id: string): Promise<AxiosResponse> =>
     api.delete(`${API_BASE}/config/llm/profiles/${id}`),
   getAssignments: (): Promise<AxiosResponse> =>

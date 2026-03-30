@@ -4,7 +4,7 @@
  */
 import { useMemo, useState } from 'react';
 import useSWR from 'swr';
-import { ChevronDown, ChevronRight, Loader2, Pencil, Plus, RefreshCw, RotateCcw, Sparkles, Trash2, X, XCircle } from 'lucide-react';
+import { ChevronDown, ChevronRight, Loader2, Pencil, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { bindingsAPI, canonAPI, draftsAPI, volumesAPI } from '../../api';
 import { Button, Card, Input, cn } from '../ui/core';
@@ -110,17 +110,6 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
     }
   };
 
-  const handleToggleStatus = async (factId, currentStatus) => {
-    const newStatus = currentStatus === 'superseded' ? 'active' : 'superseded';
-    try {
-      await canonAPI.updateStatus(projectId, factId, newStatus);
-      mutate();
-    } catch (error) {
-      logger.error(error);
-      alert(t('facts.statusUpdateFailed') + ': ' + extractErrorDetail(error));
-    }
-  };
-
   const handleSaveFact = async () => {
     if (!editingFact) return;
 
@@ -182,7 +171,7 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
         try {
           const res = await volumesAPI.getSummary(projectId, editingSummary.id);
           existing = res.data;
-        } catch (error) {
+        } catch (_error) {
           existing = null;
         }
 
@@ -200,7 +189,7 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
         try {
           const res = await draftsAPI.getSummary(projectId, editingSummary.id);
           existing = res.data;
-        } catch (error) {
+        } catch (_error) {
           existing = null;
         }
 
@@ -282,7 +271,6 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
                 onEditFact={(fact) => setEditingFact(fact)}
                 onAddFact={openCreateFactDialog}
                 onDeleteFact={handleDeleteFact}
-                onToggleStatus={handleToggleStatus}
                 onFactSelect={onFactSelect}
               />
             ))
@@ -338,7 +326,6 @@ function VolumeSection({
   onEditFact,
   onAddFact,
   onDeleteFact,
-  onToggleStatus,
   onFactSelect,
 }) {
   const { t } = useLocale();
@@ -410,7 +397,6 @@ function VolumeSection({
             onEditFact={onEditFact}
             onAddFact={onAddFact}
             onDeleteFact={onDeleteFact}
-            onToggleStatus={onToggleStatus}
             onToggleFact={onToggleFact}
             onFactSelect={onFactSelect}
           />
@@ -433,7 +419,6 @@ function ChapterBlock({
   onEditFact,
   onAddFact,
   onDeleteFact,
-  onToggleStatus,
   onToggleFact,
   onFactSelect,
 }) {
@@ -559,7 +544,6 @@ function ChapterBlock({
                     onToggleExpand={() => onToggleFact?.(factKey)}
                     onEdit={() => onEditFact(fact)}
                     onDelete={() => onDeleteFact(fact.id)}
-                    onToggleStatus={() => onToggleStatus?.(fact.id, fact.status || 'active')}
                     onSelect={onFactSelect ? () => onFactSelect(fact) : null}
                   />
                 );
@@ -575,20 +559,18 @@ function ChapterBlock({
   );
 }
 
-function FactRow({ fact, index, expanded, onToggleExpand, onEdit, onDelete, onToggleStatus, onSelect }) {
+function FactRow({ fact, index, expanded, onToggleExpand, onEdit, onDelete, onSelect }) {
   const { t } = useLocale();
   const statement = (fact.statement || fact.content || '').trim();
   const title = (fact.title || '').trim();
   const display = title && title !== statement ? `${title}：${statement}` : (statement || title || t('facts.noContent'));
-  const isSuperseded = (fact.status || 'active') === 'superseded';
 
   return (
     <div
       className={cn(
         'group flex items-start gap-0.5 px-0.5 py-1.5 rounded-[4px] transition-none',
         'hover:bg-[var(--vscode-list-hover)]',
-        onSelect ? 'cursor-pointer' : '',
-        isSuperseded ? 'opacity-50' : ''
+        onSelect ? 'cursor-pointer' : ''
       )}
       onClick={onSelect || undefined}
     >
@@ -611,27 +593,14 @@ function FactRow({ fact, index, expanded, onToggleExpand, onEdit, onDelete, onTo
       <div className="flex-1 min-w-0">
         <div className={cn(
           "text-[10.5px] leading-snug",
-          isSuperseded ? "text-[var(--vscode-fg-subtle)] line-through" : "text-[var(--vscode-fg)]",
+          "text-[var(--vscode-fg)]",
           expanded ? "" : "line-clamp-3"
         )}>
           {display}
         </div>
-        {isSuperseded && (
-          <span className="inline-block mt-0.5 text-[9px] text-orange-500 font-medium">{t('facts.supersededLabel')}</span>
-        )}
       </div>
 
       <div className="shrink-0 flex items-center gap-0.5 justify-end">
-        <button
-          className="w-5 h-5 inline-flex items-center justify-center rounded-[2px] hover:bg-[var(--vscode-list-hover)] text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)] opacity-50 hover:opacity-100"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleStatus?.();
-          }}
-          title={isSuperseded ? t('facts.markActive') : t('facts.markSuperseded')}
-        >
-          {isSuperseded ? <RotateCcw size={11} strokeWidth={1.7} /> : <XCircle size={11} strokeWidth={1.7} />}
-        </button>
         <button
           className="w-5 h-5 inline-flex items-center justify-center rounded-[2px] hover:bg-[var(--vscode-list-hover)] text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)] opacity-50 hover:opacity-100"
           onClick={(e) => {

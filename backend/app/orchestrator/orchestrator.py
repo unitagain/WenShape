@@ -25,17 +25,25 @@ from app.llm_gateway.errors import LLMError
 from app.storage import CardStorage, CanonStorage, DraftStorage, MemoryPackStorage
 from app.agents import ArchivistAgent, WriterAgent, EditorAgent
 from app.context_engine.select_engine import ContextSelectEngine
-from app.context_engine.token_counter import count_tokens
 from app.context_engine.trace_collector import trace_collector
 from app.orchestrator.storage_adapter import UnifiedStorageAdapter
 from app.schemas.draft import SceneBrief
-from app.utils.chapter_id import ChapterIDValidator
 from app.utils.language import normalize_language
 from app.utils.logger import get_logger
+from app.utils.text import normalize_prose_paragraphs
 from app.services.chapter_binding_service import chapter_binding_service
 from app.orchestrator._types import SessionStatus
 from app.orchestrator._context_mixin import ContextMixin
 from app.orchestrator._analysis_mixin import AnalysisMixin
+from app.orchestrator.orchestrator_helpers import (
+    build_context_debug,
+    estimate_context_tokens,
+    extract_scene_brief_names,
+    extract_top_sources,
+    merge_card_description,
+    normalize_chapter_id,
+    trim_context_package,
+)
 
 logger = get_logger(__name__)
 
@@ -1177,7 +1185,7 @@ class Orchestrator(ContextMixin, AnalysisMixin):
         if self._cancelled:
             return
 
-        final_text = "".join(chunks).strip()
+        final_text = normalize_prose_paragraphs("".join(chunks), language=self.language).strip()
         if not final_text:
             raise RuntimeError("Empty draft result")
 
@@ -1304,138 +1312,26 @@ class Orchestrator(ContextMixin, AnalysisMixin):
         await self.progress_callback(payload)
 
     def _normalize_chapter_id(self, chapter_id: str) -> str:
-        if not chapter_id:
-            return chapter_id
-        normalized = str(chapter_id).strip().upper()
-        if not normalized:
-            return chapter_id
-        if normalized.startswith("CH"):
-            normalized = "C" + normalized[2:]
-        if ChapterIDValidator.validate(normalized):
-            if normalized.startswith("C"):
-                return f"V1{normalized}"
-            return normalized
-        return str(chapter_id).strip()
+        return normalize_chapter_id(chapter_id)
 
     def _estimate_context_tokens(self, context_package: Dict[str, Any]) -> int:
-        """Estimate tokens for context package using accurate token counter."""
-        total = 0
-        for key in ["full_facts", "summary_with_events", "summary_only", "title_only", "volume_summaries"]:
-            for item in context_package.get(key, []) or []:
-                total += count_tokens(str(item))
-        return total
+        return estimate_context_tokens(context_package)
 
     def _trim_context_package(
         self,
         context_package: Dict[str, Any],
         max_tokens: int,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """
-        Trim low-priority context to fit within max_tokens.
-        按相关性修剪上下文：优先保留距离当前章节更近的内容，
-        从最远的（列表末尾）开始删除。
-        """
-        trimmed = dict(context_package or {})
-        for key in ["full_facts", "summary_with_events", "summary_only", "title_only", "volume_summaries"]:
-            trimmed[key] = list(trimmed.get(key, []) or [])
-
-        before = self._estimate_context_tokens(trimmed)
-        if before <= max_tokens:
-            return trimmed, {"trimmed": False, "before": before, "after": before}
-
-        if max_tokens <= 0:
-            for key in ["summary_with_events", "summary_only", "title_only", "volume_summaries"]:
-                trimmed[key] = []
-            return trimmed, {"trimmed": True, "before": before, "after": self._estimate_context_tokens(trimmed)}
-
-        # Removal order: lowest priority categories first
-        removal_order = ["title_only", "volume_summaries", "summary_only", "summary_with_events"]
-        while self._estimate_context_tokens(trimmed) > max_tokens:
-            removed_any = False
-            for key in removal_order:
-                if trimmed[key]:
-                    # pop() removes from the end (farthest/least relevant),
-                    # preserving items closest to the current chapter
-                    trimmed[key].pop()
-                    removed_any = True
-                    if self._estimate_context_tokens(trimmed) <= max_tokens:
-                        break
-            if not removed_any:
-                break
-
-        after = self._estimate_context_tokens(trimmed)
-        return trimmed, {"trimmed": True, "before": before, "after": after}
+        return trim_context_package(context_package, max_tokens)
 
     def _merge_card_description(self, description: str, rationale: str) -> str:
-        description_text = (description or "").strip()
-        rationale_text = (rationale or "").strip()
-        if description_text and rationale_text:
-            return f"{description_text}\n理由: {rationale_text}"
-        return description_text or rationale_text
+        return merge_card_description(description, rationale)
 
     def _extract_scene_brief_names(self, scene_brief: Any, limit: int = 3) -> List[str]:
-        names: List[str] = []
-        items = getattr(scene_brief, "characters", []) or []
-        for item in items:
-            if isinstance(item, dict):
-                name = str(item.get("name") or "").strip()
-            else:
-                name = str(getattr(item, "name", "") or "").strip()
-            if name:
-                names.append(name)
-        unique = []
-        seen = set()
-        for name in names:
-            if name in seen:
-                continue
-            seen.add(name)
-            unique.append(name)
-        return unique[:limit]
+        return extract_scene_brief_names(scene_brief, limit=limit)
 
     def _extract_top_sources(self, evidence_groups: List[Dict[str, Any]], limit: int = 3) -> List[Dict[str, Any]]:
-        items: List[Dict[str, Any]] = []
-        for group in evidence_groups or []:
-            for item in group.get("items") or []:
-                if not isinstance(item, dict):
-                    continue
-                if item.get("type") == "memory":
-                    continue
-                items.append(item)
-        items.sort(key=lambda x: float(x.get("score") or 0), reverse=True)
-        top_sources = []
-        for item in items:
-            text = str(item.get("text") or "").strip()
-            if not text:
-                continue
-            source = item.get("source") or {}
-            source_summary = {}
-            for key in ["chapter", "draft", "path", "paragraph", "field", "fact_id", "card", "introduced_in"]:
-                if source.get(key) is not None:
-                    source_summary[key] = source.get(key)
-            top_sources.append(
-                {
-                    "type": item.get("type") or "",
-                    "score": float(item.get("score") or 0),
-                    "snippet": text[:80],
-                    "source": source_summary,
-                }
-            )
-            if len(top_sources) >= limit:
-                break
-        return top_sources
+        return extract_top_sources(evidence_groups, limit=limit)
 
     def _build_context_debug(self, payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        if not payload:
-            return None
-        return {
-            "working_memory": payload.get("working_memory"),
-            "gaps": payload.get("gaps"),
-            "unresolved_gaps": payload.get("unresolved_gaps"),
-            "seed_entities": payload.get("seed_entities"),
-            "seed_window": payload.get("seed_window"),
-            "retrieval_requests": payload.get("retrieval_requests"),
-            "evidence_pack": payload.get("evidence_pack"),
-            "research_trace": payload.get("research_trace"),
-            "research_stop_reason": payload.get("research_stop_reason"),
-            "sufficiency_report": payload.get("sufficiency_report"),
-        }
+        return build_context_debug(payload)

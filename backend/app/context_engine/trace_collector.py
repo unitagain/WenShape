@@ -4,7 +4,7 @@ Records and streams agent execution events for visualization
 记录并推送 Agent 执行事件供可视化
 """
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Callable
 from enum import Enum
 from datetime import datetime

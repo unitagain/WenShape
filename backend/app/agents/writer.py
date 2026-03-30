@@ -17,6 +17,7 @@ from app.config import config as app_cfg
 from app.context_engine.token_counter import count_tokens, estimate_tokens_fast
 from app.utils.logger import get_logger
 from app.utils.llm_output import parse_json_payload
+from app.utils.text import normalize_prose_paragraphs
 
 from app.agents.base import BaseAgent
 from app.prompts import get_writer_system_prompt, writer_draft_prompt, writer_questions_prompt, writer_research_plan_prompt
@@ -139,6 +140,7 @@ class WriterAgent(BaseAgent):
             evidence_pack=evidence_pack,
         )
 
+        draft_content = normalize_prose_paragraphs(draft_content, language=self.language)
         pending_confirmations = []
         word_count = len(draft_content)
 

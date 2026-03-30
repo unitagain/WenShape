@@ -1,60 +1,68 @@
 """
-Canon Data Models / 事实表数据模型
+中文说明：该模块为 WenShape 后端组成部分，详细行为见下方英文说明。
+
+Canon data models.
 """
 
-from typing import Optional, List
-from pydantic import BaseModel, Field
+from __future__ import annotations
+
+from typing import List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Fact(BaseModel):
-    """Fact model / 事实模型"""
-    id: str = Field(..., description="Fact ID / 事实ID")
-    statement: str = Field(..., description="Fact statement / 事实陈述")
-    source: str = Field(..., description="Source chapter / 来源章节")
-    introduced_in: str = Field(..., description="Chapter where introduced / 引入章节")
-    confidence: float = Field(1.0, ge=0.0, le=1.0, description="Confidence level / 可信度")
-    status: str = Field("active", description="Fact status: active | superseded / 事实状态")
+    """Structured canonical fact extracted from chapters."""
 
-    class Config:
-        json_schema_extra = {
+    id: str = Field(..., description="Fact ID")
+    statement: str = Field(..., description="Fact statement")
+    source: str = Field(..., description="Source chapter")
+    introduced_in: str = Field(..., description="Chapter where the fact was introduced")
+    confidence: float = Field(1.0, ge=0.0, le=1.0, description="Confidence score")
+
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "id": "F001",
-                "statement": "李明的妹妹在三年前失踪",
+                "statement": "Li Ming's younger sister disappeared three years ago.",
                 "source": "ch01",
                 "introduced_in": "ch01",
                 "confidence": 1.0,
-                "status": "active"
             }
         }
+    )
 
 
 class TimelineEvent(BaseModel):
-    """Timeline event model / 时间线事件模型"""
-    time: str = Field(..., description="Event time / 事件时间")
-    event: str = Field(..., description="Event description / 事件描述")
-    participants: List[str] = Field(..., description="Participants / 参与者")
-    location: str = Field(..., description="Location / 地点")
-    source: str = Field(..., description="Source chapter / 来源章节")
-    
-    class Config:
-        json_schema_extra = {
+    """Timeline event extracted from narrative progression."""
+
+    time: str = Field(..., description="Event time")
+    event: str = Field(..., description="Event description")
+    participants: List[str] = Field(..., description="Participants")
+    location: str = Field(..., description="Location")
+    source: str = Field(..., description="Source chapter")
+
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
-                "time": "三年前夏天",
-                "event": "妹妹失踪",
-                "participants": ["妹妹"],
-                "location": "老家",
-                "source": "ch01"
+                "time": "Summer three years ago",
+                "event": "Younger sister disappeared",
+                "participants": ["younger sister"],
+                "location": "hometown",
+                "source": "ch01",
             }
         }
+    )
 
 
 class CharacterState(BaseModel):
-    """Character state model / 角色状态模型"""
-    character: str = Field(..., description="Character name / 角色名称")
-    goals: List[str] = Field(default_factory=list, description="Current goals / 当前目标")
-    injuries: List[str] = Field(default_factory=list, description="Injuries / 伤势")
-    inventory: List[str] = Field(default_factory=list, description="Inventory / 持有物")
-    relationships: dict = Field(default_factory=dict, description="Relationships / 关系")
-    location: Optional[str] = Field(None, description="Current location / 当前位置")
-    emotional_state: Optional[str] = Field(None, description="Emotional state / 情绪状态")
-    last_seen: str = Field(..., description="Last seen in chapter / 最后出现章节")
+    """Current structured state for a character."""
+
+    character: str = Field(..., description="Character name")
+    goals: List[str] = Field(default_factory=list, description="Current goals")
+    injuries: List[str] = Field(default_factory=list, description="Injuries")
+    inventory: List[str] = Field(default_factory=list, description="Inventory")
+    relationships: dict = Field(default_factory=dict, description="Relationships")
+    location: Optional[str] = Field(None, description="Current location")
+    emotional_state: Optional[str] = Field(None, description="Emotional state")
+    last_seen: str = Field(..., description="Last seen chapter")

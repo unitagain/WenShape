@@ -18,8 +18,6 @@ License: PolyForm Noncommercial License 1.0.0
 """
 
 import re
-from typing import Optional
-from functools import lru_cache
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -126,51 +124,81 @@ def estimate_tokens_fast(text: str) -> int:
 
 # 常见模型的上下文窗口大小 / Common model context windows
 MODEL_CONTEXT_WINDOWS = {
-    # OpenAI
+    # OpenAI — GPT-5.x 系列
+    "gpt-5.4": 1050000,
+    "gpt-5.4-mini": 400000,
+    "gpt-5.4-nano": 400000,
+    "gpt-5.2": 400000,
+    "gpt-5": 400000,
+    "gpt-5-mini": 400000,
+    "o3": 200000,
+    "o3-mini": 200000,
+    "o3-pro": 200000,
+    "o4-mini": 200000,
+    # OpenAI — 旧模型（API 仍可用）
+    "gpt-4.1": 1000000,
     "gpt-4o": 128000,
     "gpt-4o-mini": 128000,
     "gpt-4-turbo": 128000,
-    "gpt-4": 8192,
-    "gpt-3.5-turbo": 16385,
-    "gpt-3.5-turbo-16k": 16385,
 
     # Anthropic
+    "claude-opus-4-6": 1000000,
+    "claude-sonnet-4-6": 1000000,
+    "claude-sonnet-4-5": 200000,
+    "claude-haiku-4-5": 200000,
+    # Anthropic — 旧模型
     "claude-3-5-sonnet-20241022": 200000,
     "claude-3-5-sonnet": 200000,
     "claude-3-opus": 200000,
-    "claude-3-sonnet": 200000,
-    "claude-3-haiku": 200000,
-    "claude-2": 100000,
 
     # DeepSeek
     "deepseek-chat": 64000,
-    "deepseek-coder": 64000,
     "deepseek-reasoner": 64000,
 
     # Qwen
+    "qwen3.5-plus": 131072,
+    "qwen3-max": 32768,
     "qwen-turbo": 131072,
     "qwen-plus": 131072,
     "qwen-max": 32768,
-    "qwen2.5-72b-instruct": 131072,
 
     # Kimi (Moonshot)
+    "kimi-k2.5": 256000,
+    "kimi-k2-turbo-preview": 256000,
+    "kimi-k2-thinking": 256000,
+    # Kimi — 旧模型
     "moonshot-v1-8k": 8000,
     "moonshot-v1-32k": 32000,
     "moonshot-v1-128k": 128000,
 
-    # GLM
-    "glm-4": 128000,
+    # GLM (智谱)
+    "glm-5": 202000,
+    "glm-4.7": 200000,
     "glm-4-plus": 128000,
-    "glm-3-turbo": 128000,
+    "glm-4": 128000,
 
     # Gemini
-    "gemini-2.5-flash": 1000000,
+    "gemini-3.1-pro-preview": 1000000,
+    "gemini-3.1-flash-lite-preview": 1000000,
     "gemini-3-flash-preview": 1000000,
+    "gemini-2.5-flash": 1000000,
     "gemini-pro": 32000,
 
-    # Grok
-    "grok-beta": 131072,
+    # Grok (xAI)
+    "grok-4": 2000000,
+    "grok-4.1-fast": 2000000,
+    "grok-3": 131072,
+    "grok-3-mini": 131072,
+    # Grok — 旧模型
     "grok-2": 131072,
+
+    # Wenxin (Baidu Qianfan)
+    "ernie-4.5-turbo-32k": 32000,
+    "ernie-x1-turbo-32k": 32000,
+    "ernie-4.5-8k": 8000,
+    "ernie-4.5-8k-preview": 8000,
+    "ernie-5.0": 32000,
+    "ernie-5.0-thinking-preview": 32000,
 }
 
 # 默认上下文窗口（保守估计） / Default context window (conservative estimate)

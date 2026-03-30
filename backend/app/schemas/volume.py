@@ -1,11 +1,13 @@
 ﻿"""
+中文说明：分卷相关数据模型定义。
+
 Volume schema models.
 """
 
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class VolumeBase(BaseModel):
@@ -28,8 +30,7 @@ class Volume(VolumeBase):
     created_at: datetime = Field(default_factory=datetime.now, description="Created timestamp")
     updated_at: datetime = Field(default_factory=datetime.now, description="Updated timestamp")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class VolumeSummary(BaseModel):
@@ -43,8 +44,7 @@ class VolumeSummary(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now, description="Created timestamp")
     updated_at: datetime = Field(default_factory=datetime.now, description="Updated timestamp")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class VolumeStats(BaseModel):

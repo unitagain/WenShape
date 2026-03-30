@@ -1,14 +1,4 @@
-/**
- * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
- * WenShape - Deep Context-Aware Agent-Based Novel Writing System
- *
- * Copyright © 2025-2026 WenShape Team
- * License: PolyForm Noncommercial License 1.0.0
- *
- * 模块说明 / Module Description:
- *   用户询问对话框 - 写作过程中的交互式问题确认与选项选择
- *   User ask dialog for interactive confirmation and option selection during writing.
- */
+/** Ask-user dialog used for guided user confirmations. */
 
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';

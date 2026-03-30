@@ -1,4 +1,6 @@
 ﻿"""
+中文说明：动态上下文检索器，按章节距离与预算聚合可用上下文。
+
 Dynamic context retriever.
 """
 

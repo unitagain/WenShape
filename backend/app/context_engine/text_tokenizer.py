@@ -20,7 +20,6 @@ License: PolyForm Noncommercial License 1.0.0
 import re
 import math
 from typing import List, Set, Dict, Optional
-from functools import lru_cache
 
 # 尝试导入 jieba / Try to import jieba
 _jieba_available = False

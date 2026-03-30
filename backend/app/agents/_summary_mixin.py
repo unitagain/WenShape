@@ -11,6 +11,7 @@ License: PolyForm Noncommercial License 1.0.0
   Summary & canon mixin - Methods for chapter/volume summary generation, canon updates extraction, and focus character binding.
 """
 
+import asyncio
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -45,18 +46,50 @@ class SummaryMixin:
         chapter_title: str,
         final_draft: str,
     ) -> ChapterSummary:
-        """Generate a structured chapter summary."""
-        provider = self.gateway.get_provider_for_agent(self.get_agent_name())
-        if provider == "mock":
-            return self._fallback_chapter_summary(chapter, chapter_title, final_draft)
+        """Generate a structured chapter summary with bounded retries."""
+        max_attempts = max(1, int(getattr(self, "CHAPTER_SUMMARY_MAX_ATTEMPTS", 3)))
+        retry_hint: Optional[str] = None
 
-        yaml_content = await self._generate_chapter_summary_yaml(
-            chapter=chapter,
-            chapter_title=chapter_title,
-            final_draft=final_draft,
-        )
+        for attempt in range(1, max_attempts + 1):
+            try:
+                yaml_content = await self._generate_chapter_summary_yaml(
+                    chapter=chapter,
+                    chapter_title=chapter_title,
+                    final_draft=final_draft,
+                    retry_hint=retry_hint,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Chapter summary generation failed before parse (chapter=%s, attempt=%s/%s): %s",
+                    chapter,
+                    attempt,
+                    max_attempts,
+                    exc,
+                )
+                if attempt < max_attempts:
+                    retry_hint = self._build_summary_retry_hint(str(exc))
+                    await asyncio.sleep(min(0.4 * attempt, 1.2))
+                    continue
+                return self._fallback_chapter_summary(chapter, chapter_title, final_draft)
 
-        return self._parse_chapter_summary(yaml_content, chapter, chapter_title, final_draft)
+            summary = self._try_parse_chapter_summary(yaml_content, chapter, chapter_title, final_draft)
+            if summary and not self._is_likely_raw_excerpt(summary.brief_summary, final_draft):
+                return summary
+
+            reason = "summary resembles leading raw draft excerpt" if summary else "invalid YAML/schema"
+            logger.warning(
+                "Chapter summary parse/quality check failed (chapter=%s, attempt=%s/%s, reason=%s).",
+                chapter,
+                attempt,
+                max_attempts,
+                reason,
+            )
+            if attempt < max_attempts:
+                retry_hint = self._build_summary_retry_hint(reason)
+                await asyncio.sleep(min(0.4 * attempt, 1.2))
+                continue
+
+        return self._fallback_chapter_summary(chapter, chapter_title, final_draft)
 
     async def generate_volume_summary(
         self,
@@ -66,9 +99,8 @@ class SummaryMixin:
     ) -> VolumeSummary:
         """Generate or refresh a volume summary."""
         chapter_count = len(chapter_summaries)
-        provider = self.gateway.get_provider_for_agent(self.get_agent_name())
 
-        if provider == "mock" or chapter_count == 0:
+        if chapter_count == 0:
             return self._fallback_volume_summary(volume_id, chapter_summaries)
 
         yaml_content = await self._generate_volume_summary_yaml(volume_id, chapter_summaries)
@@ -76,10 +108,6 @@ class SummaryMixin:
 
     async def extract_canon_updates(self, project_id: str, chapter: str, final_draft: str) -> Dict[str, Any]:
         """Extract canon updates from the final draft."""
-        provider = self.gateway.get_provider_for_agent(self.get_agent_name())
-        if provider == "mock":
-            return {"facts": [], "timeline_events": [], "character_states": []}
-
         try:
             yaml_content = await self._generate_canon_updates_yaml(chapter=chapter, final_draft=final_draft)
             return await self._parse_canon_updates_yaml(
@@ -104,10 +132,6 @@ class SummaryMixin:
         输出的是"重点角色（focus）"，用于后续检索 seeds 与 UI 展示。
         强约束：不允许隐式主角，必须在正文中出现姓名或别名才可绑定。
         """
-        provider = self.gateway.get_provider_for_agent(self.get_agent_name())
-        if provider == "mock":
-            return []
-
         cleaned_text = str(final_draft or "")
         if not cleaned_text.strip():
             return []
@@ -386,6 +410,7 @@ class SummaryMixin:
         chapter: str,
         chapter_title: str,
         final_draft: str,
+        retry_hint: Optional[str] = None,
     ) -> str:
         """Generate ChapterSummary YAML via LLM."""
         prompt = archivist_chapter_summary_prompt(
@@ -394,9 +419,21 @@ class SummaryMixin:
             final_draft=final_draft,
             language=self.language,
         )
+        user_prompt = prompt.user
+        if retry_hint:
+            user_prompt = "\n".join(
+                [
+                    prompt.user,
+                    "",
+                    "### Retry constraints (must follow)",
+                    str(retry_hint).strip(),
+                    "- Output strict YAML only; no markdown/code fences.",
+                    "- `brief_summary` must be concise abstraction, not copied draft sentences.",
+                ]
+            )
         messages = self.build_messages(
             system_prompt=prompt.system,
-            user_prompt=prompt.user,
+            user_prompt=user_prompt,
             context_items=None,
         )
 
@@ -412,6 +449,13 @@ class SummaryMixin:
             response = response[yaml_start:yaml_end].strip()
 
         return response
+
+    def _build_summary_retry_hint(self, reason: str) -> str:
+        return (
+            "The previous output did not pass structured summary checks. "
+            f"Failure reason: {str(reason or 'unknown')[:200]}. "
+            "Regenerate all fields from the provided draft, especially `brief_summary`."
+        )
 
     async def _generate_volume_summary_yaml(
         self,
@@ -500,6 +544,19 @@ class SummaryMixin:
         final_draft: str,
     ) -> ChapterSummary:
         """Parse YAML into ChapterSummary."""
+        parsed = self._try_parse_chapter_summary(yaml_content, chapter, chapter_title, final_draft)
+        if parsed:
+            return parsed
+        return self._fallback_chapter_summary(chapter, chapter_title, final_draft)
+
+    def _try_parse_chapter_summary(
+        self,
+        yaml_content: str,
+        chapter: str,
+        chapter_title: str,
+        final_draft: str,
+    ) -> Optional[ChapterSummary]:
+        """Best-effort parse YAML into ChapterSummary, returning None on failure."""
         try:
             data = yaml.safe_load(yaml_content) or {}
             data["chapter"] = chapter
@@ -511,8 +568,39 @@ class SummaryMixin:
             data.setdefault("open_loops", [])
             data.setdefault("brief_summary", "")
             return ChapterSummary(**data)
-        except Exception:
-            return self._fallback_chapter_summary(chapter, chapter_title, final_draft)
+        except Exception as exc:
+            logger.warning("Failed to parse chapter summary YAML (chapter=%s): %s", chapter, exc)
+            return None
+
+    def _is_likely_raw_excerpt(self, brief_summary: str, final_draft: str) -> bool:
+        """
+        Detect low-quality summaries that are mostly copied from the draft head.
+        """
+        summary = self._normalize_summary_text(brief_summary)
+        draft = self._normalize_summary_text(final_draft)
+        if not summary or not draft:
+            return False
+        if len(summary) < 80:
+            return False
+
+        head = draft[: len(summary)]
+        if summary == head:
+            return True
+
+        ratio = self._shared_prefix_ratio(summary, head)
+        return ratio >= 0.88
+
+    def _normalize_summary_text(self, text: str) -> str:
+        return " ".join(str(text or "").replace("\r\n", "\n").split())
+
+    def _shared_prefix_ratio(self, left: str, right: str) -> float:
+        max_len = min(len(left), len(right))
+        if max_len <= 0:
+            return 0.0
+        index = 0
+        while index < max_len and left[index] == right[index]:
+            index += 1
+        return index / max_len
 
     def _fallback_chapter_summary(
         self,
@@ -534,3 +622,4 @@ class SummaryMixin:
             open_loops=[],
             brief_summary=brief,
         )
+    CHAPTER_SUMMARY_MAX_ATTEMPTS = 3

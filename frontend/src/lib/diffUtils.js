@@ -45,7 +45,7 @@
     };
 };
 
-export const applyDiffOpsWithDecisions = (originalLines = [], ops = [], decisions = {}) => {
+export const applyDiffOpsWithDecisions = (_originalLines = [], ops = [], decisions = {}) => {
     const result = [];
     for (const op of ops) {
         if (op.type === "context") {

@@ -1,4 +1,6 @@
 ﻿"""
+中文说明：分卷存储服务，基于文件系统管理分卷元数据与摘要。
+
 Volume Storage
 File-based CRUD for volume metadata and summaries.
 """

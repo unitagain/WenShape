@@ -14,7 +14,6 @@ import { useLocale } from '../../i18n';
 
 // 消息项组件
 const MessageItem = ({ type, content, time }) => {
-    const { t } = useLocale();
     const styles = {
         user: 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] ml-8 border border-[var(--vscode-input-border)]',
         assistant: 'bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border border-[var(--vscode-sidebar-border)] mr-8',
@@ -214,7 +213,7 @@ const AgentStatusPanel = ({
     const [expandedTrace, setExpandedTrace] = useState({});
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
-    const { t, locale } = useLocale();
+    const { t } = useLocale();
 
     const runs = useMemo(() => {
         const combined = [];
@@ -354,6 +353,7 @@ const AgentStatusPanel = ({
         const maxHeight = 160;
         const nextHeight = Math.min(el.scrollHeight, maxHeight);
         el.style.height = `${Math.max(nextHeight, 40)}px`;
+        el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
     };
 
     const handleCopyContextDebug = async () => {
@@ -367,7 +367,7 @@ const AgentStatusPanel = ({
             await navigator.clipboard.writeText(text);
             setCopyStatus(t('common.copied'));
             setTimeout(() => setCopyStatus(''), 1500);
-        } catch (error) {
+        } catch (_error) {
             setCopyStatus(t('common.copyFailed'));
             setTimeout(() => setCopyStatus(''), 2000);
         }
@@ -429,7 +429,7 @@ const AgentStatusPanel = ({
             label: t('agentPanel.memoryPackReady'),
             detail: detailParts.join(' / ')
         };
-    }, [activeChapter, memoryPackStatus, t, locale]);
+    }, [activeChapter, memoryPackStatus, t]);
 
     return (
         <div className={`flex flex-col h-full ${className}`}>
@@ -737,7 +737,7 @@ const AgentStatusPanel = ({
                             disabled={inputDisabled}
                             placeholder={mode === 'edit' ? t('agentPanel.inputPlaceholderEdit') : t('agentPanel.inputPlaceholderCreate')}
                             className={[
-                                "flex-1 px-3 py-2 text-sm border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)] resize-none overflow-hidden min-h-[40px]",
+                                "flex-1 px-3 py-2 text-sm border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)] resize-none min-h-[40px] overscroll-contain",
                                 inputDisabled ? "opacity-60 cursor-not-allowed" : ""
                             ].join(' ')}
                         />

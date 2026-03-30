@@ -25,7 +25,7 @@
  *
  * @returns {JSX.Element} 卡片面板 / Cards panel element
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useIDE } from '../../../context/IDEContext';
 import { useParams } from 'react-router-dom';
 import { cardsAPI } from '../../../api';
@@ -63,11 +63,7 @@ export default function CardsPanel() {
   const [styleSample, setStyleSample] = useState('');
   const [styleExtracting, setStyleExtracting] = useState(false);
 
-  useEffect(() => {
-    loadEntities();
-  }, [projectId, state.lastSavedAt]);
-
-  const loadEntities = async () => {
+  const loadEntities = useCallback(async () => {
     setLoading(true);
     try {
       const [charsResp, worldsResp, styleResp] = await Promise.allSettled([
@@ -106,7 +102,11 @@ export default function CardsPanel() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [projectId]);
+
+  useEffect(() => {
+    loadEntities();
+  }, [loadEntities, state.lastSavedAt]);
 
   const handleCreateCard = () => {
     if (typeFilter === 'style') return;

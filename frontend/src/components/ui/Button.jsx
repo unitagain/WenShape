@@ -1,13 +1,4 @@
-/**
- * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
- * WenShape - Deep Context-Aware Agent-Based Novel Writing System
- *
- * Copyright © 2025-2026 WenShape Team
- * License: PolyForm Noncommercial License 1.0.0
- *
- * 模块说明 / Module Description:
- *   增强按钮组件 - 支持加载状态的按钮
- */
+/** Shared button component with loading-state support. */
 
 import { cn } from "../../lib/utils";
 import { Loader2 } from "lucide-react";

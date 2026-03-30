@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from typing import List, Optional
 import re
 from app.schemas.canon import Fact, TimelineEvent, CharacterState
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from app.dependencies import get_canon_storage
 
 router = APIRouter(prefix="/projects/{project_id}/canon", tags=["canon"])
@@ -22,7 +22,6 @@ class FactUpdate(BaseModel):
     source: Optional[str] = None
     introduced_in: Optional[str] = None
     confidence: Optional[float] = None
-    status: Optional[str] = None
 
 
 class ManualFactCreate(BaseModel):
@@ -129,9 +128,6 @@ async def update_fact(project_id: str, fact_id: str, payload: FactUpdate):
         fact_data["title"] = payload.title
     if content is not None:
         fact_data["content"] = content
-    if payload.status is not None:
-        fact_data["status"] = payload.status
-
     updated = await canon_storage.update_fact(project_id, fact_data)
     if updated:
         return {"success": True, "message": "Fact updated"}
@@ -152,31 +148,6 @@ async def update_fact(project_id: str, fact_id: str, payload: FactUpdate):
     file_path = canon_storage.get_project_path(project_id) / "canon" / "facts.jsonl"
     await canon_storage.append_jsonl(file_path, fact_data)
     return {"success": True, "message": "Fact created", "id": new_id}
-
-
-class FactStatusUpdate(BaseModel):
-    """Payload for updating fact status only."""
-    status: str = Field(..., description="New status: active | superseded")
-
-
-@router.patch("/facts/by-id/{fact_id}/status")
-async def update_fact_status(project_id: str, fact_id: str, payload: FactStatusUpdate):
-    """Update fact status (active / superseded) / 更新事实状态"""
-    if payload.status not in ("active", "superseded"):
-        raise HTTPException(status_code=400, detail="status must be 'active' or 'superseded'")
-
-    existing = await canon_storage.get_fact(project_id, fact_id)
-    if not existing:
-        raise HTTPException(status_code=404, detail="Fact not found")
-
-    fact_data = existing.model_dump() if hasattr(existing, "model_dump") else dict(existing)
-    fact_data["status"] = payload.status
-    await canon_storage.update_fact(project_id, fact_data)
-
-    from app.storage.indexed_cache import get_index_cache
-    await get_index_cache().invalidate(project_id)
-
-    return {"success": True, "message": f"Fact status updated to {payload.status}"}
 
 
 @router.delete("/facts/by-id/{fact_id}")

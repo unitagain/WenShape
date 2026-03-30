@@ -314,10 +314,6 @@ export default {
     refreshSuccess: 'Volume summaries refreshed',
     refreshFailed: 'Refresh failed. Please try again.',
     refreshBtn: 'Refresh',
-    markSuperseded: 'Mark as superseded',
-    markActive: 'Restore as active',
-    supersededLabel: 'Superseded',
-    statusUpdateFailed: 'Status update failed',
   },
 
   // ─── Volume ──────────────────────────────────────────────
@@ -410,6 +406,8 @@ export default {
     apiKeyNote: 'Configuration is encrypted and stored locally.',
     baseUrlLabel: 'Base URL',
     modelLabel: 'Model',
+    testModel: 'Test Model',
+    testingModel: 'Testing...',
     fetchModels: 'Fetch Deployed Models',
     fetching: 'Fetching…',
     temperatureLabel: 'Temperature: {value}',
@@ -418,12 +416,16 @@ export default {
     deleteBtn: 'Delete',
     pleaseEnterKey: 'Please enter an API key first',
     fetchFailed: 'Failed to fetch models: {message}\n\nHint: Make sure the selected provider matches your API key.',
+    fillRequiredBeforeTest: 'Please complete provider, base URL, API key and model before testing.',
+    testSuccess: 'Model test passed',
+    testFailed: 'Model test failed: {message}',
     deleteConfirm: 'Are you sure you want to delete this profile? This cannot be undone.',
     deleteFailed: 'Failed to delete profile',
     modelPlaceholder: 'Select a model…',
     customModelPlaceholder: 'e.g. llama-2-70b',
-    providerCustom: 'Custom / Local Model',
-    providerMock: 'Mock (Testing)',
+    customModelOption: 'Enter model ID manually...',
+    backToList: 'Back to list',
+    providerCustom: 'Custom (OpenAI Format)',
     maxContextTokensLabel: 'Context Window Size',
     maxContextTokensPlaceholder: 'Leave empty for auto-detect',
     maxContextTokensNote: 'Recommended for third-party relay APIs. Unit: tokens (e.g. 200000). Leave empty to auto-detect from model name.',
@@ -957,6 +959,8 @@ export default {
   },
 
   analysisSyncDialog: {
+    rebuildBindingsBtn: 'Rebuild Bindings',
+    rebuildIndexBtn: 'Rebuild Indexes',
     rebuildIndexTitle: 'Rebuild search index (cards / fact evidence / text chunks). Use after bulk imports, syncs, or edits to improve retrieval stability.',
   },
 

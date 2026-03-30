@@ -12,8 +12,8 @@ License: PolyForm Noncommercial License 1.0.0
   Manages token allocation across different content categories (cards, canon, summaries, output).
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, List
+from dataclasses import dataclass
+from typing import Dict, Any, Optional
 from app.config import config
 from app.context_engine.token_counter import count_tokens, get_model_context_window
 from app.utils.logger import get_logger
@@ -106,8 +106,9 @@ PROVIDER_TOKEN_RATIO = {
     "kimi": 1.05,
     "glm": 1.05,
     "grok": 1.05,
+    "wenxin": 1.05,
+    "aistudio": 1.05,
     "custom": 1.10,
-    "mock": 1.0,
 }
 
 
@@ -282,7 +283,6 @@ class ContextBudgetManager:
 
     def get_usage_summary(self) -> Dict[str, Any]:
         """获取使用情况摘要"""
-        allocation = self.get_allocation()
         total_used = sum(u.used for u in self._usage.values())
 
         return {

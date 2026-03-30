@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Chinese (Simplified) locale for WenShape.
  */
 export default {
@@ -38,10 +38,11 @@ export default {
     errorOccurred: '操作失败：{message}',
     networkError: '网络连接失败，请检查网络',
     timeoutError: '请求超时，请重试',
-    create: '创建',
     unsavedNote: '注意：当前章节存在未保存内容，删除后将永久丢失。',
     moveUp: '上移',
     moveDown: '下移',
+    selectAll: '全选',
+    deselectAll: '取消全选',
     unnamed: '未命名',
     optional: '（可选）',
     summary: '摘要',
@@ -310,7 +311,7 @@ export default {
     chapterLabel: '章节',
     refreshSummaryBtn: '刷新卷摘要',
     refreshSummaryTitle: '刷新分卷摘要',
-    refreshSummaryDesc: '选择需要 AI 重新生成摘要的分卷（LLM 操作，每卷约 10-30 秒）',
+    refreshSummaryDesc: '选择需要 AI 重新生成摘要的分卷',
     refreshing: '正在生成摘要...',
     refreshSuccess: '分卷摘要已刷新',
     refreshFailed: '刷新失败，请稍后重试。',
@@ -411,6 +412,8 @@ export default {
     apiKeyNote: '配置将加密存储在本地文件中。',
     baseUrlLabel: '接口地址',
     modelLabel: '模型选择',
+    testModel: '测试模型',
+    testingModel: '测试中…',
     fetchModels: '获取已部署模型',
     fetching: '获取中…',
     temperatureLabel: '随机性：{value}',
@@ -419,12 +422,16 @@ export default {
     deleteBtn: '删除',
     pleaseEnterKey: '请先填写接口密钥',
     fetchFailed: '获取模型列表失败: {message}\n\n提示: 请检查您选择的模型提供商是否与输入的密钥一致。',
+    fillRequiredBeforeTest: '请先完整填写：模型提供商、接口地址、接口密钥、模型。',
+    testSuccess: '模型测试通过',
+    testFailed: '模型测试失败：{message}',
     deleteConfirm: '确定要删除该配置卡片吗？此操作不可撤销。',
     deleteFailed: '删除配置卡片失败',
     modelPlaceholder: '请选择模型…',
     customModelPlaceholder: '例如：llama-2-70b',
-    providerCustom: '自定义 / 本地模型',
-    providerMock: '模拟测试',
+    customModelOption: '手动输入模型 ID…',
+    backToList: '返回列表',
+    providerCustom: '自定义(OpenAI格式)',
     maxContextTokensLabel: '上下文窗口大小',
     maxContextTokensPlaceholder: '留空则自动推断',
     maxContextTokensNote: '使用第三方中转站时建议手动设置，单位为 Token（如 200000）。留空则根据模型名自动推断。',
@@ -958,6 +965,8 @@ export default {
   },
 
   analysisSyncDialog: {
+    rebuildBindingsBtn: '重建绑定',
+    rebuildIndexBtn: '重建索引',
     rebuildIndexTitle: '重建检索索引（设定卡/事实证据/正文分块）。大量导入/同步/修改后可用于提升检索稳定性。',
   },
 

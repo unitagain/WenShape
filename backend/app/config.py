@@ -1,199 +1,145 @@
 # -*- coding: utf-8 -*-
 """
-文枢 WenShape - 深度上下文感知的智能体小说创作系统
-WenShape - Deep Context-Aware Agent-Based Novel Writing System
+中文说明：该模块为 WenShape 后端组成部分，详细行为见下方英文说明。
 
-Copyright © 2025-2026 WenShape Team
-License: PolyForm Noncommercial License 1.0.0
+WenShape runtime configuration utilities.
 
-模块说明 / Module Description:
-  配置管理 - 从环境变量和YAML文件加载应用配置
-  Configuration Management - Load and manage application configuration from environment and files.
-
-配置源优先级 / Configuration source priority:
-  1. Environment variables (.env 文件或系统环境)
-  2. YAML config file (config.yaml)
-  3. Hard-coded defaults
+This module intentionally avoids import-time side effects:
+- settings are loaded lazily via `get_settings()`
+- YAML config is loaded lazily via `get_config()`
+- `reload_runtime_config()` only clears caches
 """
 
-import os
-from pathlib import Path
-from typing import Dict, Any
-import yaml
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from dotenv import load_dotenv
+from __future__ import annotations
 
-# Load environment variables / 加载环境变量
-# Supports both frozen (EXE) and dev (source code) modes
+import logging
+import os
 import sys
-if getattr(sys, 'frozen', False):
-    # In frozen mode, load from the directory containing the EXE
-    # 冻结模式：从EXE所在目录加载
-    env_path = Path(sys.executable).parent / ".env"
-    load_dotenv(dotenv_path=env_path)
-else:
-    # In dev mode, load from project root
-    # 开发模式：从项目根目录加载
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Dict, Iterator, Mapping
+
+import yaml
+from dotenv import load_dotenv
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+logger = logging.getLogger(__name__)
+
+_TRUE_VALUES = {"1", "true", "yes", "on", "debug", "dev", "development"}
+_FALSE_VALUES = {"0", "false", "no", "off", "release", "prod", "production", "test"}
+
+
+def _load_environment() -> None:
+    """Load `.env` from the correct runtime location once per process."""
+    if getattr(sys, "frozen", False):
+        env_path = Path(sys.executable).resolve().parent / ".env"
+        load_dotenv(dotenv_path=env_path)
+        return
+
     load_dotenv()
 
+
+def _resolve_data_dir() -> str:
+    """Resolve the shared data directory for both source and packaged modes."""
+    if getattr(sys, "frozen", False):
+        return str((Path(sys.executable).resolve().parent / "data").resolve())
+
+    project_root = Path(__file__).resolve().parents[2]
+    return str((project_root / "data").resolve())
+
+
+def _config_root() -> Path:
+    """Return the directory that contains `config.yaml`."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1]
+
+
 class Settings(BaseSettings):
-    """
-    应用设置 / Application settings
-
-    从环境变量和.env文件加载配置。支持两种模式：
-    1. 开发模式：从源代码目录加载
-    2. 冻结模式（EXE）：从可执行文件旁加载
-
-    Settings loaded from environment variables and .env files.
-    Supports both development and frozen (EXE) modes.
-    """
+    """Application settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # Server Configuration / 服务器配置
-    host: str = os.getenv("HOST", "0.0.0.0")
-    port: int = int(os.getenv("PORT", "8000"))
-    debug: bool = os.getenv("DEBUG", "False").lower() == "true"
+    host: str = "0.0.0.0"
+    port: int = 8000
+    debug: bool = False
 
-    # API Keys / API密钥
-    # 从环境变量读取，用于认证LLM供应商
-    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
-    deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
-    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
+    deepseek_api_key: str = ""
+    gemini_api_key: str = ""
 
-    # Custom LLM Provider / 自定义LLM供应商配置
-    # For OpenAI-compatible endpoints
-    custom_api_key: str = os.getenv("CUSTOM_API_KEY", "")
-    custom_base_url: str = os.getenv("CUSTOM_BASE_URL", "")
-    custom_model_name: str = os.getenv("CUSTOM_MODEL_NAME", "")
+    custom_api_key: str = ""
+    custom_base_url: str = ""
+    custom_model_name: str = ""
 
-    # Model Selection per Provider / 各供应商的模型选择
-    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o")
-    anthropic_model: str = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
-    deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    openai_model: str = "gpt-4o"
+    anthropic_model: str = "claude-3-5-sonnet-20241022"
+    deepseek_model: str = "deepseek-chat"
+    gemini_model: str = "gemini-2.5-flash"
 
-    # LLM Provider / 大模型供应商选择
-    # 可选值：openai, anthropic, deepseek, gemini, mock, custom
-    wenshape_llm_provider: str = os.getenv("WENSHAPE_LLM_PROVIDER", "")
+    wenshape_llm_provider: str = ""
+    wenshape_agent_archivist_provider: str = ""
+    wenshape_agent_writer_provider: str = ""
+    wenshape_agent_editor_provider: str = ""
 
-    # Per-Agent LLM provider override / 按Agent指定LLM供应商
-    # 允许为不同的Agent使用不同的模型以获得最佳效果
-    wenshape_agent_archivist_provider: str = os.getenv("WENSHAPE_AGENT_ARCHIVIST_PROVIDER", "")
-    wenshape_agent_writer_provider: str = os.getenv("WENSHAPE_AGENT_WRITER_PROVIDER", "")
-    wenshape_agent_editor_provider: str = os.getenv("WENSHAPE_AGENT_EDITOR_PROVIDER", "")
+    data_dir: str = _resolve_data_dir()
 
-    # Storage Configuration / 存储路径配置
-    # Default relative path, will be resolved to absolute path
-    data_dir: str = "../data"  # Default relative path
+    @field_validator("debug", mode="before")
+    @classmethod
+    def _parse_debug_flag(cls, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        # Dynamic path resolution for data_dir / data_dir 动态路径解析
-        import sys
-        if getattr(sys, "frozen", False):
-            root = Path(sys.executable).parent
-            self.data_dir = str(root / "data")
-        else:
-            project_root = Path(__file__).resolve().parent.parent.parent
-            self.data_dir = str((project_root / "data").resolve())
+        normalized = str(value).strip().lower()
+        if normalized in _TRUE_VALUES:
+            return True
+        if normalized in _FALSE_VALUES:
+            return False
+        return False
 
-
-def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
-    """
-    从YAML文件加载配置
-
-    Load configuration from YAML file.
-
-    支持环境变量占位符：${VAR_NAME} 格式
-    Supports environment variable placeholders: ${VAR_NAME} format
-
-    Args:
-        config_path: 配置文件相对路径 / Path to config file relative to project root
-
-    Returns:
-        配置字典 / Configuration dictionary
-
-    Raises:
-        FileNotFoundError: 如果配置文件不存在 / If config file not found
-
-    Example:
-        >>> config = load_config("config.yaml")
-        >>> config['llm']['default_provider']
-        'deepseek'
-    """
-    import sys
-
-    # Determine root path: Dev or Frozen (EXE)
-    # 确定根路径：开发模式或冻结模式（EXE）
-    if getattr(sys, 'frozen', False):
-        # Running as PyInstaller Bundle
-        # 作为PyInstaller打包的可执行文件运行
-        # The config file should be next to the EXE
-        root_path = Path(sys.executable).parent
-    else:
-        # Running as Source Code
-        # 作为源代码运行
-        root_path = Path(__file__).parent.parent
-
-    config_file = root_path / config_path
-
-    if not config_file.exists():
-        raise FileNotFoundError(f"配置文件不存在 / Config file not found: {config_file}")
-
-    with open(config_file, 'r', encoding='utf-8') as f:
-        config = yaml.safe_load(f)
-
-    # Replace environment variable placeholders / 替换环境变量占位符
-    config = _replace_env_vars(config)
-
-    return config
+    @field_validator("data_dir", mode="before")
+    @classmethod
+    def _normalize_data_dir(cls, value: Any) -> str:
+        if not value:
+            return _resolve_data_dir()
+        return str(Path(str(value)).expanduser())
 
 
 def _replace_env_vars(obj: Any) -> Any:
-    """
-    递归替换 ${VAR} 为环境变量值
-
-    Recursively replace ${VAR} with environment variable values.
-
-    Args:
-        obj: 任何Python对象（字典、列表、字符串等） / Any Python object
-
-    Returns:
-        带环境变量替换的对象 / Object with environment variables replaced
-
-    Example:
-        >>> _replace_env_vars({"api_key": "${OPENAI_API_KEY}"})
-        {'api_key': 'sk-...'}
-    """
+    """Recursively replace `${VAR_NAME}` placeholders with environment values."""
     if isinstance(obj, dict):
-        return {k: _replace_env_vars(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
+        return {key: _replace_env_vars(val) for key, val in obj.items()}
+    if isinstance(obj, list):
         return [_replace_env_vars(item) for item in obj]
-    elif isinstance(obj, str) and obj.startswith("${") and obj.endswith("}"):
-        var_name = obj[2:-1]
-        return os.getenv(var_name, "")
+    if isinstance(obj, str) and obj.startswith("${") and obj.endswith("}"):
+        return os.getenv(obj[2:-1], "")
     return obj
 
-# Global settings instance / 全局设置实例
-settings = Settings()
 
-# Try to load config with fallback / 尝试加载配置，带容错机制
-try:
-    config = load_config()
-except FileNotFoundError as e:
-    from app.utils.logger import get_logger
-    logger = get_logger(__name__)
-    logger.error(f"Failed to load config.yaml: {e}")
-    logger.warning("Using minimal configuration fallback, some features may not work correctly")
+def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
+    """Load YAML runtime config from disk."""
+    config_file = _config_root() / config_path
+    if not config_file.exists():
+        raise FileNotFoundError(f"Config file not found: {config_file}")
 
-    # Fallback: minimal config structure
-    # 回退：最小化配置结构
-    config = {
+    with config_file.open("r", encoding="utf-8") as handle:
+        loaded = yaml.safe_load(handle) or {}
+
+    return _replace_env_vars(loaded)
+
+
+def _fallback_config() -> Dict[str, Any]:
+    """Return a minimal configuration when `config.yaml` is missing."""
+    runtime_settings = get_settings()
+    return {
         "llm": {
-            "default_provider": settings.wenshape_llm_provider or "mock",
-            "providers": {}
+            "default_provider": runtime_settings.wenshape_llm_provider or "openai",
+            "providers": {},
         },
         "session": {
             "max_iterations": 5,
@@ -201,49 +147,71 @@ except FileNotFoundError as e:
         },
         "context_budget": {
             "total_tokens": 128000,
-        }
+        },
     }
 
 
-def reload_runtime_config() -> None:
-    """
-    从更新后的环境变量重载配置
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Return cached settings loaded from environment variables."""
+    _load_environment()
+    return Settings()
 
-    Reload settings and config from updated environment.
 
-    在运行时更新了环境变量后调用此函数以重新加载配置。
-    Call this function after updating environment variables at runtime to reload config.
-
-    Example:
-        >>> os.environ['OPENAI_API_KEY'] = 'new-key'
-        >>> reload_runtime_config()
-        >>> settings.openai_api_key
-        'new-key'
-    """
-    global settings
-    global config
-
-    settings = Settings()
-
-    # Try to load config with fallback / 尝试加载配置，带容错机制
+@lru_cache(maxsize=1)
+def get_config() -> Dict[str, Any]:
+    """Return cached YAML config with a safe fallback."""
     try:
-        config = load_config()
-    except FileNotFoundError as e:
-        from app.utils.logger import get_logger
-        logger = get_logger(__name__)
-        logger.warning(f"Failed to reload config.yaml: {e}, using fallback")
+        return load_config()
+    except FileNotFoundError as exc:
+        logger.warning("Config file missing, using fallback config: %s", exc)
+        return _fallback_config()
 
-        # Fallback: minimal config structure
-        config = {
-            "llm": {
-                "default_provider": settings.wenshape_llm_provider or "mock",
-                "providers": {}
-            },
-            "session": {
-                "max_iterations": 5,
-                "timeout_seconds": 600,
-            },
-            "context_budget": {
-                "total_tokens": 128000,
-            }
-        }
+
+class _SettingsProxy:
+    """Backwards-compatible lazy proxy for modules importing `settings`."""
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(get_settings(), item)
+
+    def __setattr__(self, key: str, value: Any) -> None:
+        setattr(get_settings(), key, value)
+
+    def __repr__(self) -> str:
+        return repr(get_settings())
+
+
+class _ConfigProxy(Mapping[str, Any]):
+    """Backwards-compatible lazy proxy for modules importing `config`."""
+
+    def _target(self) -> Dict[str, Any]:
+        return get_config()
+
+    def __getitem__(self, key: str) -> Any:
+        return self._target()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._target())
+
+    def __len__(self) -> int:
+        return len(self._target())
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._target(), item)
+
+    def __repr__(self) -> str:
+        return repr(self._target())
+
+    def copy(self) -> Dict[str, Any]:
+        return dict(self._target())
+
+
+settings = _SettingsProxy()
+config = _ConfigProxy()
+
+
+def reload_runtime_config() -> None:
+    """Clear cached settings/config so the next access reloads them."""
+    get_settings.cache_clear()
+    get_config.cache_clear()
+
