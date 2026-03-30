@@ -30,7 +30,23 @@ export default defineConfig(({ mode }) => {
         output: {
           manualChunks(id) {
             if (!id.includes('node_modules')) return undefined;
-            if (id.includes('react') || id.includes('scheduler')) return 'vendor-react';
+            // Keep router packages together to avoid circular chunk deps with React core.
+            // 将路由相关包单独聚合，避免与 React 核心切块后形成循环依赖。
+            if (
+              id.includes('/react-router-dom/') ||
+              id.includes('/react-router/') ||
+              id.includes('/@remix-run/router/') ||
+              id.includes('/use-sync-external-store/')
+            ) {
+              return 'vendor-router';
+            }
+            if (
+              id.includes('/react/') ||
+              id.includes('/react-dom/') ||
+              id.includes('/scheduler/')
+            ) {
+              return 'vendor-react';
+            }
             if (id.includes('framer-motion')) return 'vendor-motion';
             if (id.includes('lucide-react')) return 'vendor-icons';
             if (id.includes('axios') || id.includes('swr')) return 'vendor-data';

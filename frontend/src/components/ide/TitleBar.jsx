@@ -15,7 +15,10 @@ const STREAMING_PREF_KEY = 'wenshape_output_streaming';
 /** Read streaming preference from localStorage (default: true) */
 export function getStreamingPreference() {
   try {
-    const val = localStorage.getItem(STREAMING_PREF_KEY);
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return true;
+    }
+    const val = window.localStorage.getItem(STREAMING_PREF_KEY);
     return val === null ? true : val === 'true';
   } catch {
     return true;
@@ -25,7 +28,10 @@ export function getStreamingPreference() {
 /** Write streaming preference to localStorage */
 function setStreamingPreference(enabled) {
   try {
-    localStorage.setItem(STREAMING_PREF_KEY, String(enabled));
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return;
+    }
+    window.localStorage.setItem(STREAMING_PREF_KEY, String(enabled));
   } catch { /* ignore */ }
 }
 

@@ -21,7 +21,30 @@ const bundles = {
   'en-US': enUS,
 };
 
-let currentLocale = localStorage.getItem(LOCALE_KEY) || 'zh-CN';
+function safeStorageGet(key, fallback = null) {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return fallback;
+    }
+    const value = window.localStorage.getItem(key);
+    return value ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function safeStorageSet(key, value) {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return;
+    }
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage failures in restricted browser contexts.
+  }
+}
+
+let currentLocale = safeStorageGet(LOCALE_KEY, 'zh-CN') || 'zh-CN';
 let currentBundle = bundles[currentLocale] || zhCN;
 
 // --- Pub/Sub for reactive locale updates ---
@@ -65,7 +88,7 @@ export function setLocale(locale) {
   if (!bundles[locale]) return;
   currentLocale = locale;
   currentBundle = bundles[locale];
-  localStorage.setItem(LOCALE_KEY, locale);
+  safeStorageSet(LOCALE_KEY, locale);
   emitChange();
 }
 
