@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { cn } from '../ui/core';
 import { useLocale } from '../../i18n';
 
 /**
@@ -22,7 +21,10 @@ export function ChapterCreateDialog({
     const [title, setTitle] = useState('');
 
     // 逻辑保持不变
-    const availableVolumes = volumes.length ? volumes : [{ id: 'V1', title: t('volume.defaultV1') }];
+    const availableVolumes = useMemo(
+        () => (volumes.length ? volumes : [{ id: 'V1', title: t('volume.defaultV1') }]),
+        [t, volumes]
+    );
 
     const normalizeToVolume = (chapterId, volumeId) => {
         const trimmed = (chapterId || '').trim().toUpperCase();
@@ -45,11 +47,11 @@ export function ChapterCreateDialog({
 
     useEffect(() => {
         if (!open) return;
-        const normalChapters = normalizedChapters.filter(
+        const currentVolumeChapters = normalizedChapters.filter(
             (chapter) => chapter.volumeId === selectedVolume && /C\d+$/i.test(chapter.normalizedId)
         );
         let maxChapter = 0;
-        normalChapters.forEach((chapter) => {
+        currentVolumeChapters.forEach((chapter) => {
             const match = chapter.normalizedId.match(/C(\d+)/i);
             if (match) maxChapter = Math.max(maxChapter, Number.parseInt(match[1], 10));
         });
@@ -70,7 +72,7 @@ export function ChapterCreateDialog({
     const rawId = customId || suggestedId;
     const finalId = normalizeToVolume(rawId, selectedVolume);
     const canCreate = Boolean(title && finalId);
-    const normalChapters = normalizedChapters.filter(
+    const _normalChapters = normalizedChapters.filter(
         (chapter) => chapter.volumeId === selectedVolume && /C\d+$/i.test(chapter.normalizedId)
     );
 

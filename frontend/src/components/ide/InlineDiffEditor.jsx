@@ -54,10 +54,10 @@ const InlineDiffEditor = ({
     className = ""
 }) => {
     const { t } = useLocale();
+    void revisedContent;
     // 构建内联合并视图
     const mergedView = useMemo(() => {
         const originalLines = originalContent.split('\n');
-        const hunksMap = new Map(); // lineIndex -> { deleted: string, added: string }
 
         // 无差异时直接展示原文
         if (!hunks || hunks.length === 0) {

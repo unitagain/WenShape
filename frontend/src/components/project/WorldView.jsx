@@ -10,7 +10,7 @@
  *   Worldview component for displaying world-building cards with CRUD operations.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { cardsAPI } from '../../api';
 import { Card, Button, Input } from '../ui/core';
 import { Plus, Globe, X, Save } from 'lucide-react';
@@ -102,11 +102,7 @@ export function WorldView({ projectId }) {
   });
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    loadCards();
-  }, [projectId]);
-
-  const loadCards = async () => {
+  const loadCards = useCallback(async () => {
     setLoading(true);
     try {
       const response = await cardsAPI.listWorldIndex(projectId);
@@ -115,7 +111,11 @@ export function WorldView({ projectId }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [projectId]);
+
+  useEffect(() => {
+    loadCards();
+  }, [loadCards]);
 
   const startEdit = (card = {}) => {
     setEditing(card);

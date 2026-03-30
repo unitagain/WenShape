@@ -14,7 +14,6 @@ import { useLocale } from '../../i18n';
 
 // 消息项组件
 const MessageItem = ({ type, content, time }) => {
-    const { t } = useLocale();
     const styles = {
         user: 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] ml-8 border border-[var(--vscode-input-border)]',
         assistant: 'bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border border-[var(--vscode-sidebar-border)] mr-8',
@@ -214,7 +213,7 @@ const AgentStatusPanel = ({
     const [expandedTrace, setExpandedTrace] = useState({});
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
-    const { t, locale } = useLocale();
+    const { t } = useLocale();
 
     const runs = useMemo(() => {
         const combined = [];
@@ -368,7 +367,7 @@ const AgentStatusPanel = ({
             await navigator.clipboard.writeText(text);
             setCopyStatus(t('common.copied'));
             setTimeout(() => setCopyStatus(''), 1500);
-        } catch (error) {
+        } catch (_error) {
             setCopyStatus(t('common.copyFailed'));
             setTimeout(() => setCopyStatus(''), 2000);
         }
@@ -430,7 +429,7 @@ const AgentStatusPanel = ({
             label: t('agentPanel.memoryPackReady'),
             detail: detailParts.join(' / ')
         };
-    }, [activeChapter, memoryPackStatus, t, locale]);
+    }, [activeChapter, memoryPackStatus, t]);
 
     return (
         <div className={`flex flex-col h-full ${className}`}>

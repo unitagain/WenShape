@@ -5,6 +5,7 @@ FastAPI 应用入口
 
 import sys
 import re
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -37,12 +38,19 @@ logger = get_logger(__name__)
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Application lifespan hooks."""
+    await run_startup_tasks()
+    yield
+
 # Create FastAPI application / 创建 FastAPI 应用
 app = FastAPI(
     title="WenShape API",
     description="Multi-Agent Novel Writing System / 多智能体小说写作系统",
     version="0.1.0",
-    debug=settings.debug
+    debug=settings.debug,
+    lifespan=lifespan,
 )
 
 # Add rate limiter to app state
@@ -175,8 +183,7 @@ async def health_check():
         "storage_accessible": storage_ok,
     }
 
-@app.on_event("startup")
-async def on_startup():
+async def run_startup_tasks():
     """Startup event handler / 启动事件处理"""
     import sys
     import webbrowser

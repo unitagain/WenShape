@@ -8,37 +8,31 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import useSWR from 'swr';
-import { motion, AnimatePresence } from 'framer-motion';
-import { useParams, useNavigate } from 'react-router-dom';
-import { sessionAPI, createWebSocket, draftsAPI, cardsAPI, projectsAPI, volumesAPI, memoryPackAPI } from '../api';
-import { Button, Input } from '../components/ui/core';
-import AgentsPanel from '../components/ide/panels/AgentsPanel';
-import AgentStatusPanel from '../components/ide/AgentStatusPanel';
-import { X, Loader2 } from 'lucide-react';
+import { useParams } from 'react-router-dom';
+import { sessionAPI, draftsAPI, cardsAPI, projectsAPI, volumesAPI, memoryPackAPI } from '../api';
+import { Button } from '../components/ui/core';
 import { ChapterCreateDialog } from '../components/project/ChapterCreateDialog';
 import { IDELayout } from '../components/ide/IDELayout';
 import { IDEProvider } from '../context/IDEContext';
 import { useIDE } from '../context/IDEContext';
 import AnalysisReviewDialog from '../components/writing/AnalysisReviewDialog';
 import PreWritingQuestionsDialog from '../components/PreWritingQuestionsDialog';
-import StreamingDraftView from '../components/writing/StreamingDraftView';
+import WritingSessionAgentPanel from '../components/writing/WritingSessionAgentPanel';
+import WritingSessionMainContent from '../components/writing/WritingSessionMainContent';
 import { buildLineDiff, applyDiffOpsWithDecisions } from '../lib/diffUtils';
-import DiffReviewView from '../components/ide/DiffReviewView';
 import SaveMenu from '../components/writing/SaveMenu';
-import FanfictionView from './FanfictionView';
 import logger from '../utils/logger';
 import { extractErrorDetail } from '../utils/extractError';
 import { useLocale } from '../i18n';
 import { getStreamingPreference } from '../components/ide/TitleBar';
+import { useWritingSessionRealtime } from '../hooks/useWritingSessionRealtime';
 import {
     fetchChapterContent,
     countWords,
-    escapeRegExp,
     getSelectionStats,
     normalizeStars,
     parseListInput,
     formatListInput,
-    hasDeletionIntent,
     stabilizeRevisionTail,
 } from '../utils/writingSessionHelpers';
 
@@ -56,14 +50,12 @@ import {
  * - 草稿保存和历史记录
  *
  * @component
- * @param {boolean} [isEmbedded=false] - 是否为嵌入模式（默认完整模式）
  * @returns {JSX.Element} 写作会话主界面
  */
-function WritingSessionContent({ isEmbedded = false }) {
+function WritingSessionContent() {
   const { t, locale } = useLocale();
   const requestLanguage = locale === 'en-US' ? 'en' : 'zh';
     const { projectId } = useParams();
-    const navigate = useNavigate();
     const { state, dispatch } = useIDE();
 
     // ========================================================================
@@ -114,8 +106,6 @@ function WritingSessionContent({ isEmbedded = false }) {
 
 
     // UI State
-    const [sidebarOpen, setSidebarOpen] = useState(true);
-    const [showStartModal, setShowStartModal] = useState(true);
     const [showChapterDialog, setShowChapterDialog] = useState(false);
     const [chapters, setChapters] = useState([]);
 
@@ -127,21 +117,20 @@ function WritingSessionContent({ isEmbedded = false }) {
     const [analysisSaving, setAnalysisSaving] = useState(false);
 
     // Proposal State
-    const [proposals, setProposals] = useState([]);
-    const [rejectedItems, setRejectedItems] = useState([]);
+    const [, setProposals] = useState([]);
 
     // Logic State
     const [status, setStatus] = useState('idle'); // idle, starting, editing, waiting_feedback, completed
     const [messagesByChapter, setMessagesByChapter] = useState({});
     const [progressEventsByChapter, setProgressEventsByChapter] = useState({});
-    const [currentDraft, setCurrentDraft] = useState(null);
+    const [, setCurrentDraft] = useState(null);
     const [manualContent, setManualContent] = useState(''); // Textarea content
     const [manualContentByChapter, setManualContentByChapter] = useState({});
     const [selectionInfo, setSelectionInfo] = useState({ start: 0, end: 0, text: '' });
     const [attachedSelection, setAttachedSelection] = useState(null); // { start, end, text }
     const [editScope, setEditScope] = useState('document'); // document | selection
-    const [sceneBrief, setSceneBrief] = useState(null);
-    const [draftV1, setDraftV1] = useState(null);
+    const [, setSceneBrief] = useState(null);
+    const [, setDraftV1] = useState(null);
     const [feedback, setFeedback] = useState('');
     const [diffReview, setDiffReview] = useState(null);
     const [diffDecisions, setDiffDecisions] = useState({});
@@ -285,206 +274,6 @@ function WritingSessionContent({ isEmbedded = false }) {
         setAiLockedChapter(null);
     }, [aiLockedChapter, agentBusy]);
 
-    useEffect(() => {
-        if (!projectId) return;
-
-        const wsController = createWebSocket(
-            projectId,
-            (data) => {
-                const wsChapterKey = data?.chapter ? String(data.chapter) : NO_CHAPTER_KEY;
-                if (data.type === 'start_ack') appendProgressEvent({ stage: 'session_start', message: t('writingSession.sessionStarted') }, wsChapterKey);
-                if (data.type === 'stream_start') {
-                    if (wsChapterKey && wsChapterKey !== NO_CHAPTER_KEY) {
-                        setAiLockedChapter(wsChapterKey);
-                    }
-                    streamingChapterKeyRef.current = wsChapterKey;
-                    stopStreaming();
-                    clearDiffReview();
-                    serverStreamActiveRef.current = true;
-                    serverStreamUsedRef.current = true;
-                    streamBufferByChapterRef.current[wsChapterKey] = '';
-                    streamTextByChapterRef.current[wsChapterKey] = '';
-                    if (streamFlushRafByChapterRef.current[wsChapterKey]) {
-                        window.cancelAnimationFrame(streamFlushRafByChapterRef.current[wsChapterKey]);
-                        streamFlushRafByChapterRef.current[wsChapterKey] = null;
-                    }
-                    lastGeneratedByChapterRef.current[wsChapterKey] = true;
-                    setManualContentByChapter((prev) => ({ ...(prev || {}), [wsChapterKey]: '' }));
-                    if (activeChapterKeyRef.current === wsChapterKey) {
-                        setManualContent('');
-                    }
-                    setIsGenerating(true);
-                    setStreamingState({
-                        active: true,
-                        progress: 0,
-                        current: 0,
-                        total: data.total || 0
-                    });
-                }
-                if (data.type === 'token' && typeof data.content === 'string') {
-                    if (!serverStreamActiveRef.current) {
-                        return;
-                    }
-                    streamBufferByChapterRef.current[wsChapterKey] =
-                        (streamBufferByChapterRef.current[wsChapterKey] || '') + data.content;
-                    // In direct output mode, accumulate tokens silently without UI updates
-                    if (!getStreamingPreference()) {
-                        const buffered = streamBufferByChapterRef.current[wsChapterKey] || '';
-                        const nextText = (streamTextByChapterRef.current[wsChapterKey] || '') + buffered;
-                        streamTextByChapterRef.current[wsChapterKey] = nextText;
-                        streamBufferByChapterRef.current[wsChapterKey] = '';
-                        return;
-                    }
-                    if (!streamFlushRafByChapterRef.current[wsChapterKey]) {
-                        streamFlushRafByChapterRef.current[wsChapterKey] = window.requestAnimationFrame(() => {
-                            const buffered = streamBufferByChapterRef.current[wsChapterKey] || '';
-                            const nextText = (streamTextByChapterRef.current[wsChapterKey] || '') + buffered;
-                            streamTextByChapterRef.current[wsChapterKey] = nextText;
-                            streamBufferByChapterRef.current[wsChapterKey] = '';
-                            setManualContentByChapter((prev) => ({ ...(prev || {}), [wsChapterKey]: nextText }));
-                            if (activeChapterKeyRef.current === wsChapterKey) {
-                                setManualContent(nextText);
-                            }
-                            const current = nextText.length;
-                            setStreamingState((prev) => ({
-                                ...prev,
-                                current,
-                                progress: prev.total ? Math.round((current / prev.total) * 100) : prev.progress
-                            }));
-                            streamFlushRafByChapterRef.current[wsChapterKey] = null;
-                        });
-                    }
-                }
-                if (data.type === 'stream_end') {
-                    if (streamFlushRafByChapterRef.current[wsChapterKey]) {
-                        window.cancelAnimationFrame(streamFlushRafByChapterRef.current[wsChapterKey]);
-                        streamFlushRafByChapterRef.current[wsChapterKey] = null;
-                    }
-                    const buffered = streamBufferByChapterRef.current[wsChapterKey] || '';
-                    const combined = (streamTextByChapterRef.current[wsChapterKey] || '') + buffered;
-                    streamTextByChapterRef.current[wsChapterKey] = combined;
-                    streamBufferByChapterRef.current[wsChapterKey] = '';
-                    const finalText = data.draft?.content || combined;
-                    serverStreamActiveRef.current = false;
-                    streamingChapterKeyRef.current = null;
-                    setManualContentByChapter((prev) => ({ ...(prev || {}), [wsChapterKey]: finalText }));
-                    if (activeChapterKeyRef.current === wsChapterKey) {
-                        setManualContent(finalText);
-                    }
-                    setStreamingState({
-                        active: false,
-                        progress: 100,
-                        current: finalText.length,
-                        total: finalText.length
-                    });
-                    setIsGenerating(false);
-                    if (activeChapterKeyRef.current === wsChapterKey) {
-                        dispatch({ type: 'SET_WORD_COUNT', payload: countWords(finalText, writingLanguage) });
-                        dispatch({ type: 'SET_SELECTION_COUNT', payload: 0 });
-                    } else {
-                        pushNotice(t('writingSession.chapterDone').replace('{n}', wsChapterKey));
-                    }
-                    if (data.draft) {
-                        setCurrentDraft(data.draft);
-                        setCurrentDraftVersion(data.draft.version || currentDraftVersion);
-                    }
-                    if (data.proposals) {
-                        setProposals(data.proposals);
-                    }
-                    setStatus('waiting_feedback');
-                    addMessage('assistant', t('writingSession.draftGenerated'), wsChapterKey);
-                }
-                if (data.type === 'scene_brief') handleSceneBrief(data.data, wsChapterKey);
-                if (data.type === 'draft_v1') handleDraftV1(data.data, wsChapterKey);
-                if (data.type === 'final_draft') handleFinalDraft(data.data, wsChapterKey);
-                if (data.type === 'error') addMessage('error', data.message, wsChapterKey);
-
-                // Handle backend status updates (progress)
-                if (data.status && data.message) {
-                    if (data.stage) {
-                        const event = {
-                            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                            timestamp: data.timestamp || Date.now(),
-                            stage: data.stage,
-                            round: data.round,
-                            message: data.message,
-                            queries: data.queries || [],
-                            hits: data.hits,
-                            top_sources: data.top_sources || [],
-                            stop_reason: data.stop_reason,
-                            note: data.note
-                        };
-                        appendProgressEvent(event, wsChapterKey);
-                    } else {
-                        appendProgressEvent({ stage: 'system', message: data.message, note: data.note }, wsChapterKey);
-                    }
-                }
-            },
-            {
-                onStatus: (status) => {
-                    if (wsStatusRef.current !== status) {
-                        if (status === 'reconnecting') {
-                            appendProgressEvent({ stage: 'connection', message: t('writingSession.connectionReconnecting') }, NO_CHAPTER_KEY);
-                        }
-                        if (status === 'connected' && wsStatusRef.current === 'reconnecting') {
-                            appendProgressEvent({ stage: 'connection', message: t('writingSession.connectionRestored') }, NO_CHAPTER_KEY);
-                        }
-                        if (status === 'disconnected') {
-                            appendProgressEvent({ stage: 'connection', message: t('writingSession.connectionLost') }, NO_CHAPTER_KEY);
-                        }
-                    }
-
-                    wsStatusRef.current = status;
-                }
-            }
-        );
-
-        wsRef.current = wsController;
-
-        // Connect to Trace WebSocket for AgentTimeline
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const wsHost = window.location.host;
-        const traceWs = new WebSocket(`${wsProtocol}://${wsHost}/ws/trace`);
-
-        traceWs.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            if (data.type === 'trace_event' && data.payload) {
-                setTraceEvents(prev => [...prev.slice(-99), data.payload]); // Keep last 100 events
-            }
-            if (data.type === 'agent_trace_update' && data.payload) {
-                setAgentTraces(prev => {
-                    const existing = prev.findIndex(t => t.agent_name === data.payload.agent_name);
-                    if (existing >= 0) {
-                        const updated = [...prev];
-                        updated[existing] = data.payload;
-                        return updated;
-                    }
-                    return [...prev, data.payload];
-                });
-            }
-        };
-
-        traceWsRef.current = traceWs;
-
-        return () => {
-            if (wsController) wsController.close();
-            if (traceWs) traceWs.close();
-            wsRef.current = null;
-            traceWsRef.current = null;
-            // 清理所有残留的流式 RAF，防止组件卸载后仍触发状态更新
-            // Cancel all lingering per-chapter RAFs to prevent post-unmount state updates
-            const rafMap = streamFlushRafByChapterRef.current || {};
-            for (const key of Object.keys(rafMap)) {
-                if (rafMap[key]) {
-                    window.cancelAnimationFrame(rafMap[key]);
-                }
-            }
-            streamFlushRafByChapterRef.current = {};
-            serverStreamActiveRef.current = false;
-            streamingChapterKeyRef.current = null;
-        };
-    }, [projectId]);
-
     // Card State
     const [activeCard, setActiveCard] = useState(null);
     const [cardForm, setCardForm] = useState({
@@ -545,20 +334,31 @@ function WritingSessionContent({ isEmbedded = false }) {
         // Only center cursor if we just switched chapters (optional optimization)
         // dispatch({ type: 'SET_CURSOR_POSITION', payload: { line: 1, column: 1 } });
     }, [
-        loadedContent,
+        NO_CHAPTER_KEY,
+        activeChapterKey,
         dispatch,
+        isDiffReviewForActiveChapter,
+        isStreamingForActiveChapter,
+        loadedContent,
+        lockedOnActiveChapter,
         manualContent,
         state.unsavedChanges,
-        activeChapterKey,
-        NO_CHAPTER_KEY,
-        isStreamingForActiveChapter,
-        lockedOnActiveChapter,
-        isDiffReviewForActiveChapter,
+        writingLanguage,
     ]);
+
+    const loadChapters = useCallback(async () => {
+        try {
+            const resp = await draftsAPI.listChapters(projectId);
+            const list = resp.data || [];
+            setChapters(list);
+        } catch (e) {
+            logger.error('Failed to load chapters:', e);
+        }
+    }, [projectId]);
 
     useEffect(() => {
         loadChapters();
-    }, [projectId]);
+    }, [loadChapters]);
 
     useEffect(() => {
         let active = true;
@@ -587,19 +387,27 @@ function WritingSessionContent({ isEmbedded = false }) {
         if (state.createChapterDialogOpen !== showChapterDialog) {
             setShowChapterDialog(state.createChapterDialogOpen);
         }
-    }, [state.createChapterDialogOpen]);
+    }, [showChapterDialog, state.createChapterDialogOpen]);
 
-    const loadChapters = async () => {
-        try {
-            const resp = await draftsAPI.listChapters(projectId);
-            const list = resp.data || [];
-            setChapters(list);
-        } catch (e) {
-            logger.error('Failed to load chapters:', e);
+    const clearDiffReview = useCallback(() => {
+        setDiffReview(null);
+        setDiffDecisions({});
+    }, []);
+
+    const stopStreaming = useCallback(() => {
+        if (streamingRef.current?.timer) {
+            streamingRef.current.timer();
         }
-    };
+        streamingRef.current = null;
+        setStreamingState({
+            active: false,
+            progress: 0,
+            current: 0,
+            total: 0
+        });
+    }, []);
 
-    const handleChapterSelect = async (chapter, presetTitle = '') => {
+    const handleChapterSelect = useCallback(async (chapter, presetTitle = '') => {
         const nextChapterKey = chapter ? String(chapter) : NO_CHAPTER_KEY;
         const lockedKey = aiLockedChapterRef.current ? String(aiLockedChapterRef.current) : null;
         const preserveAgent = Boolean(lockedKey) && agentBusy;
@@ -657,7 +465,19 @@ function WritingSessionContent({ isEmbedded = false }) {
         } catch (e) {
             // Summary may not exist yet.
         }
-    };
+    }, [
+        NO_CHAPTER_KEY,
+        agentBusy,
+        chapterInfo.chapter,
+        clearDiffReview,
+        dispatch,
+        manualContent,
+        projectId,
+        pushNotice,
+        stopStreaming,
+        t,
+        writingLanguage,
+    ]);
 
     const handleChapterCreate = async (chapterData) => {
         // Handle object from ChapterCreateDialog or direct arguments
@@ -775,36 +595,19 @@ function WritingSessionContent({ isEmbedded = false }) {
             }
         };
     }, [
-        state.unsavedChanges,
-        projectId,
+        addMessage,
         chapterInfo.chapter,
         chapterInfo.chapter_title,
-        manualContent,
+        dispatch,
+        isDiffReviewForActiveChapter,
         isStreamingForActiveChapter,
         lockedOnActiveChapter,
-        isDiffReviewForActiveChapter,
+        manualContent,
         mutateChapter,
-        dispatch,
-        addMessage,
+        projectId,
+        state.unsavedChanges,
+        t,
     ]);
-
-    const clearDiffReview = useCallback(() => {
-        setDiffReview(null);
-        setDiffDecisions({});
-    }, []);
-
-    const stopStreaming = useCallback(() => {
-        if (streamingRef.current?.timer) {
-            streamingRef.current.timer();
-        }
-        streamingRef.current = null;
-        setStreamingState({
-            active: false,
-            progress: 0,
-            current: 0,
-            total: 0
-        });
-    }, []);
 
     // 当资源管理器清空/删除当前章节时，主动回到空态，避免编辑区残留旧章节内容
     useEffect(() => {
@@ -934,7 +737,7 @@ function WritingSessionContent({ isEmbedded = false }) {
                 if (rafId) window.cancelAnimationFrame(rafId);
             }
         };
-    }, [dispatch, stopStreaming, pushNotice]);
+    }, [dispatch, pushNotice, stopStreaming, t, writingLanguage]);
 
     useEffect(() => {
         return () => {
@@ -1007,7 +810,7 @@ function WritingSessionContent({ isEmbedded = false }) {
                 fetchCardDetails();
             }
         }
-    }, [state.activeDocument, stopStreaming, clearDiffReview, projectId]);
+    }, [addMessage, clearDiffReview, handleChapterSelect, projectId, state.activeDocument, stopStreaming, t]);
 
     // Handlers
     const handleStart = async (chapter, mode, instruction = null) => {
@@ -1206,12 +1009,12 @@ function WritingSessionContent({ isEmbedded = false }) {
         handlePreWriteConfirm([]);
     };
 
-    const handleSceneBrief = (data, chapterOverride = null) => {
+    const handleSceneBrief = useCallback((data, chapterOverride = null) => {
         setSceneBrief(data);
         appendProgressEvent({ stage: 'scene_brief', message: t('writingSession.sceneBriefGenerated'), payload: data }, chapterOverride);
-    };
+    }, [appendProgressEvent, t]);
 
-    const handleDraftV1 = (data, chapterOverride = null) => {
+    const handleDraftV1 = useCallback((data, chapterOverride = null) => {
         if (serverStreamActiveRef.current || serverStreamUsedRef.current) {
             return;
         }
@@ -1226,9 +1029,9 @@ function WritingSessionContent({ isEmbedded = false }) {
         });
         setStatus('waiting_feedback');
         addMessage('assistant', t('writingSession.draftGenerated'), chapterOverride);
-    };
+    }, [NO_CHAPTER_KEY, addMessage, clearDiffReview, startStreamingDraft, t]);
 
-    const handleFinalDraft = (data, chapterOverride = null) => {
+    const handleFinalDraft = useCallback((data, chapterOverride = null) => {
         if (serverStreamActiveRef.current || serverStreamUsedRef.current) {
             return;
         }
@@ -1243,7 +1046,46 @@ function WritingSessionContent({ isEmbedded = false }) {
         });
         setStatus('completed');
         addMessage('assistant', t('writingSession.finalDraftDone'), chapterOverride);
-    };
+    }, [NO_CHAPTER_KEY, addMessage, clearDiffReview, startStreamingDraft, t]);
+
+    useWritingSessionRealtime({
+        projectId,
+        noChapterKey: NO_CHAPTER_KEY,
+        addMessage,
+        appendProgressEvent,
+        clearDiffReview,
+        currentDraftVersion,
+        dispatch,
+        handleDraftV1,
+        handleFinalDraft,
+        handleSceneBrief,
+        pushNotice,
+        serverStreamActiveRef,
+        serverStreamUsedRef,
+        setAgentTraces,
+        setAiLockedChapter,
+        setCurrentDraft,
+        setCurrentDraftVersion,
+        setIsGenerating,
+        setManualContent,
+        setManualContentByChapter,
+        setProposals,
+        setStatus,
+        setStreamingState,
+        setTraceEvents,
+        stopStreaming,
+        streamBufferByChapterRef,
+        streamFlushRafByChapterRef,
+        streamingChapterKeyRef,
+        streamTextByChapterRef,
+        t,
+        traceWsRef,
+        wsRef,
+        wsStatusRef,
+        activeChapterKeyRef,
+        lastGeneratedByChapterRef,
+        writingLanguage,
+    });
 
     const handleSubmitFeedback = async (feedbackOverride) => {
         const textToSubmit = typeof feedbackOverride === 'string' ? feedbackOverride : feedback;
@@ -1589,318 +1431,81 @@ function WritingSessionContent({ isEmbedded = false }) {
         }
     };
 
-    const renderMainContent = () => {
-        if (state.activeActivity === 'fanfiction') {
-            return (
-                <FanfictionView
-                    embedded
-                    onClose={() => dispatch({ type: 'SET_ACTIVE_PANEL', payload: 'explorer' })}
-                />
-            );
+    const handleCardFormChange = useCallback((patch) => {
+        setCardForm((prev) => ({ ...prev, ...patch }));
+    }, []);
+
+    const handleCloseCardEditor = useCallback(() => {
+        setStatus('idle');
+        setActiveCard(null);
+    }, []);
+
+    const handleManualSelectionChange = useCallback((value, selectionStart, selectionEnd) => {
+        const stats = getSelectionStats(value, selectionStart, selectionEnd, writingLanguage);
+        dispatch({ type: 'SET_SELECTION_COUNT', payload: stats.selectionCount });
+        setSelectionInfo({
+            start: stats.selectionStart,
+            end: stats.selectionEnd,
+            text: stats.selectionText || '',
+        });
+        const lines = stats.cursorText.split('\n');
+        dispatch({
+            type: 'SET_CURSOR_POSITION',
+            payload: {
+                line: lines.length,
+                column: lines[lines.length - 1].length + 1,
+            },
+        });
+    }, [dispatch, writingLanguage]);
+
+    const handleManualContentChange = useCallback((nextValue, selectionStart, selectionEnd) => {
+        setManualContent(nextValue);
+        if (chapterInfo.chapter) {
+            const key = String(chapterInfo.chapter);
+            setManualContentByChapter((prev) => ({ ...(prev || {}), [key]: nextValue }));
         }
-        return (
-            <AnimatePresence mode="wait">
-                {status === 'card_editing' && activeCard ? (
-                    <motion.div
-                        key="card-editor"
-                        initial={{ opacity: 0, scale: 0.98, y: 10 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.98, y: -10 }}
-                        transition={{ duration: 0.3, ease: "easeOut" }}
-                        className="h-full flex flex-col max-w-3xl mx-auto w-full pt-4"
-                    >
-                        <div className="flex items-center justify-between mb-6 pb-4 border-b border-border">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 bg-primary/10 rounded-lg text-primary">
-                                    {activeCard.type === 'character' ? <div className="i-lucide-user" /> : <div className="i-lucide-globe" />}
-                                    {activeCard.type === 'character' ? '👤' : '🌍'}
-                                </div>
-                                <div>
-                                    <p className="text-xs text-ink-400 font-mono uppercase tracking-wider">{activeCard.type === 'character' ? t('writingSession.cardTypeChar') : t('writingSession.cardTypeWorld')}</p>
-                                </div>
-                            </div>
-                            <button
-                                onClick={() => {
-                                    setStatus('idle');
-                                    setActiveCard(null);
-                                }}
-                                className="p-2 hover:bg-ink-100 rounded-lg transition-colors text-ink-400 hover:text-ink-700"
-                                title={t('writingSession.closeCardEdit')}
-                            >
-                                <X size={20} />
-                            </button>
-                        </div>
+        dispatch({ type: 'SET_WORD_COUNT', payload: countWords(nextValue, writingLanguage) });
+        handleManualSelectionChange(nextValue, selectionStart, selectionEnd);
+        dispatch({ type: 'SET_UNSAVED' });
+    }, [chapterInfo.chapter, dispatch, handleManualSelectionChange, writingLanguage]);
 
-                        <div className="space-y-6 flex-1 overflow-y-auto px-1 pb-20">
-                            {/* Common: Name */}
-                            <div className="space-y-1">
-                                <label className="text-xs font-bold text-ink-500 tracking-wider">{t('card.fieldName')}</label>
-                                <Input
-                                    value={cardForm.name}
-                                    onChange={e => setCardForm(prev => ({ ...prev, name: e.target.value }))}
-                                    className="font-serif text-lg bg-[var(--vscode-input-bg)] font-bold"
-                                />
-                            </div>
+    const rightPanelContent = <WritingSessionAgentPanel vm={{
+        traceEvents,
+        agentTraces,
+        agentMode,
+        setAgentMode,
+        canUseWriter,
+        agentBusy,
+        aiLockedChapter,
+        activeChapterKey,
+        t,
+        isCancelling,
+        handleCancel,
+        selectionInfo,
+        attachedSelection,
+        setAttachedSelection,
+        setEditScope,
+        editScope,
+        contextDebug,
+        progressEvents,
+        messages,
+        memoryPackStatus,
+        chapterInfo,
+        editContextMode,
+        setEditContextMode,
+        diffReview,
+        agentChapterKey,
+        diffDecisions,
+        handleAcceptAllDiff,
+        handleRejectAllDiff,
+        handleApplySelectedDiff,
+        addMessage,
+        handleStart,
+        handleSubmitFeedback,
+        countWords,
+        writingLanguage,
+    }} />;
 
-                            <div className="space-y-1">
-                                <label className="text-xs font-bold text-ink-500 tracking-wider">{t('card.fieldStars')}</label>
-                                <select
-                                    value={cardForm.stars}
-                                    onChange={e => setCardForm(prev => ({ ...prev, stars: normalizeStars(e.target.value) }))}
-                                    className="w-full h-10 px-3 rounded-[6px] border border-[var(--vscode-input-border)] bg-[var(--vscode-input-bg)] text-sm focus:ring-1 focus:ring-[var(--vscode-focus-border)]"
-                                >
-                                    <option value={3}>{t('card.stars3')}</option>
-                                    <option value={2}>{t('card.stars2')}</option>
-                                    <option value={1}>{t('card.stars1')}</option>
-                                </select>
-                            </div>
-
-                            <div className="space-y-1">
-                                <label className="text-xs font-bold text-ink-500 tracking-wider">{t('card.fieldAliases')}</label>
-                                <Input
-                                    value={cardForm.aliases || ''}
-                                    onChange={e => setCardForm(prev => ({ ...prev, aliases: e.target.value }))}
-                                    placeholder={t('card.fieldAliasesPlaceholder')}
-                                    className="bg-[var(--vscode-input-bg)]"
-                                />
-                            </div>
-
-                            {activeCard.type === 'world' && (
-                                <>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-ink-500 tracking-wider">{t('card.fieldCategory')}</label>
-                                        <Input
-                                            value={cardForm.category || ''}
-                                            onChange={e => setCardForm(prev => ({ ...prev, category: e.target.value }))}
-                                            placeholder={t('card.categoryPlaceholder')}
-                                            className="bg-[var(--vscode-input-bg)]"
-                                        />
-                                    </div>
-                                </>
-                            )}
-
-                            {/* Card Description */}
-                            <div className="space-y-1">
-                                <label className="text-xs font-bold text-ink-500 tracking-wider">{t('card.fieldDescription')}</label>
-                                <textarea
-                                    className="w-full min-h-[200px] p-3 rounded-[6px] border border-[var(--vscode-input-border)] bg-[var(--vscode-input-bg)] text-sm focus:ring-1 focus:ring-[var(--vscode-focus-border)] resize-none overflow-hidden"
-                                    value={cardForm.description || ''}
-                                    onChange={e => {
-                                        setCardForm(prev => ({ ...prev, description: e.target.value }));
-                                        e.target.style.height = 'auto';
-                                        e.target.style.height = e.target.scrollHeight + 'px';
-                                    }}
-                                    onFocus={e => {
-                                        e.target.style.height = 'auto';
-                                        e.target.style.height = e.target.scrollHeight + 'px';
-                                    }}
-                                    placeholder={t('card.charDescPlaceholder')}
-                                />
-                            </div>
-
-                        </div>
-                    </motion.div>
-                ) : !chapterInfo.chapter ? (
-                    <motion.div
-                        key="empty-state"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="h-[60vh] flex items-center justify-center"
-                    >
-                        <div className="text-center">
-                            <div className="flex flex-col items-center gap-2 mb-4">
-                                <span className="brand-logo text-4xl text-ink-900/40">文枢</span>
-                            </div>
-                            <p className="text-sm text-ink-500">
-                                {t('writingSession.selectResourceHint')}
-                            </p>
-                        </div>
-                    </motion.div>
-                ) : (
-                    <motion.div
-                        key="chapter-editor"
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -10 }}
-                        transition={{ duration: 0.3 }}
-                        className="h-full flex flex-col relative"
-                    >
-                        <div className="mb-4 pb-3 border-b border-border flex flex-wrap items-center gap-3">
-                            <span className="text-[11px] font-mono text-ink-500 uppercase tracking-wider">{chapterInfo.chapter}</span>
-                            <input
-                                className="flex-1 min-w-[200px] bg-transparent text-2xl font-serif font-bold text-ink-900 outline-none placeholder:text-ink-300"
-                                value={chapterInfo.chapter_title || ''}
-                                onChange={(e) => {
-                                    setChapterInfo((prev) => ({ ...prev, chapter_title: e.target.value }));
-                                    dispatch({ type: 'SET_UNSAVED' });
-                                }}
-                                placeholder={t('writingSession.chapterTitlePlaceholder')}
-                                disabled={!chapterInfo.chapter}
-                            />
-                        </div>
-                        <div className="flex-1 overflow-hidden bg-[var(--vscode-bg)] border-t border-[var(--vscode-sidebar-border)]">
-                            {isDiffReviewForActiveChapter ? (
-                                <DiffReviewView
-                                    ops={diffReview.ops}
-                                    hunks={diffReview.hunks}
-                                    stats={diffReview.stats}
-                                    decisions={diffDecisions}
-                                    onAcceptHunk={handleAcceptDiffHunk}
-                                    onRejectHunk={handleRejectDiffHunk}
-                                    originalVersion={t('writingSession.currentText')}
-                                    revisedVersion={t('writingSession.revisedText')}
-                                />
-                            ) : isStreamingForActiveChapter ? (
-                                <StreamingDraftView
-                                    content={manualContent}
-                                    active={isStreamingForActiveChapter}
-                                    className="h-full"
-                                />
-                            ) : (
-                                <textarea
-                                    className="h-full w-full resize-none border-none outline-none bg-transparent p-6 text-base font-serif text-ink-900 leading-relaxed focus:ring-0 placeholder:text-ink-300 overflow-y-auto editor-scrollbar"
-                                    value={manualContent}
-                                    onChange={(e) => {
-                                        const nextValue = e.target.value;
-                                        setManualContent(nextValue);
-                                        if (chapterInfo.chapter) {
-                                            const key = String(chapterInfo.chapter);
-                                            setManualContentByChapter((prev) => ({ ...(prev || {}), [key]: nextValue }));
-                                        }
-                                        dispatch({ type: 'SET_WORD_COUNT', payload: countWords(nextValue, writingLanguage) });
-                                        const stats = getSelectionStats(nextValue, e.target.selectionStart, e.target.selectionEnd, writingLanguage);
-                                        dispatch({ type: 'SET_SELECTION_COUNT', payload: stats.selectionCount });
-                                        setSelectionInfo({
-                                            start: stats.selectionStart,
-                                            end: stats.selectionEnd,
-                                            text: stats.selectionText || '',
-                                        });
-                                        const lines = stats.cursorText.split('\n');
-                                        dispatch({
-                                            type: 'SET_CURSOR_POSITION',
-                                            payload: {
-                                                line: lines.length,
-                                                column: lines[lines.length - 1].length + 1
-                                            }
-                                        });
-                                        dispatch({ type: 'SET_UNSAVED' });
-                                    }}
-                                    onSelect={(e) => {
-                                        const stats = getSelectionStats(e.target.value, e.target.selectionStart, e.target.selectionEnd, writingLanguage);
-                                        dispatch({ type: 'SET_SELECTION_COUNT', payload: stats.selectionCount });
-                                        setSelectionInfo({
-                                            start: stats.selectionStart,
-                                            end: stats.selectionEnd,
-                                            text: stats.selectionText || '',
-                                        });
-                                        const lines = stats.cursorText.split('\n');
-                                        dispatch({
-                                            type: 'SET_CURSOR_POSITION',
-                                            payload: {
-                                                line: lines.length,
-                                                column: lines[lines.length - 1].length + 1
-                                            }
-                                        });
-                                    }}
-                                    placeholder={t('writingSession.writePlaceholder')}
-                                    disabled={!chapterInfo.chapter || lockedOnActiveChapter}
-                                    spellCheck={false}
-                                />
-                            )}
-                        </div>
-
-                    </motion.div>
-                )}
-            </AnimatePresence>
-        );
-    };
-
-    const rightPanelContent = (
-        <AgentsPanel traceEvents={traceEvents} agentTraces={agentTraces}>
-            <AgentStatusPanel
-                mode={agentMode}
-                onModeChange={setAgentMode}
-                createDisabled={!canUseWriter}
-                editDisabled={canUseWriter}
-                inputDisabled={agentBusy && String(aiLockedChapter || '') !== activeChapterKey}
-                inputDisabledReason={
-                    agentBusy && String(aiLockedChapter || '') !== activeChapterKey
-                        ? t('writingSession.aiLockedHint').replace('{n}', String(aiLockedChapter))
-                        : ''
-                }
-                isGenerating={agentBusy && String(aiLockedChapter || '') === activeChapterKey}
-                isCancelling={isCancelling}
-                onCancel={handleCancel}
-                selectionCandidateSummary={
-                    agentMode === 'edit' && selectionInfo?.text?.trim()
-                        ? t('writingSession.selectionPending').replace('{n}', countWords(selectionInfo.text, writingLanguage))
-                        : ''
-                }
-                selectionAttachedSummary={
-                    agentMode === 'edit' && attachedSelection?.text?.trim()
-                        ? t('writingSession.selectionAdded').replace('{n}', countWords(attachedSelection.text, writingLanguage))
-                        : ''
-                }
-                selectionCandidateDifferent={
-                    Boolean(selectionInfo?.text?.trim()) &&
-                    Boolean(attachedSelection?.text?.trim()) &&
-                    (selectionInfo.start !== attachedSelection.start ||
-                        selectionInfo.end !== attachedSelection.end ||
-                        selectionInfo.text !== attachedSelection.text)
-                }
-                onAttachSelection={() => {
-                    if (!selectionInfo?.text?.trim()) return;
-                    setAttachedSelection({
-                        start: selectionInfo.start,
-                        end: selectionInfo.end,
-                        text: selectionInfo.text,
-                    });
-                    setEditScope('selection');
-                }}
-                onClearAttachedSelection={() => {
-                    setAttachedSelection(null);
-                    setEditScope('document');
-                }}
-                editScope={editScope}
-                onEditScopeChange={setEditScope}
-                contextDebug={contextDebug}
-                progressEvents={progressEvents}
-                messages={messages}
-                memoryPackStatus={memoryPackStatus}
-                activeChapter={agentBusy ? aiLockedChapter : chapterInfo.chapter}
-                editContextMode={editContextMode}
-                onEditContextModeChange={setEditContextMode}
-                diffReview={diffReview && String(diffReview?.chapterKey || '') === agentChapterKey ? diffReview : null}
-                diffDecisions={diffDecisions}
-                onAcceptAllDiff={handleAcceptAllDiff}
-                onRejectAllDiff={handleRejectAllDiff}
-                onApplySelectedDiff={handleApplySelectedDiff}
-                onSubmit={(text) => {
-                    if (!chapterInfo.chapter) {
-                        addMessage('system', t('writingSession.pleaseSelectChapter'));
-                        return;
-                    }
-
-                    if (agentMode === 'create') {
-                        if (!canUseWriter) {
-                            addMessage('system', t('writingSession.chapterNotWritable'));
-                            setAgentMode('edit');
-                            return;
-                        }
-                        addMessage('user', text);
-                        handleStart(chapterInfo.chapter, 'deep', text);
-                        return;
-                    }
-
-                    handleSubmitFeedback(text);
-                }}
-            />
-        </AgentsPanel>
-    );
-
-
-    
     const saveBusy = isSaving || analysisLoading || analysisSaving;
     const showSaveAction = (chapterInfo.chapter || status === 'card_editing') && !lockedOnActiveChapter;
     const saveAction = showSaveAction ? (
@@ -1936,7 +1541,30 @@ function WritingSessionContent({ isEmbedded = false }) {
     return (
         <IDELayout rightPanelContent={rightPanelContent} titleBarProps={titleBarProps}>
             <div className="w-full h-full px-8 py-6">
-                {renderMainContent()}
+                <WritingSessionMainContent vm={{
+                    activeActivity: state.activeActivity,
+                    dispatch,
+                    status,
+                    activeCard,
+                    cardForm,
+                    onCardFormChange: handleCardFormChange,
+                    onCloseCardEditor: handleCloseCardEditor,
+                    chapterInfo,
+                    setChapterInfo,
+                    manualContent,
+                    writingLanguage,
+                    t,
+                    state,
+                    diffReview,
+                    diffDecisions,
+                    onAcceptDiffHunk: handleAcceptDiffHunk,
+                    onRejectDiffHunk: handleRejectDiffHunk,
+                    isDiffReviewForActiveChapter,
+                    isStreamingForActiveChapter,
+                    lockedOnActiveChapter,
+                    onManualContentChange: handleManualContentChange,
+                    onManualSelectionChange: handleManualSelectionChange,
+                }} />
             </div>
 
             {notice ? (

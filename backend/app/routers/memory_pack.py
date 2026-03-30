@@ -2,7 +2,7 @@
 Memory Pack Router / 章节记忆包接口
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from app.dependencies import get_memory_pack_storage
 

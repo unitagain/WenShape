@@ -38,7 +38,6 @@ export default {
     errorOccurred: '操作失败：{message}',
     networkError: '网络连接失败，请检查网络',
     timeoutError: '请求超时，请重试',
-    create: '创建',
     unsavedNote: '注意：当前章节存在未保存内容，删除后将永久丢失。',
     moveUp: '上移',
     moveDown: '下移',

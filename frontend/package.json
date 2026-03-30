@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "lint": "eslint \"src/**/*.{js,jsx,ts,tsx}\"",
     "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,json}\""
   },
   "dependencies": {
@@ -22,15 +24,21 @@
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.36.0",
     "@types/node": "^25.2.3",
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.16",
+    "eslint": "^9.36.0",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^16.4.0",
     "postcss": "^8.4.32",
     "prettier": "^3.2.0",
     "tailwindcss": "^3.3.6",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.57.2",
     "vite": "^5.0.8"
   }
 }

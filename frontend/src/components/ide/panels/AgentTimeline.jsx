@@ -5,7 +5,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { cn } from '../../ui/core';
 import { useLocale } from '../../../i18n';
 
 // --- 本地化映射 ---
@@ -306,7 +305,7 @@ const AgentTimeline = ({ events = [], autoScroll = true, maxHeight = '100%' }) =
         if (lastTurn && lastTurn.status === 'running' && !turns.slice(0, -1).some(t => t.id === lastTurn.id)) {
             setExpandedTurns(prev => new Set(prev).add(lastTurn.id));
         }
-    }, [turns.length]);
+    }, [turns]);
 
     // 3. Auto-scroll
     useEffect(() => {
@@ -332,7 +331,7 @@ const AgentTimeline = ({ events = [], autoScroll = true, maxHeight = '100%' }) =
                     <p className="opacity-50 mt-1">{t('panels.timeline.waitingStart')}</p>
                 </div>
             ) : (
-                turns.map((item, idx) => {
+                turns.map((item) => {
                     if (item.type === 'separator') return <HandoffSeparator key={item.id} data={item.data} />;
                     return (
                         <TurnCard

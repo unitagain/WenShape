@@ -3,7 +3,7 @@ Draft and Writing Session Data Models / 草稿与写作会话数据模型
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, ConfigDict
 

@@ -249,8 +249,8 @@ class WikiStructuredParser:
                     rows.append(f"{texts[0]}: {texts[1]}")
                 else:
                     rows.append(" | ".join(texts))
-        if rows:
-            tables.append(rows)
+            if rows:
+                tables.append(rows)
 
         return tables
 

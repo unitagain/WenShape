@@ -3,7 +3,7 @@ Google Gemini Provider / 谷歌 Gemini 适配器
 Compatible with OpenAI API / 兼容 OpenAI API
 """
 
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from typing import List, Dict, Any, Optional
 from openai import AsyncOpenAI
 from app.llm_gateway.providers.base import BaseLLMProvider
 

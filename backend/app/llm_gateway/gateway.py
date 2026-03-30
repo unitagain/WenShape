@@ -1,8 +1,9 @@
 """
-LLM Gateway / 大模型网关
-Unified interface with retry, rate limiting, and cost tracking
-统一接口，包含重试、限流和成本追踪
+中文说明：该模块为 WenShape 后端组成部分，详细行为见下方英文说明。
+
+Unified LLM gateway with retry, provider routing, and usage tracking.
 """
+
 
 import asyncio
 import time

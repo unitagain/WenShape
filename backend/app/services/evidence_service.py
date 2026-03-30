@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from app.schemas.evidence import EvidenceItem, EvidenceIndexMeta
 from app.storage.cards import CardStorage

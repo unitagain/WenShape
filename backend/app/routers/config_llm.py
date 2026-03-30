@@ -1,9 +1,13 @@
-from pathlib import Path
-from typing import Dict, Any, Optional, List
+"""
+中文说明：LLM 配置路由，管理模型档案与 Agent 绑定关系。
 
-from fastapi import APIRouter, HTTPException, Body
+LLM configuration router for profile and assignment management.
+"""
+
+from typing import Optional, List
+
+from fastapi import APIRouter
 from pydantic import BaseModel
-import app.config as app_config
 from app.services.llm_config_service import llm_config_service
 from app.llm_gateway import reset_gateway
 

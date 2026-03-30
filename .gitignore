@@ -1,4 +1,4 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -43,6 +43,8 @@ yarn-error.log*
 frontend/dist/
 frontend/build/
 frontend/.vite/
+frontend/src/i18n/locales/*_full.txt
+frontend/src/i18n/locales/*content.json
 
 # IDE
 .vscode/
@@ -91,8 +93,4 @@ gamma_script.md
 market.md
 docs/TODO.md
 
-# 1. 编辑.gitignore文件（Windows PowerShell命令）
-notepad .gitignore
-
-# 2. 在打开的文件中添加以下内容，保存并关闭
 build_release.py

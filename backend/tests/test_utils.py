@@ -1,8 +1,9 @@
 """Test utilities in app.utils.*"""
 import pytest
-from app.utils.text import normalize_newlines, normalize_for_compare
+from bs4 import BeautifulSoup
+from app.utils.text import normalize_for_compare, normalize_newlines, normalize_prose_paragraphs
 from app.utils.path_safety import sanitize_id, validate_path_within
-from pathlib import Path
+from app.services.wiki_parser import WikiStructuredParser
 
 
 # --- normalize_newlines ---
@@ -32,6 +33,26 @@ class TestNormalizeForCompare:
 
     def test_none(self):
         assert normalize_for_compare(None) == ""
+
+
+class TestNormalizeProseParagraphs:
+    def test_collapses_over_fragmented_chinese_paragraphs(self):
+        text = (
+            "沈鸿站在山脚下，望着那座山。\n\n"
+            "七年前，这里还是他的家。\n\n"
+            "如今却成了伤心地。\n\n"
+            "山门紧闭，铁锁在风中晃荡。\n\n"
+            "发出轻响。"
+        )
+        result = normalize_prose_paragraphs(text, language="zh")
+        assert result.count("\n\n") < text.count("\n\n")
+        assert "沈鸿站在山脚下，望着那座山。七年前，这里还是他的家。如今却成了伤心地。" in result
+
+    def test_preserves_dialogue_paragraphs(self):
+        text = "“你走吧。”\n\n“我不走。”\n\n山风吹过。"
+        result = normalize_prose_paragraphs(text, language="zh")
+        assert "“你走吧。”" in result
+        assert "“我不走。”" in result
 
 
 # --- sanitize_id ---
@@ -85,3 +106,10 @@ class TestValidatePathWithin:
         evil = tmp_path / ".." / "etc" / "passwd"
         with pytest.raises(ValueError, match="escapes"):
             validate_path_within(evil, tmp_path)
+
+
+class TestWikiParser:
+    def test_extract_tables_handles_pages_without_tables(self):
+        parser = WikiStructuredParser()
+        soup = BeautifulSoup("<html><body><p>Only prose here.</p></body></html>", "html.parser")
+        assert parser.extract_tables(soup) == []

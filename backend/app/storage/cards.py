@@ -1,8 +1,9 @@
 ﻿"""
+中文说明：卡片存储读写服务。
+
 Card storage.
 """
 
-from pathlib import Path
 from typing import List, Optional, Dict, Any
 import re
 

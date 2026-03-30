@@ -21,7 +21,7 @@ export const fetchChapterContent = async ([_, projectId, chapter]) => {
         const draftResp = await draftsAPI.getDraft(projectId, chapter, latestVer);
         return draftResp.data?.content || '';
       }
-    } catch (vErr) {
+    } catch (_vErr) {
       logger.debug('No drafts found, starting fresh.');
     }
   }

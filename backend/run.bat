@@ -19,8 +19,17 @@ python --version >nul 2>&1
 if errorlevel 1 goto :python_missing
 
 echo [1/3] Checking dependencies...
-python -m pip install -r requirements.txt -q
+python "scripts/check_requirements_installed.py" "requirements.txt" >nul 2>&1
+if errorlevel 1 goto :install_deps
+echo [OK] Pinned backend dependencies already installed.
+goto :deps_ready
+
+:install_deps
+echo [INFO] Missing or mismatched packages detected. Installing pinned dependencies...
+python -m pip install -r requirements.txt -q --disable-pip-version-check
 if errorlevel 1 goto :pip_failed
+
+:deps_ready
 
 REM Check if .env exists
 if exist ".env" goto :start_server
@@ -75,7 +84,9 @@ exit /b 1
 :pip_failed
 echo.
 echo ERROR: Dependency installation failed.
-echo Try running: python -m pip install -r requirements.txt
+echo This usually means your network/proxy cannot reach PyPI, or some pinned wheel is temporarily unavailable.
+echo If dependencies are already installed, rerun backend\\run.bat and the offline checker will skip pip.
+echo Otherwise try running: python -m pip install -r requirements.txt
 echo to see detailed error messages.
 pause
 exit /b 1

@@ -1,14 +1,4 @@
-/**
- * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
- * WenShape - Deep Context-Aware Agent-Based Novel Writing System
- *
- * Copyright © 2025-2026 WenShape Team
- * License: PolyForm Noncommercial License 1.0.0
- *
- * 模块说明 / Module Description:
- *   LLM 配置对话框 - 创建和编辑 LLM 提供商配置文件（API密钥、模型选择等）
- *   LLM profile modal for creating and editing provider configurations.
- */
+/** LLM profile modal for creating and editing provider configurations. */
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -18,6 +8,22 @@ import { configAPI } from '../api';
 import logger from '../utils/logger';
 import { extractErrorDetail } from '../utils/extractError';
 import { useLocale } from '../i18n';
+
+const PROVIDER_DEFAULT_BASE_URLS = {
+    openai: 'https://api.openai.com/v1',
+    anthropic: 'https://api.anthropic.com',
+    deepseek: 'https://api.deepseek.com/v1',
+    gemini: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    kimi: 'https://api.moonshot.cn/v1',
+    glm: 'https://open.bigmodel.cn/api/paas/v4',
+    grok: 'https://api.x.ai/v1',
+    wenxin: 'https://qianfan.baidubce.com/v2',
+    aistudio: 'https://aistudio.baidu.com/llm/lmapi/v3',
+    custom: '',
+};
+
+const getDefaultBaseUrl = (provider) => PROVIDER_DEFAULT_BASE_URLS[provider] || '';
 
 /**
  * LLM 配置对话框 - 创建和编辑 LLM 提供商配置
@@ -53,22 +59,6 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
     const [fetchWarning, setFetchWarning] = useState('');
     const [deleting, setDeleting] = useState(false);
     const [customModelInput, setCustomModelInput] = useState(false);
-
-    const PROVIDER_DEFAULT_BASE_URLS = {
-        openai: 'https://api.openai.com/v1',
-        anthropic: 'https://api.anthropic.com',
-        deepseek: 'https://api.deepseek.com/v1',
-        gemini: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-        qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-        kimi: 'https://api.moonshot.cn/v1',
-        glm: 'https://open.bigmodel.cn/api/paas/v4',
-        grok: 'https://api.x.ai/v1',
-        wenxin: 'https://qianfan.baidubce.com/v2',
-        aistudio: 'https://aistudio.baidu.com/llm/lmapi/v3',
-        custom: '',
-    };
-
-    const getDefaultBaseUrl = (provider) => PROVIDER_DEFAULT_BASE_URLS[provider] || '';
 
     const [formData, setFormData] = useState({
         name: '',
@@ -117,7 +107,7 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
                 });
             }
         }
-    }, [open, profile]);
+    }, [open, profile, t]);
 
     if (!open) return null;
 
@@ -236,7 +226,7 @@ export default function LLMProfileModal({ open, profile, onClose, onSave, onDele
                 setFetchedModels(models);
                 setFormData((prev) => ({ ...prev, deployed_models: models }));
                 setFetchWarning(res.data.warning ? String(res.data.warning) : '');
-                // ????????????????????????
+                // Auto-select the first fetched model when the form has no current model.
                 if (!formData.model && models.length > 0) {
                     setFormData(prev => ({ ...prev, model: models[0] }));
                 }

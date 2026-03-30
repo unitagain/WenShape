@@ -15,8 +15,7 @@ License: PolyForm Noncommercial License 1.0.0
 from fastapi import APIRouter, HTTPException
 from pathlib import Path
 from datetime import datetime
-from typing import Any, Dict, List
-from app.schemas.project import Project, ProjectCreate, ProjectStats
+from app.schemas.project import ProjectCreate
 from app.dependencies import get_card_storage, get_canon_storage, get_draft_storage
 from app.utils.path_safety import sanitize_id, validate_path_within
 from app.utils.language import normalize_language

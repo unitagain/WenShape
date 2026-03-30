@@ -171,7 +171,7 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
         try {
           const res = await volumesAPI.getSummary(projectId, editingSummary.id);
           existing = res.data;
-        } catch (error) {
+        } catch (_error) {
           existing = null;
         }
 
@@ -189,7 +189,7 @@ const FactsEncyclopedia = ({ projectId: overrideProjectId, onFactSelect }) => {
         try {
           const res = await draftsAPI.getSummary(projectId, editingSummary.id);
           existing = res.data;
-        } catch (error) {
+        } catch (_error) {
           existing = null;
         }
 

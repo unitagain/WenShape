@@ -47,7 +47,7 @@ class ErrorBoundary extends React.Component {
      * 当子组件抛出错误时更新状态以展示降级界面
      * Update state when child component throws error to show fallback UI
      */
-    static getDerivedStateFromError(error) {
+    static getDerivedStateFromError(_error) {
         return { hasError: true };
     }
 

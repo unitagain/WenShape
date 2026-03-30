@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { draftsAPI } from '../../api';
 import { Button, Card } from '../ui/core';
-import { FileText, Trash2, Eye, EyeOff, BookOpen, Clock, ChevronRight, Sparkles, Drama } from 'lucide-react';
+import { FileText, Trash2, BookOpen, Clock, ChevronRight, Sparkles, Drama } from 'lucide-react';
 import logger from '../../utils/logger';
 import { useLocale } from '../../i18n';
 
@@ -19,32 +19,7 @@ export function DraftsView({ projectId }) {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    loadChapters();
-  }, [projectId]);
-
-  useEffect(() => {
-    if (selectedChapter) loadChapterData();
-  }, [selectedChapter]);
-
-  useEffect(() => {
-    if (selectedChapter && selectedVersion) loadDraftContent();
-  }, [selectedChapter, selectedVersion]);
-
-  const loadChapters = async () => {
-    try {
-      const resp = await draftsAPI.listChapters(projectId);
-      const chapterList = Array.isArray(resp.data) ? resp.data : [];
-      // Sort chapters by ID weight
-      const sorted = sortChapters(chapterList);
-      setChapters(sorted);
-    } catch (e) {
-      logger.error(e);
-    }
-  };
-
-  // Sort chapters using chapter ID rules
-  const sortChapters = (chapterIds) => {
+  const sortChapters = useCallback((chapterIds) => {
     const calculateWeight = (chapterId) => {
       const match = chapterId.match(/^(?:V(\d+))?C(\d+)(?:([EI])(\d+))?$/);
       if (!match) return 0;
@@ -62,7 +37,18 @@ export function DraftsView({ projectId }) {
     };
 
     return [...chapterIds].sort((a, b) => calculateWeight(a) - calculateWeight(b));
-  };
+  }, []);
+
+  const loadChapters = useCallback(async () => {
+    try {
+      const resp = await draftsAPI.listChapters(projectId);
+      const chapterList = Array.isArray(resp.data) ? resp.data : [];
+      const sorted = sortChapters(chapterList);
+      setChapters(sorted);
+    } catch (e) {
+      logger.error(e);
+    }
+  }, [projectId, sortChapters]);
 
   const getChapterIcon = (chapterId) => {
     if (chapterId.includes('E')) return <Sparkles size={14} className="text-amber-500" />;
@@ -70,7 +56,7 @@ export function DraftsView({ projectId }) {
     return <BookOpen size={14} className="text-[var(--vscode-fg-subtle)]" />;
   };
 
-  const loadChapterData = async () => {
+  const loadChapterData = useCallback(async () => {
     try {
       const vResp = await draftsAPI.listVersions(projectId, selectedChapter);
       const vItems = Array.isArray(vResp.data) ? vResp.data : [];
@@ -86,9 +72,9 @@ export function DraftsView({ projectId }) {
     } catch (e) {
       logger.error(e);
     }
-  };
+  }, [projectId, selectedChapter]);
 
-  const loadDraftContent = async () => {
+  const loadDraftContent = useCallback(async () => {
     setLoading(true);
     try {
       const dResp = await draftsAPI.getDraft(projectId, selectedChapter, selectedVersion);
@@ -98,7 +84,19 @@ export function DraftsView({ projectId }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [projectId, selectedChapter, selectedVersion, t]);
+
+  useEffect(() => {
+    loadChapters();
+  }, [loadChapters]);
+
+  useEffect(() => {
+    if (selectedChapter) loadChapterData();
+  }, [selectedChapter, loadChapterData]);
+
+  useEffect(() => {
+    if (selectedChapter && selectedVersion) loadDraftContent();
+  }, [selectedChapter, selectedVersion, loadDraftContent]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-140px)]">

@@ -1,0 +1,70 @@
+name: Quality
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Generated assets check
+        run: python ../scripts/check_generated_assets.py
+      - name: Requirements sync
+        run: python ../scripts/check_requirements_sync.py
+      - name: Compile backend
+        run: python -m compileall app
+      - name: Encoding check
+        run: python ../scripts/check_encoding.py
+      - name: Bilingual docstrings check
+        run: python ../scripts/check_bilingual_docstrings.py
+      - name: Large-file check
+        run: python ../scripts/check_large_files.py
+      - name: Ruff
+        run: ruff check app tests
+      - name: Pytest
+        env:
+          DEBUG: "false"
+          HOST: "127.0.0.1"
+          PORT: "8000"
+          WENSHAPE_LLM_PROVIDER: "openai"
+        run: pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Generated assets check
+        run: python ../scripts/check_generated_assets.py
+      - name: Encoding check
+        run: python ../scripts/check_encoding.py
+      - name: Large-file check
+        run: python ../scripts/check_large_files.py
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build

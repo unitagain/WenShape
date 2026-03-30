@@ -12,11 +12,11 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-    Send, Play, RotateCcw, Save, Sparkles,
+    Send, RotateCcw, Save, Sparkles,
     Bot, Database, Layers, Radio, AlignLeft,
     CheckCircle2, AlertCircle, Terminal
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { cn, Button } from '../../ui/core';
 import { useLocale } from '../../../i18n';
 
@@ -182,7 +182,7 @@ const OrchestratorStatus = ({ status, chapter, isGenerating }) => {
     );
 };
 
-const QuickActions = ({ status, chapter, isGenerating, onStart, onSelectChapter, chapters, onSave, isSaving }) => {
+const QuickActions = ({ status, chapter, isGenerating, onStart, onSelectChapter, onSave, isSaving }) => {
     const { t } = useLocale();
     if (isGenerating) return null;
 
@@ -246,7 +246,7 @@ export const OrchestratorConsole = ({
     onSelectChapter,
     onSubmitFeedback,
     onManualSave,
-    onResetStatus
+    onResetStatus: _onResetStatus
 }) => {
     /**
      * 运行态展示与交互输入区域

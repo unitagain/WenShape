@@ -1,6 +1,5 @@
 """Basic storage read/write tests using tmp_path."""
 import pytest
-from pathlib import Path
 from app.storage.base import BaseStorage
 
 

@@ -12,7 +12,7 @@ License: PolyForm Noncommercial License 1.0.0
 """
 
 import re
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from app.prompts import (
     FANFICTION_CARD_REPAIR_HINT_ENRICH_DESCRIPTION,
@@ -74,7 +74,6 @@ class FanfictionMixin:
         )
 
         max_attempts = 5
-        last_description = ""
         last_length = 0
         strict_json_hint = (
             FANFICTION_CARD_REPAIR_HINT_STRICT_JSON_EN
@@ -112,7 +111,6 @@ class FanfictionMixin:
             name = str(parsed.get("name") or clean_title or "Unknown").strip()
             card_type = self._normalize_fanfiction_card_type(parsed.get("type")) or self._infer_card_type_from_title(name)
             description = self._sanitize_fanfiction_description(str(parsed.get("description") or "").strip())
-            last_description = description
             last_length = len(description)
 
             copied = bool(description) and self._is_copied_from_source(description, clean_content)
@@ -146,7 +144,6 @@ class FanfictionMixin:
                         parsed = bridged_payload
                 if self._is_valid_fanfiction_payload(parsed, clean_content):
                     description = self._sanitize_fanfiction_description(str(parsed.get("description") or "").strip())
-                    last_description = description
                     last_length = len(description)
                 copied = bool(description) and self._is_copied_from_source(description, clean_content)
                 low_quality = self._is_low_quality_fanfiction_description(description)
@@ -530,7 +527,7 @@ class FanfictionMixin:
         if not body:
             return {"unique": set(), "labeled_paragraphs": 0}
         labels = ("Identity", "Alias", "Appearance", "Personality", "Ability", "Relations", "Writing Notes")
-        pattern = r"^(%s):\s*" % "|".join([re.escape(l) for l in labels])
+        pattern = r"^(%s):\s*" % "|".join([re.escape(label) for label in labels])
         paragraphs = [p.strip() for p in re.split(r"\n{2,}", body) if p.strip()]
         labeled_paragraphs = sum(1 for p in paragraphs if re.match(pattern, p, flags=re.IGNORECASE))
         found = set(
