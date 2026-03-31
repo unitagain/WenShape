@@ -3,10 +3,11 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useIDE } from '../../context/IDEContext';
 import useSWR, { mutate } from 'swr';
 import { projectsAPI } from '../../api';
-import { Bot, ChevronDown, Folder, Plus, Check, Trash2, Home, Pencil, Settings } from 'lucide-react';
+import { Bot, ChevronDown, Folder, Plus, Check, Trash2, Home, Pencil, Settings, Download } from 'lucide-react';
 import { cn } from '../ui/core';
 import logger from '../../utils/logger';
 import { useLocale } from '../../i18n';
+import ExportDialog from './ExportDialog';
 
 const fetcher = (fn) => fn().then((res) => res.data);
 
@@ -39,7 +40,7 @@ function setStreamingPreference(enabled) {
  * TitleBar - 顶部标题栏
  * 负责项目切换与快捷操作入口，不改变业务逻辑。
  */
-export function TitleBar({ projectName, chapterTitle, rightActions, aiHint }) {
+export function TitleBar({ projectName, chapterTitle, currentChapter, rightActions, aiHint }) {
   const navigate = useNavigate();
   const { projectId } = useParams();
   const { state, dispatch } = useIDE();
@@ -50,6 +51,7 @@ export function TitleBar({ projectName, chapterTitle, rightActions, aiHint }) {
   const [newProjectName, setNewProjectName] = useState('');
   const [creating, setCreating] = useState(false);
   const [streamingEnabled, setStreamingEnabled] = useState(getStreamingPreference);
+  const [exportOpen, setExportOpen] = useState(false);
   const menuRef = useRef(null);
   const settingsRef = useRef(null);
 
@@ -333,6 +335,16 @@ export function TitleBar({ projectName, chapterTitle, rightActions, aiHint }) {
             </div>
           )}
         </div>
+
+        <button
+          onClick={() => setExportOpen(true)}
+          disabled={!projectId}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-[6px] text-sm text-[var(--vscode-fg-subtle)] hover:bg-[var(--vscode-list-hover)] hover:text-[var(--vscode-fg)] transition-colors disabled:opacity-50"
+          title={t('titleBar.export')}
+          aria-label={t('titleBar.export')}
+        >
+          <Download size={14} />
+        </button>
       </div>
 
       <div className="flex-1 flex items-center justify-center gap-2 text-sm">
@@ -361,6 +373,13 @@ export function TitleBar({ projectName, chapterTitle, rightActions, aiHint }) {
           <Bot size={14} />
         </button>
       </div>
+
+      <ExportDialog
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        projectId={projectId}
+        currentChapter={currentChapter}
+      />
     </div>
   );
 }

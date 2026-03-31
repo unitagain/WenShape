@@ -238,6 +238,21 @@ export const bindingsAPI = {
 };
 
 // ============================================================================
+// 导出 API / Export API
+// ============================================================================
+export const exportAPI = {
+  download: (
+    projectId: string,
+    data: {
+      chapter_ids: string[];
+      format: 'txt' | 'md' | 'docx';
+      include_chapter_titles?: boolean;
+    }
+  ): Promise<AxiosResponse<Blob>> =>
+    api.post(`${API_BASE}/projects/${projectId}/export`, data, { responseType: 'blob' }),
+};
+
+// ============================================================================
 // 配置 API / Config API
 // ============================================================================
 export const configAPI = {
