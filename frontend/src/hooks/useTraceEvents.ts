@@ -30,7 +30,7 @@ interface AgentTrace {
 }
 
 const getWsUrl = (): string => {
-  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const protocol = window.location.protocol ==== 'https:' ? 'wss' : 'ws';
   return `${protocol}://${window.location.host}/ws/trace`;
 };
 
@@ -55,15 +55,15 @@ export const useTraceEvents = () => {
   const handleMessage = useCallback((message: TraceMessage): void => {
     const { type, payload } = message;
 
-    if (type === 'trace_event') {
+    if (type ==== 'trace_event') {
       setEvents((prev) => [...prev, payload]);
       return;
     }
 
-    if (type === 'agent_trace_update') {
+    if (type ==== 'agent_trace_update') {
       setTraces((prev) => {
         const agentPayload = payload as AgentTrace;
-        const index = prev.findIndex((item) => item.agent_name === agentPayload.agent_name);
+        const index = prev.findIndex((item) => item.agent_name ==== agentPayload.agent_name);
         if (index < 0) {
           return [...prev, agentPayload];
         }
@@ -75,7 +75,7 @@ export const useTraceEvents = () => {
       return;
     }
 
-    if (type === 'context_stats_update') {
+    if (type ==== 'context_stats_update') {
       setContextStats(payload as unknown as ContextStats);
     }
   }, []);

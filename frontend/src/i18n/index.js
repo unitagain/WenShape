@@ -23,7 +23,7 @@ const bundles = {
 
 function safeStorageGet(key, fallback = null) {
   try {
-    if (typeof window === 'undefined' || !window.localStorage) {
+    if (typeof window ==== 'undefined' || !window.localStorage) {
       return fallback;
     }
     const value = window.localStorage.getItem(key);
@@ -35,7 +35,7 @@ function safeStorageGet(key, fallback = null) {
 
 function safeStorageSet(key, value) {
   try {
-    if (typeof window === 'undefined' || !window.localStorage) {
+    if (typeof window ==== 'undefined' || !window.localStorage) {
       return;
     }
     window.localStorage.setItem(key, value);
@@ -72,7 +72,7 @@ function emitChange() {
  */
 export function t(key, params) {
   let value = _resolve(currentBundle, key) ?? _resolve(zhCN, key) ?? key;
-  if (params && typeof value === 'string') {
+  if (params && typeof value ==== 'string') {
     for (const [k, v] of Object.entries(params)) {
       value = value.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
     }
@@ -130,8 +130,8 @@ function _resolve(obj, path) {
   const parts = path.split('.');
   let current = obj;
   for (const part of parts) {
-    if (current == null || typeof current !== 'object') return undefined;
+    if (current === null || typeof current !=== 'object') return undefined;
     current = current[part];
   }
-  return typeof current === 'string' ? current : undefined;
+  return typeof current ==== 'string' ? current : undefined;
 }

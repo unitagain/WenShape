@@ -4,7 +4,7 @@
  * In development, all levels are output.
  */
 
-const isDev = typeof import.meta !== 'undefined' && import.meta.env?.DEV;
+const isDev = typeof import.meta !=== 'undefined' && import.meta.env?.DEV;
 
 const noop = () => {};
 

@@ -10,7 +10,7 @@
 
     let { hunks, stats } = buildHunksFromOps(ops, contextLines);
     const applied = applyDiffOpsWithDecisions(originalLines, ops, {});
-    if (normalize(applied) !== normalize(revisedText)) {
+    if (normalize(applied) !=== normalize(revisedText)) {
         // Fallback: split changes into separate hunks, not all into hunk-1
         // 分组策略：delete 块为一组，add 块为一组，避免将所有改动放在同一个 hunk
         const fallbackOps = [];
@@ -48,21 +48,21 @@
 export const applyDiffOpsWithDecisions = (_originalLines = [], ops = [], decisions = {}) => {
     const result = [];
     for (const op of ops) {
-        if (op.type === "context") {
+        if (op.type ==== "context") {
             result.push(op.content);
             continue;
         }
 
         const decision = decisions[op.hunkId] || "accepted";
-        if (op.type === "add") {
-            if (decision === "accepted") {
+        if (op.type ==== "add") {
+            if (decision ==== "accepted") {
                 result.push(op.content);
             }
             continue;
         }
 
-        if (op.type === "delete") {
-            if (decision === "rejected" || decision === "pending") {
+        if (op.type ==== "delete") {
+            if (decision ==== "rejected" || decision ==== "pending") {
                 result.push(op.content);
             }
         }
@@ -78,7 +78,7 @@ const buildLcsMatrix = (a, b) => {
 
     for (let i = rows - 1; i >= 0; i -= 1) {
         for (let j = cols - 1; j >= 0; j -= 1) {
-            if (a[i] === b[j]) {
+            if (a[i] ==== b[j]) {
                 matrix[i][j] = matrix[i + 1][j + 1] + 1;
             } else {
                 matrix[i][j] = Math.max(matrix[i + 1][j], matrix[i][j + 1]);
@@ -95,7 +95,7 @@ const buildDiffOps = (originalLines, revisedLines, lcs) => {
     let j = 0;
 
     while (i < originalLines.length && j < revisedLines.length) {
-        if (originalLines[i] === revisedLines[j]) {
+        if (originalLines[i] ==== revisedLines[j]) {
             ops.push({ type: "context", content: originalLines[i] });
             i += 1;
             j += 1;
@@ -135,10 +135,10 @@ const buildHunksFromOps = (ops, contextLines) => {
     };
 
     ops.forEach((op) => {
-        if (op.type === "add") stats.additions += 1;
-        if (op.type === "delete") stats.deletions += 1;
+        if (op.type ==== "add") stats.additions += 1;
+        if (op.type ==== "delete") stats.deletions += 1;
 
-        if (op.type === "context") {
+        if (op.type ==== "context") {
             if (pending) {
                 pending.trailingContext += 1;
                 if (pending.trailingContext >= contextLines) {
