@@ -41,6 +41,8 @@ export default {
     unsavedNote: 'Warning: unsaved changes in this chapter will be permanently lost.',
     moveUp: 'Move up',
     moveDown: 'Move down',
+    selectAll: 'Select all',
+    deselectAll: 'Clear selection',
     unnamed: 'Untitled',
     optional: '(optional)',
     summary: 'Summary',
@@ -460,6 +462,22 @@ export default {
     outputStreamingDesc: 'Display content character by character in real time',
     outputDirect: 'Direct',
     outputDirectDesc: 'Wait for completion, then display all at once',
+    export: 'Export',
+  },
+
+  exportDialog: {
+    title: 'Export Chapters',
+    subtitle: 'Choose the chapters and format to export',
+    chapterScope: 'Chapters',
+    format: 'Format',
+    options: 'Options',
+    includeTitles: 'Include chapter titles',
+    selectionHint: '{count} chapters selected',
+    footerHint: 'Version 1 supports TXT, Markdown, and DOCX export.',
+    exporting: 'Exporting...',
+    noChapters: 'No chapters available for export',
+    loadFailed: 'Failed to load export data: {message}',
+    exportFailed: 'Export failed: {message}',
   },
 
   // ─── App root ────────────────────────────────────────────

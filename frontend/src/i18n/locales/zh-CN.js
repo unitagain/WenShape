@@ -466,6 +466,22 @@ export default {
     outputStreamingDesc: '逐字显示生成内容，实时感受写作过程',
     outputDirect: '直接输出',
     outputDirectDesc: '等待生成完成后一次性显示全部内容',
+    export: '导出',
+  },
+
+  exportDialog: {
+    title: '导出章节',
+    subtitle: '选择需要导出的章节与格式',
+    chapterScope: '导出章节',
+    format: '导出格式',
+    options: '导出选项',
+    includeTitles: '包含章节标题',
+    selectionHint: '已选择 {count} 个章节',
+    footerHint: '第一版支持 TXT、Markdown、DOCX 导出。',
+    exporting: '导出中...',
+    noChapters: '暂无可导出的章节',
+    loadFailed: '加载导出数据失败：{message}',
+    exportFailed: '导出失败：{message}',
   },
 
   // ─── App 根路由 ───────────────────────────────────────────

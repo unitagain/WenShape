@@ -1530,6 +1530,7 @@ function WritingSessionContent() {
 
     const titleBarProps = {
         projectName: project?.name,
+        currentChapter: chapterInfo.chapter,
         rightActions: saveAction,
         // Show Card Name in Title if card editing
         chapterTitle: status === 'card_editing'
