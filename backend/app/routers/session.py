@@ -12,12 +12,12 @@ License: PolyForm Noncommercial License 1.0.0
   feedback processing, and orchestrator lifecycle management.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Literal
 import time
 from collections import OrderedDict
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.orchestrator import Orchestrator, SessionStatus
 from app.routers.websocket import broadcast_progress
@@ -109,29 +109,46 @@ def get_orchestrator(project_id: str, request_language: Optional[str] = None) ->
 class StartSessionRequest(BaseModel):
     """Request body for starting a session."""
 
+    dialog_max_chars: Literal[2000, 6000] = Field(2000, description="Dialog max chars tier: 2000 | 6000")
     language: Optional[str] = Field(None, description="Writing language override: zh/en or locale-like values")
     chapter: str = Field(..., min_length=1, max_length=50, description="Chapter ID")
     chapter_title: str = Field(..., min_length=1, max_length=200, description="Chapter title")
-    chapter_goal: str = Field(..., min_length=1, max_length=2000, description="Chapter goal")
+    chapter_goal: str = Field(..., min_length=1, max_length=6000, description="Chapter goal")
     target_word_count: int = Field(3000, ge=100, le=50000, description="Target word count")
     character_names: Optional[List[str]] = Field(None, description="Character names")
+
+    @model_validator(mode="after")
+    def _validate_chapter_goal_by_tier(self):
+        max_chars = int(self.dialog_max_chars)
+        if len(self.chapter_goal or "") > max_chars:
+            raise ValueError(f"chapter_goal exceeds dialog_max_chars ({max_chars})")
+        return self
 
 
 class FeedbackRequest(BaseModel):
     """Request body for submitting feedback."""
 
+    dialog_max_chars: Literal[2000, 6000] = Field(2000, description="Dialog max chars tier: 2000 | 6000")
     chapter: str = Field(..., min_length=1, max_length=50, description="Chapter ID")
-    feedback: str = Field(..., min_length=1, max_length=10000, description="User feedback")
+    feedback: str = Field(..., min_length=1, max_length=6000, description="User feedback")
     action: str = Field("revise", description="Action: revise or confirm")
     rejected_entities: Optional[List[str]] = Field(None, description="Rejected entity names")
+
+    @model_validator(mode="after")
+    def _validate_feedback_by_tier(self):
+        max_chars = int(self.dialog_max_chars)
+        if len(self.feedback or "") > max_chars:
+            raise ValueError(f"feedback exceeds dialog_max_chars ({max_chars})")
+        return self
 
 
 class EditSuggestRequest(BaseModel):
     """Request body for suggesting an edit on current (unsaved) content."""
 
+    dialog_max_chars: Literal[2000, 6000] = Field(2000, description="Dialog max chars tier: 2000 | 6000")
     chapter: Optional[str] = Field(None, max_length=50, description="Chapter ID (optional)")
     content: str = Field(..., min_length=1, max_length=500000, description="Current content to edit (may be unsaved)")
-    instruction: str = Field(..., min_length=1, max_length=10000, description="Edit instruction")
+    instruction: str = Field(..., min_length=1, max_length=6000, description="Edit instruction")
     rejected_entities: Optional[List[str]] = Field(None, description="Rejected entity names")
     context_mode: Optional[str] = Field(
         "quick",
@@ -150,6 +167,13 @@ class EditSuggestRequest(BaseModel):
         description="Optional selection end offset (0-based, in normalized \\n text).",
     )
 
+    @model_validator(mode="after")
+    def _validate_instruction_by_tier(self):
+        max_chars = int(self.dialog_max_chars)
+        if len(self.instruction or "") > max_chars:
+            raise ValueError(f"instruction exceeds dialog_max_chars ({max_chars})")
+        return self
+
 
 class QuestionAnswer(BaseModel):
     """Answer to a pre-writing question."""
@@ -161,6 +185,7 @@ class QuestionAnswer(BaseModel):
 
 class AnswerQuestionsRequest(BaseModel):
     """Request to answer pre-writing questions."""
+    dialog_max_chars: Literal[2000, 6000] = Field(2000, description="Dialog max chars tier: 2000 | 6000")
     language: Optional[str] = Field(None, description="Writing language override: zh/en or locale-like values")
     chapter: str = Field(..., description="Chapter ID")
     chapter_title: str = Field(..., description="Chapter title")
@@ -168,6 +193,13 @@ class AnswerQuestionsRequest(BaseModel):
     target_word_count: int = Field(3000, description="Target word count")
     character_names: Optional[List[str]] = Field(None, description="Character names")
     answers: List[QuestionAnswer] = Field(default_factory=list, description="Answers")
+
+    @model_validator(mode="after")
+    def _validate_chapter_goal_by_tier(self):
+        max_chars = int(self.dialog_max_chars)
+        if len(self.chapter_goal or "") > max_chars:
+            raise ValueError(f"chapter_goal exceeds dialog_max_chars ({max_chars})")
+        return self
 
 
 @router.post("/projects/{project_id}/session/start")

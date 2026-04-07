@@ -203,6 +203,7 @@ const AgentStatusPanel = ({
     onRejectAllDiff = () => { },
     onApplySelectedDiff = () => { },
     onSubmit = () => { },
+    inputMaxLength = 2000,
     isGenerating = false,
     isCancelling = false,
     onCancel = () => { },
@@ -735,6 +736,7 @@ const AgentStatusPanel = ({
                             onKeyDown={handleKeyDown}
                             onFocus={(e) => updateInputHeight(e.target)}
                             disabled={inputDisabled}
+                            maxLength={inputMaxLength}
                             placeholder={mode === 'edit' ? t('agentPanel.inputPlaceholderEdit') : t('agentPanel.inputPlaceholderCreate')}
                             className={[
                                 "flex-1 px-3 py-2 text-sm border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)] resize-none min-h-[40px] overscroll-contain",
@@ -767,6 +769,9 @@ const AgentStatusPanel = ({
                                 <Send size={16} />
                             </button>
                         )}
+                    </div>
+                    <div className="flex justify-end text-[10px] text-[var(--vscode-fg-subtle)]">
+                        {`${inputValue.length}/${inputMaxLength}`}
                     </div>
                 </div>
             </div>

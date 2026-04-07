@@ -24,7 +24,7 @@ import SaveMenu from '../components/writing/SaveMenu';
 import logger from '../utils/logger';
 import { extractErrorDetail } from '../utils/extractError';
 import { useLocale } from '../i18n';
-import { getStreamingPreference } from '../components/ide/TitleBar';
+import { getStreamingPreference, getDialogMaxCharsPreference } from '../components/ide/TitleBar';
 import { useWritingSessionRealtime } from '../hooks/useWritingSessionRealtime';
 import {
     fetchChapterContent,
@@ -132,6 +132,7 @@ function WritingSessionContent() {
     const [, setSceneBrief] = useState(null);
     const [, setDraftV1] = useState(null);
     const [feedback, setFeedback] = useState('');
+    const [dialogMaxChars, setDialogMaxChars] = useState(getDialogMaxCharsPreference);
     const [diffReview, setDiffReview] = useState(null);
     const [diffDecisions, setDiffDecisions] = useState({});
     const lastFeedbackRef = useRef('');
@@ -146,6 +147,24 @@ function WritingSessionContent() {
     const [showPreWriteDialog, setShowPreWriteDialog] = useState(false);
     const [preWriteQuestions, setPreWriteQuestions] = useState([]);
     const [pendingStartPayload, setPendingStartPayload] = useState(null);
+
+    useEffect(() => {
+        const onDialogMaxCharsChanged = (event) => {
+            const next = Number(event?.detail);
+            setDialogMaxChars(next === 6000 ? 6000 : 2000);
+        };
+        const onStorage = (event) => {
+            if (event?.key !== 'wenshape_dialog_max_chars') return;
+            const next = Number(event?.newValue);
+            setDialogMaxChars(next === 6000 ? 6000 : 2000);
+        };
+        window.addEventListener('wenshape:dialog-max-chars', onDialogMaxCharsChanged);
+        window.addEventListener('storage', onStorage);
+        return () => {
+            window.removeEventListener('wenshape:dialog-max-chars', onDialogMaxCharsChanged);
+            window.removeEventListener('storage', onStorage);
+        };
+    }, []);
 
     const manualContentByChapterRef = useRef(manualContentByChapter);
     useEffect(() => {
@@ -846,7 +865,8 @@ function WritingSessionContent() {
                 chapter: String(chapter),
                 chapter_title: chapterInfo.chapter_title || t('writingSession.chapterFallback').replace('{n}', chapter),
                 chapter_goal: instruction || 'Auto-generation based on context',
-                target_word_count: 3000
+                target_word_count: 3000,
+                dialog_max_chars: dialogMaxChars,
             };
 
             const resp = await sessionAPI.start(projectId, payload);
@@ -1116,6 +1136,7 @@ function WritingSessionContent() {
                 content: baseContent,
                 instruction: textToSubmit,
                 context_mode: editContextMode,
+                dialog_max_chars: dialogMaxChars,
             };
 
             if (editScope === 'selection' && attachedSelection?.text?.trim()) {
@@ -1504,6 +1525,7 @@ function WritingSessionContent() {
         handleSubmitFeedback,
         countWords,
         writingLanguage,
+        dialogMaxChars,
     }} />;
 
     const saveBusy = isSaving || analysisLoading || analysisSaving;

@@ -12,6 +12,8 @@ import ExportDialog from './ExportDialog';
 const fetcher = (fn) => fn().then((res) => res.data);
 
 const STREAMING_PREF_KEY = 'wenshape_output_streaming';
+const DIALOG_MAX_CHARS_PREF_KEY = 'wenshape_dialog_max_chars';
+const DIALOG_MAX_CHARS_VALUES = new Set([2000, 6000]);
 
 /** Read streaming preference from localStorage (default: true) */
 export function getStreamingPreference() {
@@ -36,6 +38,31 @@ function setStreamingPreference(enabled) {
   } catch { /* ignore */ }
 }
 
+/** Read dialog max chars preference from localStorage (default: 2000) */
+export function getDialogMaxCharsPreference() {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return 2000;
+    }
+    const raw = Number(window.localStorage.getItem(DIALOG_MAX_CHARS_PREF_KEY));
+    return DIALOG_MAX_CHARS_VALUES.has(raw) ? raw : 2000;
+  } catch {
+    return 2000;
+  }
+}
+
+/** Write dialog max chars preference to localStorage and notify same-tab listeners */
+function setDialogMaxCharsPreference(maxChars) {
+  const normalized = DIALOG_MAX_CHARS_VALUES.has(Number(maxChars)) ? Number(maxChars) : 2000;
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return;
+    }
+    window.localStorage.setItem(DIALOG_MAX_CHARS_PREF_KEY, String(normalized));
+    window.dispatchEvent(new CustomEvent('wenshape:dialog-max-chars', { detail: normalized }));
+  } catch { /* ignore */ }
+}
+
 /**
  * TitleBar - 顶部标题栏
  * 负责项目切换与快捷操作入口，不改变业务逻辑。
@@ -51,6 +78,7 @@ export function TitleBar({ projectName, chapterTitle, currentChapter, rightActio
   const [newProjectName, setNewProjectName] = useState('');
   const [creating, setCreating] = useState(false);
   const [streamingEnabled, setStreamingEnabled] = useState(getStreamingPreference);
+  const [dialogMaxChars, setDialogMaxChars] = useState(getDialogMaxCharsPreference);
   const [exportOpen, setExportOpen] = useState(false);
   const menuRef = useRef(null);
   const settingsRef = useRef(null);
@@ -90,6 +118,12 @@ export function TitleBar({ projectName, chapterTitle, currentChapter, rightActio
   const handleToggleStreaming = (enabled) => {
     setStreamingEnabled(enabled);
     setStreamingPreference(enabled);
+  };
+
+  const handleDialogMaxCharsChange = (nextValue) => {
+    const normalized = DIALOG_MAX_CHARS_VALUES.has(Number(nextValue)) ? Number(nextValue) : 2000;
+    setDialogMaxChars(normalized);
+    setDialogMaxCharsPreference(normalized);
   };
 
   const handleCreateProject = async () => {
@@ -305,6 +339,31 @@ export function TitleBar({ projectName, chapterTitle, currentChapter, rightActio
                   {opt.locale === locale && <Check size={14} className="text-[var(--vscode-focus-border)] flex-shrink-0" />}
                 </button>
               ))}
+
+              <div className="border-t border-[var(--vscode-sidebar-border)] my-1" />
+
+              {/* Dialog max chars section */}
+              <div className="px-3 py-2 text-[10px] font-bold text-[var(--vscode-fg-subtle)] uppercase tracking-wider">
+                {t('titleBar.settingsDialogMaxChars')}
+              </div>
+              <button
+                onClick={() => handleDialogMaxCharsChange(2000)}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] transition-colors"
+              >
+                <div className="flex-1 text-left">
+                  <div className="text-sm">{t('titleBar.dialogMaxChars2k')}</div>
+                </div>
+                {dialogMaxChars === 2000 && <Check size={14} className="text-[var(--vscode-focus-border)] flex-shrink-0" />}
+              </button>
+              <button
+                onClick={() => handleDialogMaxCharsChange(6000)}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] transition-colors"
+              >
+                <div className="flex-1 text-left">
+                  <div className="text-sm">{t('titleBar.dialogMaxChars6k')}</div>
+                </div>
+                {dialogMaxChars === 6000 && <Check size={14} className="text-[var(--vscode-focus-border)] flex-shrink-0" />}
+              </button>
 
               <div className="border-t border-[var(--vscode-sidebar-border)] my-1" />
 

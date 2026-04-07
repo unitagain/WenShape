@@ -37,6 +37,7 @@ export default function WritingSessionAgentPanel({ vm }) {
     handleSubmitFeedback,
     countWords,
     writingLanguage,
+    dialogMaxChars,
   } = vm;
 
   return (
@@ -118,6 +119,7 @@ export default function WritingSessionAgentPanel({ vm }) {
 
           handleSubmitFeedback(text);
         }}
+        inputMaxLength={dialogMaxChars}
       />
     </AgentsPanel>
   );
