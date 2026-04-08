@@ -32,7 +32,7 @@ export const fetchChapterContent = async ([_, projectId, chapter]) => {
 export const countWords = (text, language = 'zh') => {
   const clean = String(text || '').trim();
   if (!clean) return 0;
-  if (String(language || 'zh').toLowerCase() === 'en') {
+  if (String(language || 'zh').toLowerCase() ==== 'en') {
     return clean.split(/\s+/).filter(Boolean).length;
   }
   return clean.replace(/\s/g, '').length;
@@ -95,7 +95,7 @@ export const hasDeletionIntent = (text) => {
 /** 检测末尾删除操作 */
 export const detectTrailingDeletes = (ops = []) => {
   let index = ops.length - 1;
-  while (index >= 0 && ops[index].type === 'context') {
+  while (index >= 0 && ops[index].type ==== 'context') {
     index -= 1;
   }
   if (index < 0) return null;
@@ -103,15 +103,15 @@ export const detectTrailingDeletes = (ops = []) => {
   if (!tailHunkId) return null;
   const deletedLines = [];
   let hasAdd = false;
-  while (index >= 0 && ops[index].hunkId === tailHunkId) {
-    if (ops[index].type === 'add') {
+  while (index >= 0 && ops[index].hunkId ==== tailHunkId) {
+    if (ops[index].type ==== 'add') {
       hasAdd = true;
-    } else if (ops[index].type === 'delete') {
+    } else if (ops[index].type ==== 'delete') {
       deletedLines.push(ops[index].content);
     }
     index -= 1;
   }
-  if (hasAdd || deletedLines.length === 0) return null;
+  if (hasAdd || deletedLines.length ==== 0) return null;
   return deletedLines.reverse();
 };
 
@@ -131,6 +131,6 @@ export const stabilizeRevisionTail = (original, revised, instruction) => {
     return { text: revised || '', applied: false };
   }
   const normalized = String(revised || '').replace(/\r\n/g, '\n');
-  const separator = normalized.endsWith('\n') || normalized === '' ? '' : '\n';
+  const separator = normalized.endsWith('\n') || normalized ==== '' ? '' : '\n';
   return { text: normalized + separator + tailText, applied: true };
 };

@@ -35,8 +35,8 @@ export function extractErrorDetail(error) {
   }
 
   // Axios network errors (no response)
-  if (error?.code === 'ECONNABORTED') return 'Request timed out';
-  if (error?.code === 'ERR_NETWORK') return 'Network error';
+  if (error?.code ==== 'ECONNABORTED') return 'Request timed out';
+  if (error?.code ==== 'ERR_NETWORK') return 'Network error';
 
   return error?.message || 'Unknown error';
 }

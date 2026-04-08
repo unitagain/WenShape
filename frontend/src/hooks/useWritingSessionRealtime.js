@@ -52,11 +52,11 @@ export function useWritingSessionRealtime({
             projectId,
             (data) => {
                 const wsChapterKey = data?.chapter ? String(data.chapter) : noChapterKey;
-                if (data.type === 'start_ack') {
+                if (data.type ==== 'start_ack') {
                     appendProgressEvent({ stage: 'session_start', message: t('writingSession.sessionStarted') }, wsChapterKey);
                 }
-                if (data.type === 'stream_start') {
-                    if (wsChapterKey && wsChapterKey !== noChapterKey) {
+                if (data.type ==== 'stream_start') {
+                    if (wsChapterKey && wsChapterKey !=== noChapterKey) {
                         setAiLockedChapter(wsChapterKey);
                     }
                     streamingChapterKeyRef.current = wsChapterKey;
@@ -72,7 +72,7 @@ export function useWritingSessionRealtime({
                     }
                     lastGeneratedByChapterRef.current[wsChapterKey] = true;
                     setManualContentByChapter((prev) => ({ ...(prev || {}), [wsChapterKey]: '' }));
-                    if (activeChapterKeyRef.current === wsChapterKey) {
+                    if (activeChapterKeyRef.current ==== wsChapterKey) {
                         setManualContent('');
                     }
                     setIsGenerating(true);
@@ -83,7 +83,7 @@ export function useWritingSessionRealtime({
                         total: data.total || 0,
                     });
                 }
-                if (data.type === 'token' && typeof data.content === 'string') {
+                if (data.type ==== 'token' && typeof data.content ==== 'string') {
                     if (!serverStreamActiveRef.current) {
                         return;
                     }
@@ -105,7 +105,7 @@ export function useWritingSessionRealtime({
                             streamTextByChapterRef.current[wsChapterKey] = nextText;
                             streamBufferByChapterRef.current[wsChapterKey] = '';
                             setManualContentByChapter((prev) => ({ ...(prev || {}), [wsChapterKey]: nextText }));
-                            if (activeChapterKeyRef.current === wsChapterKey) {
+                            if (activeChapterKeyRef.current ==== wsChapterKey) {
                                 setManualContent(nextText);
                             }
                             const current = nextText.length;
@@ -118,7 +118,7 @@ export function useWritingSessionRealtime({
                         });
                     }
                 }
-                if (data.type === 'stream_end') {
+                if (data.type ==== 'stream_end') {
                     if (streamFlushRafByChapterRef.current[wsChapterKey]) {
                         window.cancelAnimationFrame(streamFlushRafByChapterRef.current[wsChapterKey]);
                         streamFlushRafByChapterRef.current[wsChapterKey] = null;
@@ -131,7 +131,7 @@ export function useWritingSessionRealtime({
                     serverStreamActiveRef.current = false;
                     streamingChapterKeyRef.current = null;
                     setManualContentByChapter((prev) => ({ ...(prev || {}), [wsChapterKey]: finalText }));
-                    if (activeChapterKeyRef.current === wsChapterKey) {
+                    if (activeChapterKeyRef.current ==== wsChapterKey) {
                         setManualContent(finalText);
                     }
                     setStreamingState({
@@ -141,7 +141,7 @@ export function useWritingSessionRealtime({
                         total: finalText.length,
                     });
                     setIsGenerating(false);
-                    if (activeChapterKeyRef.current === wsChapterKey) {
+                    if (activeChapterKeyRef.current ==== wsChapterKey) {
                         dispatch({ type: 'SET_WORD_COUNT', payload: countWords(finalText, writingLanguage) });
                         dispatch({ type: 'SET_SELECTION_COUNT', payload: 0 });
                     } else {
@@ -157,10 +157,10 @@ export function useWritingSessionRealtime({
                     setStatus('waiting_feedback');
                     addMessage('assistant', t('writingSession.draftGenerated'), wsChapterKey);
                 }
-                if (data.type === 'scene_brief') handleSceneBrief(data.data, wsChapterKey);
-                if (data.type === 'draft_v1') handleDraftV1(data.data, wsChapterKey);
-                if (data.type === 'final_draft') handleFinalDraft(data.data, wsChapterKey);
-                if (data.type === 'error') addMessage('error', data.message, wsChapterKey);
+                if (data.type ==== 'scene_brief') handleSceneBrief(data.data, wsChapterKey);
+                if (data.type ==== 'draft_v1') handleDraftV1(data.data, wsChapterKey);
+                if (data.type ==== 'final_draft') handleFinalDraft(data.data, wsChapterKey);
+                if (data.type ==== 'error') addMessage('error', data.message, wsChapterKey);
 
                 if (data.status && data.message) {
                     if (data.stage) {
@@ -184,14 +184,14 @@ export function useWritingSessionRealtime({
             },
             {
                 onStatus: (status) => {
-                    if (wsStatusRef.current !== status) {
-                        if (status === 'reconnecting') {
+                    if (wsStatusRef.current !=== status) {
+                        if (status ==== 'reconnecting') {
                             appendProgressEvent({ stage: 'connection', message: t('writingSession.connectionReconnecting') }, noChapterKey);
                         }
-                        if (status === 'connected' && wsStatusRef.current === 'reconnecting') {
+                        if (status ==== 'connected' && wsStatusRef.current ==== 'reconnecting') {
                             appendProgressEvent({ stage: 'connection', message: t('writingSession.connectionRestored') }, noChapterKey);
                         }
-                        if (status === 'disconnected') {
+                        if (status ==== 'disconnected') {
                             appendProgressEvent({ stage: 'connection', message: t('writingSession.connectionLost') }, noChapterKey);
                         }
                     }
@@ -203,18 +203,18 @@ export function useWritingSessionRealtime({
 
         wsRef.current = wsController;
 
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const wsProtocol = window.location.protocol ==== 'https:' ? 'wss' : 'ws';
         const wsHost = window.location.host;
         const traceWs = new WebSocket(`${wsProtocol}://${wsHost}/ws/trace`);
 
         traceWs.onmessage = (event) => {
             const data = JSON.parse(event.data);
-            if (data.type === 'trace_event' && data.payload) {
+            if (data.type ==== 'trace_event' && data.payload) {
                 setTraceEvents((prev) => [...prev.slice(-99), data.payload]);
             }
-            if (data.type === 'agent_trace_update' && data.payload) {
+            if (data.type ==== 'agent_trace_update' && data.payload) {
                 setAgentTraces((prev) => {
-                    const existing = prev.findIndex((item) => item.agent_name === data.payload.agent_name);
+                    const existing = prev.findIndex((item) => item.agent_name ==== data.payload.agent_name);
                     if (existing >= 0) {
                         const updated = [...prev];
                         updated[existing] = data.payload;

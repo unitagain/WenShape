@@ -26,9 +26,9 @@ import type {
   LLMProfile,
 } from './types';
 
-// ============================================================================
+// =============================================================================
 // API 配置 / API Configuration
-// ============================================================================
+// =============================================================================
 const API_BASE = '/api';
 
 // 普通 API 调用超时时间（30 秒）
@@ -40,9 +40,9 @@ const LLM_TIMEOUT = 300000;
 // 批量操作的超时时间（30 分钟）
 const LLM_SYNC_TIMEOUT = 1800000;
 
-// ============================================================================
+// =============================================================================
 // Axios 实例 / Axios Instances
-// ============================================================================
+// =============================================================================
 
 /**
  * 普通 API 实例 - Default timeout
@@ -58,9 +58,9 @@ const llmApi = axios.create({
   timeout: LLM_TIMEOUT,
 });
 
-// ============================================================================
+// =============================================================================
 // 项目 API / Projects API
-// ============================================================================
+// =============================================================================
 export const projectsAPI = {
   list: (): Promise<AxiosResponse<Project[]>> => api.get(`${API_BASE}/projects`),
   get: (id: string): Promise<AxiosResponse<Project>> => api.get(`${API_BASE}/projects/${id}`),
@@ -69,9 +69,9 @@ export const projectsAPI = {
   delete: (id: string): Promise<AxiosResponse> => api.delete(`${API_BASE}/projects/${id}`),
 };
 
-// ============================================================================
+// =============================================================================
 // 卡片 API / Cards API
-// ============================================================================
+// =============================================================================
 export const cardsAPI = {
   // 角色卡片操作 / Character cards
   listCharactersIndex: (projectId: string): Promise<AxiosResponse<CharacterCard[]>> =>
@@ -109,9 +109,9 @@ export const cardsAPI = {
     llmApi.post(`${API_BASE}/projects/${projectId}/cards/style/extract`, data),
 };
 
-// ============================================================================
+// =============================================================================
 // 会话 API / Session API（LLM 操作使用扩展超时）
-// ============================================================================
+// =============================================================================
 export const sessionAPI = {
   start: (projectId: string, data: Record<string, unknown>): Promise<AxiosResponse> =>
     llmApi.post(`${API_BASE}/projects/${projectId}/session/start`, data, { timeout: LLM_SYNC_TIMEOUT }),
@@ -137,17 +137,17 @@ export const sessionAPI = {
     llmApi.post(`${API_BASE}/projects/${projectId}/session/save-analysis-batch`, data, { timeout: LLM_SYNC_TIMEOUT }),
 };
 
-// ============================================================================
+// =============================================================================
 // 记忆包 API / Memory Pack API
-// ============================================================================
+// =============================================================================
 export const memoryPackAPI = {
   getStatus: (projectId: string, chapter: string): Promise<AxiosResponse> =>
     api.get(`${API_BASE}/projects/${projectId}/memory-pack/${chapter}`),
 };
 
-// ============================================================================
+// =============================================================================
 // 草稿 API / Drafts API
-// ============================================================================
+// =============================================================================
 export const draftsAPI = {
   listChapters: (projectId: string): Promise<AxiosResponse<string[]>> =>
     api.get(`${API_BASE}/projects/${projectId}/drafts`),
@@ -175,9 +175,9 @@ export const draftsAPI = {
     api.put(`${API_BASE}/projects/${projectId}/drafts/${chapter}/autosave`, data),
 };
 
-// ============================================================================
+// =============================================================================
 // 卷 API / Volumes API
-// ============================================================================
+// =============================================================================
 export const volumesAPI = {
   list: (projectId: string): Promise<AxiosResponse<Volume[]>> =>
     api.get(`${API_BASE}/projects/${projectId}/volumes`),
@@ -195,9 +195,9 @@ export const volumesAPI = {
     llmApi.post(`${API_BASE}/projects/${projectId}/volumes/refresh-summaries`, { volume_ids: volumeIds }),
 };
 
-// ============================================================================
+// =============================================================================
 // 事实表 / Canon API（事实管理）
-// ============================================================================
+// =============================================================================
 export const canonAPI = {
   createManual: (projectId: string, data: Record<string, unknown>): Promise<AxiosResponse> =>
     api.post(`${API_BASE}/projects/${projectId}/canon/facts/manual`, data),
@@ -209,9 +209,9 @@ export const canonAPI = {
     api.get(`${API_BASE}/projects/${projectId}/facts/tree`),
 };
 
-// ============================================================================
+// =============================================================================
 // 证据 API / Evidence API
-// ============================================================================
+// =============================================================================
 export const evidenceAPI = {
   search: (projectId: string, data: Record<string, unknown>): Promise<AxiosResponse> =>
     api.post(`${API_BASE}/projects/${projectId}/evidence/search`, data),
@@ -219,17 +219,17 @@ export const evidenceAPI = {
     llmApi.post(`${API_BASE}/projects/${projectId}/evidence/rebuild`),
 };
 
-// ============================================================================
+// =============================================================================
 // 文本分块 API / Text Chunks API
-// ============================================================================
+// =============================================================================
 export const textChunksAPI = {
   rebuild: (projectId: string): Promise<AxiosResponse> =>
     llmApi.post(`${API_BASE}/projects/${projectId}/text-chunks/rebuild`),
 };
 
-// ============================================================================
+// =============================================================================
 // 绑定 API / Bindings API
-// ============================================================================
+// =============================================================================
 export const bindingsAPI = {
   get: (projectId: string, chapter: string): Promise<AxiosResponse> =>
     api.get(`${API_BASE}/projects/${projectId}/bindings/${chapter}`),
@@ -237,9 +237,9 @@ export const bindingsAPI = {
     llmApi.post(`${API_BASE}/projects/${projectId}/bindings/rebuild-batch`, data),
 };
 
-// ============================================================================
+// =============================================================================
 // 导出 API / Export API
-// ============================================================================
+// =============================================================================
 export const exportAPI = {
   download: (
     projectId: string,
@@ -252,9 +252,9 @@ export const exportAPI = {
     api.post(`${API_BASE}/projects/${projectId}/export`, data, { responseType: 'blob' }),
 };
 
-// ============================================================================
+// =============================================================================
 // 配置 API / Config API
-// ============================================================================
+// =============================================================================
 export const configAPI = {
   getProfiles: (): Promise<AxiosResponse<LLMProfile[]>> =>
     api.get(`${API_BASE}/config/llm/profiles`),
@@ -272,9 +272,9 @@ export const configAPI = {
     api.post(`${API_BASE}/config/llm/assignments`, data),
 };
 
-// ============================================================================
+// =============================================================================
 // WebSocket 配置和类型定义 / WebSocket Configuration
-// ============================================================================
+// =============================================================================
 
 /**
  * WebSocket 连接状态类型
@@ -300,9 +300,9 @@ interface WebSocketHandle {
   close: () => void;
 }
 
-// ============================================================================
+// =============================================================================
 // WebSocket 工厂函数 / WebSocket Factory
-// ============================================================================
+// =============================================================================
 
 /**
  * 创建实时会话 WebSocket 连接
@@ -331,7 +331,7 @@ export const createWebSocket = (
   options: WebSocketOptions = {},
 ): WebSocketHandle => {
   // 根据当前协议确定 WebSocket 协议（ws 或 wss）
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsProtocol = window.location.protocol ==== 'https:' ? 'wss' : 'ws';
   const wsHost = window.location.host;
 
   const {
