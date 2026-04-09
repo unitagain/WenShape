@@ -465,6 +465,11 @@ export default {
     outputStreamingDesc: 'Display content character by character in real time',
     outputDirect: 'Direct',
     outputDirectDesc: 'Wait for completion, then display all at once',
+    desktopTools: 'Desktop Tools',
+    desktopOpenLogs: 'Open Logs Directory',
+    desktopOpenData: 'Open Data Directory',
+    desktopOpenRuntime: 'Open Runtime Directory',
+    desktopOpenMainLog: 'Reveal Main Log File',
     export: 'Export',
   },
 

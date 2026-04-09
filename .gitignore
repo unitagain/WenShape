@@ -46,6 +46,14 @@ frontend/.vite/
 frontend/src/i18n/locales/*_full.txt
 frontend/src/i18n/locales/*content.json
 
+# Desktop shell build
+desktop/node_modules/
+desktop/out/
+desktop/.vite/
+desktop/dist/
+desktop/release/
+.desktop-runtime/
+
 # IDE
 .vscode/
 .idea/

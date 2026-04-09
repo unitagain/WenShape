@@ -469,6 +469,11 @@ export default {
     outputStreamingDesc: '逐字显示生成内容，实时感受写作过程',
     outputDirect: '直接输出',
     outputDirectDesc: '等待生成完成后一次性显示全部内容',
+    desktopTools: '桌面工具',
+    desktopOpenLogs: '打开日志目录',
+    desktopOpenData: '打开数据目录',
+    desktopOpenRuntime: '打开运行目录',
+    desktopOpenMainLog: '定位主日志文件',
     export: '导出',
   },
 

@@ -1,0 +1,27 @@
+{
+  "name": "wenshape-desktop-shell",
+  "version": "0.1.0-phase3",
+  "private": true,
+  "description": "Electron desktop shell for WenShape.",
+  "type": "module",
+  "main": "./main/index.cjs",
+  "packageManager": "npm@10",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "doctor": "node ./scripts/doctor.mjs",
+    "dev": "node ./scripts/dev.mjs",
+    "start:shell": "electron-forge start",
+    "package": "electron-forge package",
+    "make": "electron-forge make"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.11.1",
+    "@electron-forge/maker-squirrel": "^7.11.1",
+    "@electron-forge/maker-zip": "^7.11.1",
+    "electron": "^41.2.0",
+    "picomatch": "^2.3.1",
+    "pump": "^3.0.3"
+  }
+}

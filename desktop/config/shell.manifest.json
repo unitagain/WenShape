@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "phase": "phase3",
+  "product": {
+    "name": "WenShape",
+    "displayName": "WenShape",
+    "executableName": "WenShape",
+    "bundleId": "com.wenshape.desktop",
+    "protocol": "wenshape"
+  },
+  "toolchain": {
+    "shell": "electron",
+    "renderer": "vite-react",
+    "sidecar": "python-fastapi",
+    "packageManager": "npm",
+    "minimumNode": "20.11.0",
+    "minimumPython": "3.10"
+  },
+  "releaseChannels": [
+    "dev",
+    "beta",
+    "stable"
+  ],
+  "platformTargets": {
+    "windows": [
+      "squirrel"
+    ],
+    "macos": [
+      "zip",
+      "dmg"
+    ]
+  },
+  "paths": {
+    "frontendRoot": "../frontend",
+    "backendRoot": "../backend",
+    "desktopRoot": ".",
+    "dataDirName": "data",
+    "logsDirName": "logs",
+    "configDirName": "config",
+    "cacheDirName": "cache",
+    "crashDirName": "crashes"
+  },
+  "sidecar": {
+    "transport": "http+websocket",
+    "authMode": "loopback-session-token",
+    "portSelection": "dynamic"
+  }
+}

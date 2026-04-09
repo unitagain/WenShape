@@ -8,6 +8,7 @@ import { cn } from '../ui/core';
 import logger from '../../utils/logger';
 import { useLocale } from '../../i18n';
 import ExportDialog from './ExportDialog';
+import { isDesktopRuntime, openDesktopDataDirectory, openDesktopLogsDirectory, openDesktopMainLog, openDesktopRuntimeDirectory } from '../../utils/desktop';
 
 const fetcher = (fn) => fn().then((res) => res.data);
 
@@ -82,6 +83,7 @@ export function TitleBar({ projectName, chapterTitle, currentChapter, rightActio
   const [exportOpen, setExportOpen] = useState(false);
   const menuRef = useRef(null);
   const settingsRef = useRef(null);
+  const desktopRuntime = isDesktopRuntime();
 
   const { data: projects = [] } = useSWR(
     'all-projects',
@@ -124,6 +126,23 @@ export function TitleBar({ projectName, chapterTitle, currentChapter, rightActio
     const normalized = DIALOG_MAX_CHARS_VALUES.has(Number(nextValue)) ? Number(nextValue) : 2000;
     setDialogMaxChars(normalized);
     setDialogMaxCharsPreference(normalized);
+  };
+
+  const handleDesktopAction = async (action) => {
+    try {
+      if (action === 'logs') {
+        await openDesktopLogsDirectory();
+      } else if (action === 'data') {
+        await openDesktopDataDirectory();
+      } else if (action === 'runtime') {
+        await openDesktopRuntimeDirectory();
+      } else if (action === 'main-log') {
+        await openDesktopMainLog();
+      }
+      setSettingsOpen(false);
+    } catch (error) {
+      logger.error('Failed to execute desktop action:', error);
+    }
   };
 
   const handleCreateProject = async () => {
@@ -391,6 +410,39 @@ export function TitleBar({ projectName, chapterTitle, currentChapter, rightActio
                 </div>
                 {!streamingEnabled && <Check size={14} className="text-[var(--vscode-focus-border)] flex-shrink-0" />}
               </button>
+
+              {desktopRuntime && (
+                <>
+                  <div className="border-t border-[var(--vscode-sidebar-border)] my-1" />
+                  <div className="px-3 py-2 text-[10px] font-bold text-[var(--vscode-fg-subtle)] uppercase tracking-wider">
+                    {t('titleBar.desktopTools')}
+                  </div>
+                  <button
+                    onClick={() => handleDesktopAction('logs')}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] transition-colors"
+                  >
+                    <span className="flex-1 text-left">{t('titleBar.desktopOpenLogs')}</span>
+                  </button>
+                  <button
+                    onClick={() => handleDesktopAction('data')}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] transition-colors"
+                  >
+                    <span className="flex-1 text-left">{t('titleBar.desktopOpenData')}</span>
+                  </button>
+                  <button
+                    onClick={() => handleDesktopAction('runtime')}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] transition-colors"
+                  >
+                    <span className="flex-1 text-left">{t('titleBar.desktopOpenRuntime')}</span>
+                  </button>
+                  <button
+                    onClick={() => handleDesktopAction('main-log')}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--vscode-fg)] hover:bg-[var(--vscode-list-hover)] transition-colors"
+                  >
+                    <span className="flex-1 text-left">{t('titleBar.desktopOpenMainLog')}</span>
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>

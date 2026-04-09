@@ -3,6 +3,7 @@ WenShape FastAPI Application Entry Point
 FastAPI 应用入口
 """
 
+import os
 import sys
 import re
 from contextlib import asynccontextmanager
@@ -194,7 +195,7 @@ async def run_startup_tasks():
 
     # Auto-open browser in a separate task (non-blocking)
     # Crucial: Any exception here must not crash the server
-    if getattr(sys, 'frozen', False):
+    if getattr(sys, 'frozen', False) and not os.getenv("WENSHAPE_DESKTOP_SHELL"):
         # Packaged mode: open a loopback URL (0.0.0.0 is only a bind address)
         url = f"http://127.0.0.1:{settings.port}"
         logger.info(f"Auto-opening browser at {url}")

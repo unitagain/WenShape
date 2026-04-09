@@ -4,6 +4,7 @@ import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import ErrorBoundary from './components/ErrorBoundary';
 import { projectsAPI } from './api';
 import { t } from './i18n';
+import { subscribeDesktopCommands, subscribeDesktopDeepLinks } from './utils/desktop';
 import logger from './utils/logger';
 
 const WritingSession = lazy(() => import('./pages/WritingSession'));
@@ -70,6 +71,68 @@ function RedirectToSession() {
 }
 
 function App() {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const unsubscribeCommands = subscribeDesktopCommands(async (event) => {
+      if (!event || typeof event !== 'object') {
+        return;
+      }
+
+      if (event.type === 'import-text-file') {
+        const content = String(event.payload?.content || '');
+        const name = event.payload?.name || 'imported.txt';
+        try {
+          if (content && navigator?.clipboard?.writeText) {
+            await navigator.clipboard.writeText(content);
+            window.alert(`已导入文本文件“${name}”，内容已复制到剪贴板，可直接粘贴到正文或对话框。`);
+            return;
+          }
+        } catch (error) {
+          logger.warn('Failed to copy imported text to clipboard:', error);
+        }
+
+        window.alert(`已读取文本文件“${name}”，但当前环境无法自动写入剪贴板。`);
+        return;
+      }
+
+      if (event.type === 'choose-export-path') {
+        const filePath = event.payload?.filePath;
+        if (!filePath) {
+          return;
+        }
+
+        try {
+          if (navigator?.clipboard?.writeText) {
+            await navigator.clipboard.writeText(filePath);
+          }
+        } catch (error) {
+          logger.warn('Failed to copy export path to clipboard:', error);
+        }
+
+        window.alert(`已选择导出路径：\n${filePath}`);
+      }
+    });
+
+    const unsubscribeDeepLinks = subscribeDesktopDeepLinks((payload) => {
+      if (!payload || typeof payload !== 'object') {
+        return;
+      }
+
+      if (payload.route) {
+        navigate(payload.route);
+        return;
+      }
+
+      logger.info('Received desktop deep link:', payload);
+    });
+
+    return () => {
+      unsubscribeCommands();
+      unsubscribeDeepLinks();
+    };
+  }, [navigate]);
+
   return (
     <ErrorBoundary>
       <Suspense fallback={<LoadingScreen />}>

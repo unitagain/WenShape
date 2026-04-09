@@ -1,14 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_data_files
 
-datas = [('F:\\Github-WenShape\\WenShape-main\\backend\\static', 'static'), ('F:\\Github-WenShape\\WenShape-main\\backend\\config.yaml', '.')]
+datas = [('F:\\Github-WenShape-develop\\backend\\static', 'static'), ('F:\\Github-WenShape-develop\\backend\\config.yaml', '.')]
 datas += collect_data_files('tiktoken_ext.openai_public')
 datas += collect_data_files('tiktoken_ext')
 
 
 a = Analysis(
-    ['F:\\Github-WenShape\\WenShape-main\\backend\\app\\main.py'],
-    pathex=['F:\\Github-WenShape\\WenShape-main\\backend'],
+    ['F:\\Github-WenShape-develop\\backend\\app\\main.py'],
+    pathex=['F:\\Github-WenShape-develop\\backend'],
     binaries=[],
     datas=datas,
     hiddenimports=['uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto', 'uvicorn.protocols', 'uvicorn.protocols.http', 'uvicorn.protocols.http.auto', 'uvicorn.lifespan', 'uvicorn.lifespan.on', 'tiktoken', 'tiktoken_ext.openai_public', 'tiktoken_ext', 'aiohttp'],
