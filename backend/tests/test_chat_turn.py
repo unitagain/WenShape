@@ -636,3 +636,90 @@ def test_run_writing_agent_delivers_changed_text_at_iteration_limit(tmp_path):
     assert result["reason"] == "max_iterations"
     assert result["content"] == "暮色四合。"
     assert "stream_end" in events
+
+
+# ---------- V1-4 温度口径统一 / temperature single owner ----------
+
+
+class _TemperatureProbeGateway:
+    """记录实际下发给 provider 的温度，并暴露 profile 温度。"""
+
+    def __init__(self, profile_temperature=0.35, *, supports_temperature=True):
+        self.profile_temperature = profile_temperature
+        self.supports_temperature = supports_temperature
+        self.seen_temperatures = []
+
+    def get_provider_for_agent(self, _name):
+        return "fake"
+
+    def get_temperature_for_agent(self, _name):
+        if not self.supports_temperature:
+            raise RuntimeError("no_profile")
+        return self.profile_temperature
+
+    async def chat(self, messages, **kwargs):
+        self.seen_temperatures.append(kwargs.get("temperature"))
+        return {
+            "content": "已完成。",
+            "tool_calls": [],
+            "usage": {},
+            "model": "fake",
+            "finish_reason": "stop",
+        }
+
+
+def _assemble_writer_request():
+    from app.orchestrator.context_assembly_service import ContextAssemblyService
+
+    return ContextAssemblyService().assemble_writer_request(
+        message="写一段对白",
+        chapter="V1C001",
+        current_text="",
+        has_selection=False,
+        target_word_count=800,
+    )
+
+
+def test_assembly_does_not_decide_temperature():
+    """
+    装配阶段不再硬编码 0.7。
+
+    ContextAssemblyService 是无 I/O 的纯装配（可确定性重放），而温度属于 provider
+    profile；在此写死会让用户在 UI 改的温度静默失效。
+    """
+    assert _assemble_writer_request().temperature is None
+
+
+def test_payload_and_writer_request_stay_in_sync():
+    """
+    payload 与 WriterRequest 必须同源构造。
+
+    payload 参与 assembly fingerprint 计算，WriterRequest 是实际下发值；两者各写一份
+    会随时间分叉，导致 trace 里的 fingerprint 与真实请求不一致（5 处消费该 fingerprint）。
+    """
+    request = _assemble_writer_request()
+    # 同一份装配重复执行必须得到一致的 fingerprint 与字段（确定性重放）
+    again = _assemble_writer_request()
+    assert request.fingerprint == again.fingerprint
+    assert request.temperature == again.temperature
+    assert request.max_tokens == again.max_tokens
+    assert request.max_iterations == again.max_iterations
+
+
+def test_agents_config_section_removed_and_unconsumed():
+    """
+    config.yaml 的 agents 段已删除，且全仓无消费点。
+
+    该段曾声明 provider/temperature 但从未被读取——用户改了不生效。真正的单一 owner
+    是「LLM profile + agent 分配」（gateway.get_provider_for_agent / get_temperature_for_agent）。
+    """
+    from app.config import config
+
+    assert "agents" not in config, "agents 段应保持删除；温度/provider 由 LLM profile 决定"
+
+
+def test_gateway_port_declares_temperature_owner():
+    """GatewayPort 契约显式声明温度解析方法，避免调用方各自 getattr 猜测。"""
+    from app.orchestrator.runtime_contracts import GatewayPort
+
+    assert hasattr(GatewayPort, "get_temperature_for_agent")

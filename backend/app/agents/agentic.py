@@ -50,6 +50,23 @@ def _parse_tool_args(arguments: Any) -> Dict[str, Any]:
         return {}
 
 
+def _argument_fingerprint(arguments: Any) -> str:
+    """
+    生成与「参数写法」无关、只与「参数取值」有关的稳定指纹。
+
+    Stable fingerprint that depends on argument *values*, not on their serialization.
+
+    同一批参数可能以 dict 或 JSON 字符串到达，键序也可能不同；直接对原始形态取哈希
+    会把等价调用误判为不同调用，使重复检测漏报。
+    """
+    parsed = _parse_tool_args(arguments)
+    try:
+        return json.dumps(parsed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        # 参数含不可序列化对象时退化为原始形态：宁可漏报，不可误报。
+        return str(arguments or "")
+
+
 def _partial_json_string(arguments: str, key: str) -> str:
     """Decode a complete or in-progress JSON string field for provisional streaming."""
     match = re.search(rf'"{re.escape(key)}"\s*:\s*"', str(arguments or ""))
@@ -173,6 +190,11 @@ async def run_agentic_chat(
     degradations: List[Dict[str, Any]] = []
     last_response: Dict[str, Any] = {}
     iterations = 0
+    # 轻量 doom loop 防护：记录 (工具名, 参数指纹) → 已调用次数。
+    # 判据取「重复调用」而非「失败次数」，因为部分工具（如 edit_lines 未命中）
+    # 走的是正常返回而非 tool_error，按失败计数恰好漏掉最该抓的场景；
+    # 而确定性工具用同一组参数重复调用必得同一结果——重复本身即无进展。
+    repeated_calls: Dict[str, int] = {}
     stream_tool_buffers: Dict[int, Dict[str, str]] = {}
     stream_provisional_lengths: Dict[int, int] = {}
     streamed_thinking = False
@@ -321,7 +343,15 @@ async def run_agentic_chat(
             artifact_ref="run_agentic_chat:schemas",
         )
 
-    for _ in range(max(1, max_iterations)):
+    # 预算只计「实质轮次」：协议性催促（模型该收尾却没调 finish_turn）不扣预算。
+    # 那类往返是合同开销、不是工作进展；让它吃掉预算会把「差一步就完成」直接推成 incomplete
+    # （plan.md §10.3 V2-3 的 6 轮推演即为此场景）。仍设总轮次硬上限防止无限循环。
+    budget = max(1, max_iterations)
+    spent = 0
+    hard_limit = budget * 2 + 4
+    turns = 0
+    while spent < budget and turns < hard_limit:
+        turns += 1
         try:
             resp = await provider_chat(tools=schemas)
         except asyncio.CancelledError:
@@ -338,6 +368,7 @@ async def run_agentic_chat(
             error_payload = envelope(exc)
             return finish(AgentRunStatus.FAILED, error=error_payload, reason="provider_failure")
         iterations += 1
+        spent += 1
         last_response = dict(resp or {})
         is_anthropic = str(resp.get("provider") or "").lower() == "anthropic"
 
@@ -373,6 +404,9 @@ async def run_agentic_chat(
                         "content": "请不要继续解释；现在必须调用 finish_turn 提交本轮变化类型、摘要和事实候选。",
                     }
                 )
+                # 退回本轮预算：这是协议性催促，不是工作进展（见循环入口注释）。
+                # 由 hard_limit 兜底，模型若反复不收尾仍会终止而非空转。
+                spent -= 1
                 continue
             visible_response = dict(resp or {})
             visible_response["content"] = visible_content
@@ -436,6 +470,7 @@ async def run_agentic_chat(
 
         # 执行工具并回灌结果（Anthropic 用单条 user 消息聚合 tool_result 块）
         anthropic_results: List[Dict[str, Any]] = []
+        repeat_notices: List[tuple] = []
         terminal_tool_called = False
         input_required_payload: Optional[Dict[str, Any]] = None
         for tc in execution_tool_calls:
@@ -531,6 +566,16 @@ async def run_agentic_chat(
                 output = tool_error_text(name, exc)
                 status = ToolExecutionStatus.FAILED.value
                 tool_error = envelope(exc)
+
+            # 重复调用检测：同一 (工具, 参数) 第 2 次起，提示模型换策略。
+            # 提示**不写进 output**——工具输出要原样进入 artifact 与哈希，
+            # 折叠由 gateway 单独负责（见 test_agentic_metabolism 冻结的契约）；
+            # 这里只记录，稍后作为独立消息回灌，避免污染工具结果本身。
+            repeat_key = f"{name}:{output_sha256(_argument_fingerprint(arguments))}"
+            repeat_count = repeated_calls.get(repeat_key, 0) + 1
+            repeated_calls[repeat_key] = repeat_count
+            if repeat_count >= 2:
+                repeat_notices.append((name, repeat_count))
 
             output_hash = output_sha256(output)
             artifact_ref = ""
@@ -631,6 +676,32 @@ async def run_agentic_chat(
                     artifact_ref=str(anthropic_results[-1].get("_source_ref") or ""),
                 )
 
+        # 重复调用提示：作为独立 user 消息回灌，不混入工具结果（保持 tool 输出可原样折叠/哈希）。
+        # 只提示、不中断——先把换策略的机会交还模型，保留其自主性；是否升级为主动终止
+        # 待观测数据支持后再议。终态语义不变，不新增第五态。
+        if repeat_notices:
+            notice_lines = [
+                f"- {tool_name}：已用完全相同的参数调用 {count} 次，结果不会改变。"
+                for tool_name, count in repeat_notices
+            ]
+            notice_message = {
+                "role": "user",
+                "content": (
+                    "[repeated_call] 检测到重复调用：\n"
+                    + "\n".join(notice_lines)
+                    + "\n请换一种做法：换用其他工具、调整参数，或调用 finish_turn 说明当前进展与卡点。"
+                ),
+            }
+            msgs.append(notice_message)
+            if scope is not None and scope.source_closure_required:
+                scope.register_provider_payload(
+                    [notice_message],
+                    source_prefix="agentic.repeat_notice",
+                    selection_reason="agentic_repeated_call_nudge",
+                    artifact_ref="run_agentic_chat:repeat_notice",
+                )
+            repeat_notices.clear()
+
         if input_required_payload is not None:
             clarification_response = dict(resp or {})
             clarification_response.update(
@@ -660,5 +731,15 @@ async def run_agentic_chat(
                 reason="terminal_tool",
             )
 
-    logger.info("agentic loop hit max_iterations=%d; returning incomplete", max_iterations)
-    return finish(AgentRunStatus.INCOMPLETE, response=last_response, reason="max_iterations")
+    # 区分两种耗尽：预算用完（正常上限）vs 硬上限（模型反复不收尾，协议性空转）。
+    # 二者都是 incomplete——不把「没做完」伪装成 completed（§4 不变量）——但 reason 不同，
+    # 便于诊断到底是活儿太多还是模型不遵守收尾合同。
+    exhausted_reason = "max_iterations" if spent >= budget else "terminal_tool_never_called"
+    logger.info(
+        "agentic loop exhausted: reason=%s budget=%d spent=%d turns=%d",
+        exhausted_reason,
+        budget,
+        spent,
+        turns,
+    )
+    return finish(AgentRunStatus.INCOMPLETE, response=last_response, reason=exhausted_reason)

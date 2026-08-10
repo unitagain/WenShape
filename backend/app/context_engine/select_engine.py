@@ -100,6 +100,12 @@ class ContextSelectEngine:
         )
         configured_rerank_top_k = rerank_top_k if rerank_top_k is not None else retrieval_cfg.get("rerank_top_k", 16)
         self._rerank_top_k: int = max(1, int(configured_rerank_top_k))
+        # 语义降噪窗口：仅凭语义（词法零分）入选的候选数量上限。
+        # 默认 8：与主路径实际消费量同量级（plan 执行 top_k=8，query_canon 上限 20），
+        # 已实测——窗口取 30/20/12 与「不过滤」无差别（候选池本就在这个量级），
+        # 取 8 才真正生效：噪声语料下 recall 0.400 → 0.800，且在有区分度的嵌入下召回不变。
+        # 设为 0 可关闭纯语义召回；大于等于候选数时等价于不过滤。
+        self._semantic_top_n: int = max(0, int(retrieval_cfg.get("semantic_top_n", 8)))
         # 内容寻址的语义向量缓存（embed-once）：每个项目一个 VectorStore，按文本 sha1 存向量，
         # 落 canon/embeddings_cache.jsonl 跨查询复用，避免每次检索重嵌入全部候选。
         # Content-addressed embedding cache (embed-once), one VectorStore per project,
@@ -149,6 +155,7 @@ class ContextSelectEngine:
             "reranker_available": self.reranker is not None,
             "reranker_backend": type(self.reranker).__name__ if self.reranker is not None else None,
             "rerank_top_k": self._rerank_top_k,
+            "semantic_top_n": self._semantic_top_n,
         }
 
     # ========================================================================
@@ -318,6 +325,9 @@ class ContextSelectEngine:
             "future_facts_excluded": 0,
             "future_text_chunk_filter_active": bool(current_chapter and "text_chunk" in item_types),
             "future_text_chunks_excluded": 0,
+            # V1-3：语义降噪（名次截断）的剔除量，供诊断与 benchmark 观察
+            "semantic_denoise_active": bool(self._semantic_top_n >= 0),
+            "semantic_denoise_excluded": 0,
         }
         candidate_limit = self._get_candidate_limit(total_chapters)
         query_lower = query.lower()
@@ -650,14 +660,27 @@ class ContextSelectEngine:
             # _fuse_scores 按「原始候选下标」返回融合分；过滤后需重排为与新候选序等长的列表，
             # 两者类型不同（Dict[int, float] vs List[float]），用不同变量名保持契约清晰。
             fused_by_index = self._fuse_scores(candidates, sem_scores)
+            # 语义降噪：只保留语义名次前 N 的「词法零分」候选。
+            #
+            # 这里用「名次截断」而非「分数阈值」：嵌入空间是各向异性的，任意两段中文文本的
+            # cosine 相似度都稳定落在一个狭窄正区间内，绝对分数既不会为负、也缺乏区分度，
+            # 因此任何固定阈值要么全不命中（等于没过滤），要么误杀真实相关项。
+            # RRF 本就只消费名次，按名次截断与融合逻辑同构。
+            #
+            # Semantic denoising by rank cutoff, not score threshold: embedding spaces are
+            # anisotropic, so absolute cosine values sit in a narrow positive band and make
+            # any fixed threshold either a no-op or a source of false negatives.
+            semantic_keep = self._semantic_rank_cutoff(sem_scores, candidates)
             filtered_candidates = []
             filtered_scores = []
             for idx, item in enumerate(candidates):
                 lexical = float(item.metadata.get("_lex") or 0.0)
-                semantic_score = float(sem_scores[idx] or 0.0)
-                # 语义模式下仍拒绝“词法完全无关且语义相似度极低”的候选，
-                # 避免宽泛查询把历史角色卡批量注入上下文。
-                if lexical <= 0.0 and semantic_score < 0.0:
+                # 词法命中的候选一律保留——词法是确定性证据，不能被语义名次挤掉。
+                if lexical <= 0.0 and idx not in semantic_keep:
+                    if filter_trace is not None:
+                        filter_trace["semantic_denoise_excluded"] = (
+                            int(filter_trace.get("semantic_denoise_excluded") or 0) + 1
+                        )
                     continue
                 filtered_candidates.append(item)
                 filtered_scores.append(idx)
@@ -780,6 +803,23 @@ class ContextSelectEngine:
     def _fuse_scores(self, candidates: List[ContextItem], sem_scores: List[float]) -> Dict[int, float]:
         """融合词法名次与语义名次，返回 ``{idx: fused_score}``。"""
         return self.score_fusion.fuse(candidates, sem_scores)
+
+    def _semantic_rank_cutoff(self, sem_scores: List[float], candidates: List[ContextItem]) -> set:
+        """
+        返回允许「仅凭语义」入选的候选下标集合（语义名次前 N）。
+
+        Return indices allowed in on semantic evidence alone (top-N by semantic rank).
+
+        N=0 表示关闭纯语义召回（只保留词法命中项）；N 大于等于候选数时等价于不过滤。
+        取名次而非分数的理由见 ``_fuse_and_rank`` 中的说明。
+        """
+        limit = self._semantic_top_n
+        if limit <= 0:
+            return set()
+        if limit >= len(sem_scores):
+            return set(range(len(sem_scores)))
+        order = sorted(range(len(sem_scores)), key=lambda index: float(sem_scores[index] or 0.0), reverse=True)
+        return set(order[:limit])
 
     @staticmethod
     def _ranks(scores: List[float]) -> Dict[int, int]:

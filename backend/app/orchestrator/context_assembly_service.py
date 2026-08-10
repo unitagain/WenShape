@@ -16,7 +16,9 @@ from app.context_engine.turn_scope import current_turn_scope
 @dataclass(frozen=True)
 class WriterRequest:
     messages: List[Dict[str, Any]]
-    temperature: float
+    # None = 装配阶段不决定温度，由发起调用处按 provider profile 解析（见 assemble_writer_request）。
+    # None means assembly does not decide temperature; the caller resolves it from the profile.
+    temperature: Optional[float]
     max_tokens: int
     max_iterations: int
     fingerprint: str
@@ -201,11 +203,21 @@ class ContextAssemblyService:
                 selection_reason="writer_initial_assembly",
                 artifact_ref="ContextAssemblyService.assemble_writer_request",
             )
-        payload = {
+        # 单点构造：payload 参与 fingerprint 计算，WriterRequest 是实际下发值，
+        # 两者若各写一份会随时间分叉，导致 assembly fingerprint 与真实请求不一致。
+        # Build once: the payload feeds the fingerprint while WriterRequest is what actually
+        # ships, so duplicating these fields would let the fingerprint drift from reality.
+        #
+        # temperature 不在此解析：本服务是纯装配（无 I/O、可确定性重放），
+        # 而温度属于 provider profile，由持有 gateway 的 WritingService 在发起调用处解析
+        # （见 §V1-4）。None 表示「装配阶段不决定温度」，不是「用默认 0.7」。
+        temperature: Optional[float] = None
+        max_iterations = int(config.get("retrieval", {}).get("agentic_max_iterations", 4)) + 2
+        payload: Dict[str, Any] = {
             "messages": messages,
-            "temperature": 0.7,
+            "temperature": temperature,
             "max_tokens": requested_max,
-            "max_iterations": int(config.get("retrieval", {}).get("agentic_max_iterations", 4)) + 2,
+            "max_iterations": max_iterations,
         }
         available = ["prompt", "user_message", "chapter", "project_config"]
         pushed = list(available)
@@ -245,9 +257,9 @@ class ContextAssemblyService:
         ).hexdigest()
         return WriterRequest(
             messages=messages,
-            temperature=0.7,
+            temperature=temperature,
             max_tokens=requested_max,
-            max_iterations=int(config.get("retrieval", {}).get("agentic_max_iterations", 4)) + 2,
+            max_iterations=max_iterations,
             fingerprint=fingerprint,
             supply_report=supply_report,
         )

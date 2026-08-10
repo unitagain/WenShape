@@ -11,7 +11,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app.security.local_auth import LocalAuthMiddleware, LocalAuthPolicy
+from app.security.local_auth import LocalAuthMiddleware, LocalAuthPolicy, warn_if_exposed_without_auth
 from app.services.llm_config_service import LLMConfigService
 from app.utils.logger import RedactingFormatter
 
@@ -181,3 +181,48 @@ def test_config_api_and_validation_errors_never_return_secrets():
     assert invalid.status_code == 422
     assert secret not in invalid.text
     assert '"input"' not in invalid.text
+
+
+# --- V1-2: 监听地址与认证默认值 / listen address and auth defaults ---
+
+
+def test_default_bind_host_is_loopback():
+    """
+    默认监听回环地址。
+
+    开发模式下本地认证是条件启用的（无 token 即整体禁用）；若默认监听所有网卡，
+    同局域网内任何人都能无认证访问本机数据。需要局域网访问时显式设置 HOST。
+    """
+    from app.config import Settings
+
+    assert Settings().host == "127.0.0.1"
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost", ""])
+def test_no_warning_when_bound_to_loopback(monkeypatch, host):
+    monkeypatch.delenv("WENSHAPE_DESKTOP_SESSION_TOKEN", raising=False)
+    monkeypatch.delenv("WENSHAPE_REQUIRE_LOCAL_AUTH", raising=False)
+    assert warn_if_exposed_without_auth(host) == ""
+
+
+def test_no_warning_when_auth_enabled(monkeypatch):
+    """绑定 0.0.0.0 本身不危险——只要本地认证已启用。"""
+    monkeypatch.setenv("WENSHAPE_DESKTOP_SESSION_TOKEN", "a-real-token")
+    monkeypatch.delenv("WENSHAPE_REQUIRE_LOCAL_AUTH", raising=False)
+    assert warn_if_exposed_without_auth("0.0.0.0") == ""
+
+
+def test_warns_when_exposed_without_auth(monkeypatch):
+    """非回环 + 无认证：必须告警（但不阻断——局域网联调是正当需求）。"""
+    monkeypatch.delenv("WENSHAPE_DESKTOP_SESSION_TOKEN", raising=False)
+    monkeypatch.delenv("WENSHAPE_REQUIRE_LOCAL_AUTH", raising=False)
+    code = warn_if_exposed_without_auth("0.0.0.0")
+    assert code == "insecure_bind_without_local_auth"
+
+
+def test_require_local_auth_still_hard_fails_without_token(monkeypatch):
+    """既有强制机制不变：显式要求认证却无 token 时直接失败，不降级为告警。"""
+    monkeypatch.delenv("WENSHAPE_DESKTOP_SESSION_TOKEN", raising=False)
+    monkeypatch.setenv("WENSHAPE_REQUIRE_LOCAL_AUTH", "1")
+    with pytest.raises(RuntimeError, match="local_auth_token_required"):
+        warn_if_exposed_without_auth("0.0.0.0")

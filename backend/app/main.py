@@ -20,7 +20,8 @@ from app.config import config, settings
 from app.utils.logger import get_logger
 from app.llm_gateway.errors import LLMError
 from app.error_contract import error_envelope, normalize_error_code, status_code_for
-from app.security.local_auth import LocalAuthMiddleware
+from app.utils.path_safety import UnsafeIdentifierError
+from app.security.local_auth import LocalAuthMiddleware, warn_if_exposed_without_auth
 from app.security.headers import SecurityHeadersMiddleware
 from app.observability.otel import OpenTelemetryMiddleware
 from app.routers import (
@@ -86,6 +87,27 @@ app = FastAPI(
 # Add rate limiter to app state
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# 路径安全拒绝：属客户端输入错误，按 400 返回，不进入未处理异常通道。
+# 走 ExceptionMiddleware（不再抛出），避免把常规校验失败记成服务器错误并打印完整堆栈。
+@app.exception_handler(UnsafeIdentifierError)
+async def unsafe_identifier_handler(request: Request, exc: UnsafeIdentifierError):
+    """Reject unsafe path identifiers with a clean 400 (no filesystem path in the response)."""
+    request_id = request.headers.get("x-request-id") or f"req_{uuid.uuid4().hex}"
+    logger.warning(
+        "Rejected unsafe identifier on %s %s: code=%s reason=%s",
+        request.method,
+        request.url.path,
+        exc.code,
+        exc.metadata.get("reason", ""),
+    )
+    envelope = error_envelope(exc, request_id=request_id)
+    return JSONResponse(
+        status_code=status_code_for(exc),
+        content=envelope.to_dict(),
+        headers={"X-Request-ID": request_id},
+    )
 
 
 # Global exception handler — returns structured error details to clients
@@ -387,6 +409,9 @@ if __name__ == "__main__":
     # and reduce unnecessary firewall prompts.
     bind_host = "127.0.0.1" if is_frozen else settings.host
 
+    # 监听非回环 + 未启用本地认证 = 同网络内可无认证访问本机数据；告警但不阻断。
+    warn_if_exposed_without_auth(bind_host)
+
     def _port_available(host: str, port: int) -> bool:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -475,4 +500,5 @@ if __name__ == "__main__":
     else:
         # Dev: Run with reload
         logger.info("Running in Dev Mode")
+        warn_if_exposed_without_auth(settings.host)
         uvicorn.run("app.main:app", host=settings.host, port=chosen_port, reload=settings.debug)

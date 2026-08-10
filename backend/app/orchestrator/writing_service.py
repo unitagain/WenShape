@@ -297,6 +297,18 @@ class WritingService:
         if not provider:
             return failed_result("no_provider")
 
+        # 温度与 provider 同源解析：都来自该 agent 绑定的 LLM profile（用户可在 UI 修改）。
+        # 装配阶段（ContextAssemblyService）保持无 I/O 的纯函数，故不在那里决定温度；
+        # 解析失败时传 None，由 provider adapter 回退到 profile 自身的温度设置。
+        # Resolve temperature from the same owner as the provider: the agent's LLM profile.
+        temperature = request.temperature
+        if temperature is None:
+            try:
+                temperature = self.gateway.get_temperature_for_agent(self.writer.get_agent_name())
+            except Exception as exc:
+                logger.debug("temperature resolution degraded: %s", safe_error_code(exc))
+                temperature = None
+
         thinking_param = None
         if thinking or reasoning_level != "auto":
             builder = getattr(self.gateway, "thinking_param_for_agent", None)
@@ -313,7 +325,7 @@ class WritingService:
                 provider,
                 request.messages,
                 writing_tools,
-                temperature=request.temperature,
+                temperature=temperature,
                 max_tokens=request.max_tokens,
                 max_iterations=request.max_iterations,
                 on_event=on_event,

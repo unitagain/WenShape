@@ -10,6 +10,9 @@ from typing import Iterable
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 SESSION_HEADER = b"x-wenshape-session-token"
 
@@ -40,6 +43,34 @@ class LocalAuthPolicy:
             allowed_origins=_split_env("WENSHAPE_DESKTOP_ALLOWED_ORIGINS"),
             allowed_hosts=_split_env("WENSHAPE_DESKTOP_ALLOWED_HOSTS"),
         )
+
+
+def warn_if_exposed_without_auth(bind_host: str) -> str:
+    """
+    监听非回环地址却未启用本地认证时告警，返回稳定的告警码（未触发返回空串）。
+
+    Warn when bound to a non-loopback address without local auth; returns a stable
+    warning code ("" when the combination is safe).
+
+    这两个条件单独都不危险：绑定 0.0.0.0 是显式选择，无 token 在本机也无妨。
+    但**同时成立**时，同局域网内任何人都能无认证访问本机项目数据。
+    这里只告警不阻断——负责人可能确实需要局域网联调；要强制认证请设置
+    ``WENSHAPE_REQUIRE_LOCAL_AUTH=1``（该机制已存在，不新建第二套策略）。
+    """
+    host = (bind_host or "").strip()
+    loopback = {"127.0.0.1", "::1", "localhost", ""}
+    if host in loopback or LocalAuthPolicy.from_env().enabled:
+        return ""
+    code = "insecure_bind_without_local_auth"
+    logger.warning(
+        "监听 %s 但未启用本地认证：同网络内任何人可无认证访问本机数据。"
+        "如需强制认证请设置 WENSHAPE_REQUIRE_LOCAL_AUTH=1，或改回 HOST=127.0.0.1。"
+        " / Bound to %s without local auth: anyone on this network can reach local data unauthenticated.",
+        host,
+        host,
+        extra={"warning_code": code},
+    )
+    return code
 
 
 class LocalAuthMiddleware:

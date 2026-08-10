@@ -39,6 +39,120 @@ _MAX_CLARIFICATION_TEXT = 1000
 _MAX_CLARIFICATION_REASON = 400
 _MAX_CLARIFICATION_OPTIONS = 8
 
+# ---------------------------------------------------------------- edit 匹配 --
+# 模型复述原文时常有细微偏移（空白、全半角标点），精确匹配会失败，而失败会连锁消耗
+# 迭代预算（见 plan.md §10.3 V2）。这里按「偏移代价」从小到大逐层放宽，
+# **每层仍要求唯一命中**——不为了"匹配上"牺牲定位唯一性。
+#
+# Layered edit matching: models paraphrase whitespace and CJK/ASCII punctuation slightly.
+# Each layer still demands a unique hit; ambiguity is always rejected, never guessed.
+
+# 全角 → 半角标点。只收敛「同形异码」的标点，不动文字本身。
+_PUNCT_FOLD = {
+    "，": ",", "。": ".", "！": "!", "？": "?", "；": ";", "：": ":",
+    "（": "(", "）": ")", "【": "[", "】": "]", "《": "<", "》": ">",
+    "、": ",", "～": "~", "％": "%", "＃": "#", "＠": "@", "＆": "&",
+    "＊": "*", "＋": "+", "－": "-", "／": "/", "＼": "\\", "＝": "=",
+    "“": '"', "”": '"', "‘": "'", "’": "'", "－": "-", "—": "-", "–": "-",
+}
+
+_EDIT_LAYER_LABELS = {
+    "exact": "精确匹配",
+    "whitespace": "空白归一化",
+    "punctuation": "标点归一化",
+    "compact": "忽略空白",
+}
+
+
+class _EditMatch:
+    """一次 edit 定位结果：原文中的精确 [start, end) 区间 + 命中层级 + 命中次数。"""
+
+    __slots__ = ("start", "end", "layer", "count")
+
+    def __init__(self, start: int, end: int, layer: str, count: int):
+        self.start = start
+        self.end = end
+        self.layer = layer
+        self.count = count
+
+
+def _fold_punctuation(text: str) -> str:
+    return "".join(_PUNCT_FOLD.get(ch, ch) for ch in text)
+
+
+def _normalize_with_map(text: str, layer: str) -> tuple[str, List[int]]:
+    """
+    按层归一化，并返回「归一化位置 → 原文位置」的索引映射。
+
+    Normalize per layer and return a map from normalized offsets back to original offsets.
+
+    用索引映射而不是要求 1:1 等长，是因为最有价值的几层都会改变长度（空白折叠、去空白）。
+    有了映射，归一化空间里的匹配结果仍能还原为原文的精确区间，替换不会破坏原文格式。
+    """
+    if layer == "exact":
+        return text, list(range(len(text)))
+
+    fold_punct = layer in ("punctuation", "compact")
+    drop_space = layer == "compact"
+    out: List[str] = []
+    index_map: List[int] = []
+    prev_space = False
+    for position, ch in enumerate(text):
+        if ch.isspace() or ch == "　":
+            if drop_space:
+                continue
+            # 连续空白折叠为单个空格：吸收「多打/少打空格」这类常见的复述偏移。
+            if prev_space:
+                continue
+            out.append(" ")
+            index_map.append(position)
+            prev_space = True
+            continue
+        prev_space = False
+        out.append(_PUNCT_FOLD.get(ch, ch) if fold_punct else ch)
+        index_map.append(position)
+    return "".join(out), index_map
+
+
+def _find_unique(haystack: str, needle: str, layer: str) -> Optional[_EditMatch]:
+    """在归一化空间中定位，返回**原文**偏移；非唯一命中返回 count>1 的结果供调用方拒绝。"""
+    if not needle:
+        return None
+    folded_hay, index_map = _normalize_with_map(haystack, layer)
+    folded_needle, _ = _normalize_with_map(needle, layer)
+    # 归一化后 needle 首尾可能残留折叠空格，会阻止与正文中段对齐；此处按层语义裁掉。
+    if layer != "exact":
+        folded_needle = folded_needle.strip()
+    if not folded_needle:
+        return None
+    count = folded_hay.count(folded_needle)
+    if count == 0:
+        return None
+    start = folded_hay.find(folded_needle)
+    end = start + len(folded_needle)
+    # 映射回原文：末位取「最后一个归一字符对应的原文位置 + 1」，避免吞掉尾字。
+    original_start = index_map[start]
+    original_end = index_map[end - 1] + 1
+    return _EditMatch(original_start, original_end, layer, count)
+
+
+def _locate_edit_span(haystack: str, needle: str) -> Optional[_EditMatch]:
+    """
+    逐层定位 old_text 在正文中的精确区间。
+
+    Locate old_text within the prose, widening tolerance layer by layer.
+
+    层序（代价递增）：精确 → 空白归一化 → 全半角标点归一化 → 去空白紧凑匹配。
+    任一层唯一命中即返回；命中但不唯一则**立即返回**（不再放宽——更宽的层只会更模糊）。
+    末层去掉全部空白：中文正文行内空白基本无语义，而模型复述时最常见的偏移正是
+    「原文没有空格、复述里多打了空格」（如半角逗号后补空格），前几层的游程折叠救不了这种。
+    """
+    for layer in ("exact", "whitespace", "punctuation", "compact"):
+        match = _find_unique(haystack, needle, layer)
+        if match is not None:
+            return match
+    return None
+
 
 def normalize_clarification_questions(value: Any) -> List[Dict[str, Any]]:
     """Normalize model-provided questions at the tool boundary.
@@ -491,25 +605,35 @@ class WritingActionToolset:
         new_text = str(new_text or "")
         if not old_text:
             return "[edit_lines 需要 old_text]"
-        count = self.working_text.count(old_text)
-        if count != 1:
+        match = _locate_edit_span(self.working_text, old_text)
+        if match is None or match.count != 1:
             try:
                 from app.observability.usage_diagnostics import record_edit_miss
 
                 record_edit_miss()
             except Exception as exc:
                 logger.warning("Edit diagnostics failed: %s", type(exc).__name__)
-        if count == 0:
+        if match is None:
             return "未找到要替换的文本：old_text 未在当前正文中出现。请逐字核对原文，或改用 write_content 覆盖。"
-        if count > 1:
+        if match.count > 1:
             return (
-                f"old_text 在正文中出现 {count} 次、不唯一，无法安全定位。"
+                f"old_text 在正文中出现 {match.count} 次、不唯一，无法安全定位。"
                 "请提供更长、包含上下文的唯一片段后重试。"
             )
-        self.working_text = self.working_text.replace(old_text, new_text, 1)
-        self.actions.append({"action": "edit", "old_chars": len(old_text), "new_chars": len(new_text)})
-        delta = "删除" if not new_text else f"-{len(old_text)} +{len(new_text)} 字"
-        return f"已替换 1 处（{delta}）。当前正文共 {len(self.working_text)} 字。"
+        matched = self.working_text[match.start : match.end]
+        self.working_text = self.working_text[: match.start] + new_text + self.working_text[match.end :]
+        self.actions.append(
+            {
+                "action": "edit",
+                "old_chars": len(matched),
+                "new_chars": len(new_text),
+                "match_layer": match.layer,
+            }
+        )
+        delta = "删除" if not new_text else f"-{len(matched)} +{len(new_text)} 字"
+        # 命中层级可观测：非精确层说明模型给的片段与原文有偏移，便于诊断偏移模式。
+        hint = "" if match.layer == "exact" else f"（经 {_EDIT_LAYER_LABELS[match.layer]}定位）"
+        return f"已替换 1 处{hint}（{delta}）。当前正文共 {len(self.working_text)} 字。"
 
     @property
     def changed(self) -> bool:

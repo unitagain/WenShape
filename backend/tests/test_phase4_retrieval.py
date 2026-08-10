@@ -514,6 +514,7 @@ def test_retrieval_policy_overrides_are_explicit_and_validated():
         "reranker_available": False,
         "reranker_backend": None,
         "rerank_top_k": 7,
+        "semantic_top_n": 8,
     }
 
     try:
@@ -597,3 +598,105 @@ def test_canon_parser_extracts_relations_and_context(tmp_path):
     assert len(rels) == 1  # 空 subject 的三元组被跳过
     assert rels[0]["subject"] == "张三" and rels[0]["relation"] == "敌对"
     assert rels[0]["object"] == "李四" and rels[0]["chapter"] == "V3C005"
+
+
+# ------------------------------------------- V1-3 语义降噪（名次截断） -------
+
+
+class _FlatEmbedder:
+    """
+    各向异性嵌入的最小复现：任意文本都落在同一狭窄正区间，cosine 恒为正。
+
+    真实 BGE 模型即如此——「量子色动力学」与中文武侠写作的相似度也有 +0.25。
+    这正是原判据 ``semantic_score < 0.0`` 恒不命中、成为死代码的原因。
+    """
+
+    @staticmethod
+    def _vec(text):
+        # 长度驱动的微小差异：保证分数互不相同（可排名），但全部为正且区间狭窄。
+        bias = (len(str(text)) % 7) / 100.0
+        return [1.0, 0.20 + bias, 0.15]
+
+    async def embed(self, texts):
+        return [self._vec(t) for t in texts]
+
+
+def _noise_facts(count):
+    """构造一批与查询字面零重叠的事实（词法零分，只能靠语义入选）。"""
+    return [
+        Fact(id=f"N{i}", statement=f"无关设定条目{i}" + "补" * (i % 5), source="V1C001", introduced_in="V1C001")
+        for i in range(count)
+    ]
+
+
+def test_semantic_denoise_caps_lexically_irrelevant_candidates():
+    """
+    宽泛查询下，词法零分的候选只保留语义名次前 N 个，其余剔除并计入 trace。
+
+    这是原过滤器声明的意图（「避免宽泛查询把历史角色卡批量注入上下文」），
+    此前因判据取严格负数而从未生效。
+    """
+    engine = ContextSelectEngine(embeddings_service=_FlatEmbedder())
+    engine._semantic_top_n = 5
+    storage = _FakeFactStorage(_noise_facts(20))
+
+    results = asyncio.run(
+        engine.retrieval_select(project_id="p", query="恐惧", item_types=["fact"], storage=storage, top_k=50)
+    )
+    trace = engine.get_last_ranking_trace()
+
+    assert len(results) == 5, "词法零分候选应被截断到语义 top-N"
+    assert trace["filters"]["semantic_denoise_excluded"] == 15
+    assert trace["filters"]["semantic_denoise_active"] is True
+
+
+def test_semantic_denoise_never_drops_lexical_hits():
+    """
+    词法命中项是确定性证据，不受语义名次截断影响——即使 N 设为 0。
+
+    降噪只针对「纯靠语义混进来」的候选，不能让语义名次挤掉字面匹配的结果。
+    """
+    engine = ContextSelectEngine(embeddings_service=_FlatEmbedder())
+    engine._semantic_top_n = 0  # 关闭纯语义召回
+    facts = _noise_facts(10) + [
+        Fact(id="HIT", statement="主角的恐惧来源于童年", source="V1C001", introduced_in="V1C001")
+    ]
+    storage = _FakeFactStorage(facts)
+
+    results = asyncio.run(
+        engine.retrieval_select(project_id="p", query="恐惧", item_types=["fact"], storage=storage, top_k=50)
+    )
+
+    assert [r.id for r in results] == ["HIT"], "词法命中必须保留，纯语义候选被关闭"
+
+
+def test_semantic_denoise_disabled_when_window_exceeds_candidates():
+    """N ≥ 候选数时等价于不过滤，保持既有召回行为（能力降级而非行为突变）。"""
+    engine = ContextSelectEngine(embeddings_service=_FlatEmbedder())
+    engine._semantic_top_n = 999
+    storage = _FakeFactStorage(_noise_facts(12))
+
+    results = asyncio.run(
+        engine.retrieval_select(project_id="p", query="恐惧", item_types=["fact"], storage=storage, top_k=50)
+    )
+    trace = engine.get_last_ranking_trace()
+
+    assert len(results) == 12
+    assert trace["filters"]["semantic_denoise_excluded"] == 0
+
+
+def test_semantic_denoise_keeps_semantically_closest_items():
+    """截断保留的是语义名次最高的候选，不是任意 N 个（名次截断的正确性）。"""
+    engine = ContextSelectEngine(embeddings_service=_KeywordEmbedder())
+    engine._semantic_top_n = 1
+    # F1「攥紧拳头不敢回头」与查询「恐惧」字面零重叠但语义最近（同为恐惧向量）
+    storage = _FakeFactStorage(_fear_facts())
+
+    results = asyncio.run(
+        engine.retrieval_select(project_id="p", query="恐惧", item_types=["fact"], storage=storage, top_k=5)
+    )
+    ids = [r.id for r in results]
+
+    assert "F3" in ids, "词法命中项始终保留"
+    assert "F1" in ids, "语义最近的零词法候选应入选"
+    assert "F2" not in ids, "语义无关的天气条目应被截断"

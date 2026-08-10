@@ -31,6 +31,7 @@ from enum import Enum
 import aiofiles
 from app.storage.file_lock import get_file_lock
 from app.utils.logger import get_logger
+from app.utils.path_safety import validate_identifier, validate_path_within
 
 logger = get_logger(__name__)
 
@@ -176,17 +177,34 @@ class BaseStorage:
 
     def get_project_path(self, project_id: str) -> Path:
         """
-        获取项目目录路径
+        获取项目目录路径（强制路径安全校验）
 
-        Get project directory path.
+        Get project directory path (path safety enforced).
+
+        本方法是全部存储读写的**唯一路径收敛点**：所有路由都经此构造项目目录，
+        因此校验放在这里即可覆盖全部端点（读与写），而无需逐个修改路由——
+        逐路由修会漏，且新增路由会再次引入同类缺口。
+
+        校验为「拒绝式」：不合法的 project_id 直接抛异常，**绝不改写**。
+        若改写（如把 ``../../etc`` 规整为 ``etc``），越界请求会静默落到另一个
+        合法项目上，比直接报错更难被发现。
 
         Args:
             project_id: 项目ID / Project ID
 
         Returns:
             项目目录路径 / Project directory path
+
+        Raises:
+            UnsafeIdentifierError: project_id 不安全或路径逃逸数据目录
+                / If project_id is unsafe or the path escapes the data directory
         """
-        return self.data_dir / project_id
+        validate_identifier(project_id, field="project_id")
+        project_path = self.data_dir / project_id
+        # 纵深防御：字符串校验已排除遍历，此处再核对解析后的真实路径仍在 data_dir 内，
+        # 以覆盖符号链接等文件系统层面的逃逸。
+        validate_path_within(project_path, self.data_dir)
+        return project_path
 
     def ensure_dir(self, path: Path) -> None:
         """

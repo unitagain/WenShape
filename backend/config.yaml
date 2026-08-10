@@ -38,16 +38,10 @@ llm:
       temperature: 0.7
 
 # Agent Configuration / Agent 配置
-agents:
-  archivist:
-    provider: openai
-    temperature: 0.3
-  writer:
-    provider: anthropic
-    temperature: 0.7
-  editor:
-    provider: anthropic
-    temperature: 0.5
+# 已移除（V1-4）：此处曾有 agents.{archivist,writer,editor}.{provider,temperature}，
+# 但全仓零消费——agent 的 provider 与 temperature 实际来自「LLM profile + agent 分配」
+# （UI 可改，见 services/llm_config_service.py），由 gateway.get_provider_for_agent /
+# get_temperature_for_agent 单一解析。保留一份静默失效的配置比没有更糟：用户改了不生效。
 
 # Context Budget / 上下文预算
 context_budget:
@@ -124,6 +118,11 @@ gateway:
 # Retrieval Configuration / 检索配置
 retrieval:
   rerank_top_k: 16
+  # 语义降噪窗口：允许「仅凭语义」（词法零分）入选的候选数上限；词法命中项不受此限。
+  # 用名次截断而非分数阈值——嵌入空间各向异性，任意中文文本对的 cosine 都落在狭窄正区间，
+  # 固定阈值要么全不命中、要么误杀真实相关项。0=关闭纯语义召回；≥候选数=不过滤。
+  # 默认 8 与主路径消费量同量级；取 30/20/12 实测与不过滤无差别（等于没过滤）。
+  semantic_top_n: 8
   # 二阶段重排只允许使用真实 cross-encoder。旧“按 embedding cosine 重排”已被 benchmark 证明会损伤 recall，已移除。
   # 默认关闭：BAAI/bge-reranker-base 约 1.04GB；启用前必须通过跨语料质量/延迟 A/B。
   reranker:
@@ -133,7 +132,11 @@ retrieval:
     cache_dir: models/reranker
   # Writer 用工具按需取设定（agentic 即时检索）是默认主路径（能力降级：provider 不支持工具时回退到装配上下文）。
   # agentic 工具循环的最大轮数。
-  agentic_max_iterations: 4
+  # Writer agentic 工具循环的实质轮次预算（装配处 +2 后作为 max_iterations 下发）。
+  # 5：edit_lines 分层 fallback 后单次编辑的失败重试显著减少，协议性催促又已不计预算，
+  # 故只小幅上调给「读章 → 改 → 复核 → 收尾」这类正常链路留一格余量。
+  # 提高本值会线性抬高单轮 provider 调用次数上限与 token 成本上限。
+  agentic_max_iterations: 5
   # 支柱 7 · 自适应预算：canon 规模 ≤ 阈值时整体注入全部卡片+事实（免检索/免 agentic 导航），超过才走检索。
   full_canon_max_facts: 80
   full_canon_max_cards: 30

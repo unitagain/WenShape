@@ -102,7 +102,13 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    host: str = "0.0.0.0"
+    # 默认只监听回环地址：开发模式下本地认证是条件启用的（无 token 即整体禁用），
+    # 若同时监听所有网卡，同局域网内任何人都能无认证访问本机数据。
+    # 需要局域网访问（手机/另一台机器联调）时显式设置 HOST=0.0.0.0。
+    # Loopback by default: local auth is conditionally enabled (disabled without a token),
+    # so binding all interfaces would expose local data to the whole LAN unauthenticated.
+    # Set HOST=0.0.0.0 explicitly when LAN access is actually needed.
+    host: str = "127.0.0.1"
     port: int = 8000
     debug: bool = False
 
