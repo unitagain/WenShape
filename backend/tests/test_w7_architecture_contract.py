@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.eval.longform_benchmark import LongformBenchmarkHarness
+from evaluation.longform_benchmark import LongformBenchmarkHarness
 from app.llm_gateway.capabilities import CapabilityNegotiator
 from app.llm_gateway.contracts import ProviderUsage
 from app.llm_gateway.gateway import LLMGateway
@@ -13,17 +13,71 @@ from app.llm_gateway.provider_registry import ProviderRegistry
 from app.llm_gateway.telemetry import GatewayTelemetryPort
 from app.orchestrator.application_ports import OrchestratorApplicationPorts
 from app.orchestrator.orchestrator import Orchestrator
-from scripts.architecture_profile import _external_private_accesses, architecture_violations, build_architecture_profile
+from scripts.architecture_profile import (
+    _external_private_accesses,
+    _dependency_graph,
+    _unreachable_modules,
+    architecture_violations,
+    build_architecture_profile,
+)
 
 
 def test_architecture_has_no_dependency_cycles_or_external_private_accesses():
     profile = build_architecture_profile()
-    assert profile["schema_version"] == 3
+    assert profile["schema_version"] == 4
     assert profile["dependency_cycle_count"] == 0
     assert profile["dependency_cycles"] == []
     assert profile["external_private_accesses"] == []
     assert profile["change_fanout"]
     assert architecture_violations(profile) == []
+
+
+def test_architecture_has_no_unreachable_modules():
+    """评估 P5：从真实入口（app.main/routers/dependencies + tests/scripts/evaluation
+    的外部引用）出发的 import 可达性必须覆盖整个 app/——死模块直接挂门禁。
+
+    引用计数只能发现死叶子；working_memory_service→working_memory_helpers 这类
+    互相引用的死子图对引用计数是「活的」，只有可达性分析能抓到。
+    """
+    profile = build_architecture_profile()
+    assert profile["unreachable_modules"] == []
+    assert profile["unreachable_module_count"] == 0
+
+
+def test_unreachable_modules_flags_dead_subgraph_not_referenced_count():
+    """合成图回归：死子图（互相引用、无入口可达）必须被识别，活链路不受牵连。"""
+    graph = {
+        "app.main": {"app.services.alive"},
+        "app.services.alive": set(),
+        "app.services.dead": {"app.services.dead_helper"},
+        "app.services.dead_helper": {"app.services.dead"},
+    }
+    unreachable = _unreachable_modules(graph)
+    assert "app.services.dead" in unreachable
+    assert "app.services.dead_helper" in unreachable
+    assert "app.services.alive" not in unreachable
+    assert "app.main" not in unreachable
+
+
+def test_architecture_check_rejects_unreachable_modules():
+    violations = architecture_violations(
+        {
+            "dependency_cycles": [],
+            "external_private_accesses": [],
+            "unreachable_modules": ["app.services.dead"],
+        }
+    )
+    assert len(violations) == 1
+    assert violations[0].startswith("unreachable_modules:1:app.services.dead")
+
+
+def test_external_import_roots_cover_test_only_modules():
+    """被 tests/scripts/evaluation 独占引用的 app 模块不是死模块（口径与 U10-C2 一致）。"""
+    graph, _ = _dependency_graph()
+    unreachable = _unreachable_modules(graph)
+    # 若某模块只被测试引用，它会出现在 external roots 中而不在 unreachable 里。
+    # 用一个稳定样本断言：context_engine 测试对象不可达即说明根集合失效。
+    assert "app.context_engine.select_engine" not in unreachable
 
 
 def test_architecture_check_rejects_cycles_and_private_accesses():

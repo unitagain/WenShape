@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { createWebSocket } from '../api';
 import { getStreamingPreference } from '../components/ide/TitleBar';
+import { isKnownBaseline, readBaseline, seedBaseline } from '../lib/chapterBaseline';
 import { countWords } from '../utils/writingSessionHelpers';
 
 // 事件入口只做「解析」，不做「摘要」：工具参数/结果保持结构化交给渲染层分层展示。
@@ -53,6 +54,7 @@ export function useWritingSessionRealtime({
   writingLanguage,
   streamOriginalByChapterRef,
   onStreamFinalize,
+  onInputRequired,
 }) {
   useEffect(() => {
     if (!projectId) return;
@@ -78,10 +80,20 @@ export function useWritingSessionRealtime({
           }
           lastGeneratedByChapterRef.current[wsChapterKey] = true;
           setManualContentByChapter((prev) => {
-            if (streamOriginalByChapterRef?.current) {
-              streamOriginalByChapterRef.current[wsChapterKey] = String(prev?.[wsChapterKey] ?? '');
+            // 基线只在「本会话确实加载过这一章」时才成立。未加载过的章节（AI 直接写
+            // 一个没打开过的章节）拿不到原文，此时绝不能把基线伪造成空串——那会让
+            // 流式失败后的还原、以及后续的 diff 基线全部退化成「原文为空」。
+            const seeded = seedBaseline(streamOriginalByChapterRef?.current, wsChapterKey, prev?.[wsChapterKey]);
+            const next = { ...(prev || {}) };
+            if (seeded) {
+              // 基线已知 → 置空供流式逐 token 填充，中断时可原样还原。
+              next[wsChapterKey] = '';
+            } else {
+              // 基线未知 → 保持未知（移除条目），由服务端加载真实正文，
+              // 而不是留下一个会被当成权威原文的空串。
+              delete next[wsChapterKey];
             }
-            return { ...(prev || {}), [wsChapterKey]: '' };
+            return next;
           });
           if (activeChapterKeyRef.current === wsChapterKey) {
             setManualContent('');
@@ -142,13 +154,14 @@ export function useWritingSessionRealtime({
           serverStreamActiveRef.current = false;
           streamingChapterKeyRef.current = null;
           // 生成结束 → 落为 diff 提议（DiffReviewView 审阅采纳）；缺回调时退化为直接落正文。
-          if (data.auto_commit?.committed) {
-            setManualContentByChapter((prev) => ({ ...(prev || {}), [wsChapterKey]: finalText }));
-            if (activeChapterKeyRef.current === wsChapterKey) {
-              setManualContent(finalText);
-            }
-          } else if (typeof onStreamFinalize === 'function') {
-            onStreamFinalize(wsChapterKey, finalText, data.turn_effect || null, data.chapter_target || null);
+          if (typeof onStreamFinalize === 'function') {
+            onStreamFinalize(
+              wsChapterKey,
+              finalText,
+              data.turn_effect || null,
+              data.chapter_target || null,
+              Array.isArray(data.change_set || data.proposals) ? data.change_set || data.proposals : [],
+            );
           } else {
             setManualContentByChapter((prev) => ({ ...(prev || {}), [wsChapterKey]: finalText }));
             if (activeChapterKeyRef.current === wsChapterKey) {
@@ -169,13 +182,16 @@ export function useWritingSessionRealtime({
             pushNotice(t('writingSession.chapterDone').replace('{n}', wsChapterKey));
           }
           setStatus('waiting_feedback');
-          // 完成通知作为「轻量系统行」，不与 HTTP 返回的 agent 摘要竞争为第二条回复气泡，
-          // 避免「已生成草稿 + 摘要」重复冗杂。正文本身已在编辑器以 diff 呈现。
-          addMessage(
-            'system',
-            data.turn_effect?.message || t('writingSession.draftGenerated'),
-            wsChapterKey,
-          );
+          // stream_end 的 message 是 Agent 对本轮工作的真实答复，必须归类为 assistant；
+          // 保存/工具过程等 activity 不应冒充系统对话或进入模型历史。
+          // U9：message 为空时**不再补通用文案**。「草稿已生成…」是状态而非答复，
+          // 冒充 assistant 消息违反 U8「可见对话只含真实 user/assistant 消息」；
+          // 且 plan 多步执行时每步 stream_end 都会刷一条，夹在真实答复之间造成排布错乱。
+          // 状态改由任务 dock、工具轨迹与编辑器正文表达。
+          const answer = String(data.turn_effect?.message || '').trim();
+          if (answer) {
+            addMessage('assistant', answer, wsChapterKey);
+          }
         }
         // 收尾 provisional 原生流（O1-O7）：agent 边生成边把 write_content/edit_lines 参数
         // 以 provisional token 推入编辑器；若本轮最终不是「有改动的 stream_end」，后端会发
@@ -194,12 +210,18 @@ export function useWritingSessionRealtime({
           streamBufferByChapterRef.current[wsChapterKey] = '';
           streamTextByChapterRef.current[wsChapterKey] = '';
           // provisional token 已覆盖编辑器为半成品；无最终 diff 可交付时还原流式前原文。
-          const original = streamOriginalByChapterRef?.current?.[wsChapterKey];
-          if (typeof original === 'string') {
-            setManualContentByChapter((prev) => ({ ...(prev || {}), [wsChapterKey]: original }));
-            if (activeChapterKeyRef.current === wsChapterKey) {
-              setManualContent(original);
-            }
+          // 基线未知（该章本会话没加载过）时不猜测：移除缓存条目让服务端回填真实正文，
+          // 写入空串会把「没加载过」固化成「这一章是空的」。
+          const original = readBaseline(streamOriginalByChapterRef?.current, wsChapterKey);
+          const restorable = isKnownBaseline(original);
+          setManualContentByChapter((prev) => {
+            const next = { ...(prev || {}) };
+            if (restorable) next[wsChapterKey] = original;
+            else delete next[wsChapterKey];
+            return next;
+          });
+          if (restorable && activeChapterKeyRef.current === wsChapterKey) {
+            setManualContent(original);
           }
           setStreamingState({ active: false, progress: 0, current: 0, total: 0 });
           setIsGenerating(false);
@@ -267,6 +289,9 @@ export function useWritingSessionRealtime({
             window.dispatchEvent(new CustomEvent('wenshape:outline-updated'));
           }
         }
+        if (data.type === 'agent_input_required') {
+          onInputRequired?.(data);
+        }
 
         if (data.status && data.message) {
           if (data.stage) {
@@ -285,6 +310,13 @@ export function useWritingSessionRealtime({
               // plan 执行进度：后端已发 step_id/action，此前被白名单丢弃 → 前端只能显示文本。
               step_id: data.step_id,
               action: data.action,
+              // U9 · plan_step_done 的逐步终态元数据。后端只发元数据（资产 ID 与字符增减量），
+              // diff 正文经 execute_plan 的 HTTP 响应交付，不进 WS payload。
+              step_status: data.step_status,
+              terminal_state: data.terminal_state,
+              iterations: data.iterations,
+              error_code: data.error_code,
+              assets: data.assets,
             };
             appendProgressEvent(event, wsChapterKey);
           } else {
@@ -385,5 +417,6 @@ export function useWritingSessionRealtime({
     writingLanguage,
     streamOriginalByChapterRef,
     onStreamFinalize,
+    onInputRequired,
   ]);
 }

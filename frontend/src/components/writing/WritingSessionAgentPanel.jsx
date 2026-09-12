@@ -28,6 +28,9 @@ export default function WritingSessionAgentPanel({ vm }) {
     handleAcceptAllDiff,
     handleRejectAllDiff,
     handleApplySelectedDiff,
+    handleSelectDiffAsset,
+    handleAcceptDiffAsset,
+    handleRejectDiffAsset,
     handleChatSubmit,
     countWords,
     writingLanguage,
@@ -40,7 +43,7 @@ export default function WritingSessionAgentPanel({ vm }) {
     pendingPlan,
     planExecuting,
     planActiveStepId,
-    onExecutePlan,
+    planStepRuntime,
     onDismissPlan,
     clarification,
     onClarificationConfirm,
@@ -113,6 +116,9 @@ export default function WritingSessionAgentPanel({ vm }) {
         onAcceptAllDiff={handleAcceptAllDiff}
         onRejectAllDiff={handleRejectAllDiff}
         onApplySelectedDiff={handleApplySelectedDiff}
+        onSelectDiffAsset={handleSelectDiffAsset}
+        onAcceptDiffAsset={handleAcceptDiffAsset}
+        onRejectDiffAsset={handleRejectDiffAsset}
         onSubmit={(text) => handleChatSubmit(text)}
         inputMaxLength={dialogMaxChars}
         reasoningLevel={reasoningLevel}
@@ -123,7 +129,7 @@ export default function WritingSessionAgentPanel({ vm }) {
         pendingPlan={pendingPlan}
         planExecuting={planExecuting}
         planActiveStepId={planActiveStepId}
-        onExecutePlan={onExecutePlan}
+        planStepRuntime={planStepRuntime}
         onDismissPlan={onDismissPlan}
         clarification={clarification}
         onClarificationConfirm={onClarificationConfirm}

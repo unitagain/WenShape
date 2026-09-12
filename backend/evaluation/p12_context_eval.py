@@ -9,8 +9,8 @@ from typing import Any, Dict, Iterable, List
 
 from app.context_engine.memory_record import MemoryRecordV2, parse_string_list
 from app.error_contract import safe_error_code
-from app.eval.longform_statistics import cluster_bootstrap_mean_ci
-from app.eval.writing_judge import POINTWISE_PAIR_JUDGE_PROMPT_VERSION, run_pointwise_pair_judge_eval
+from evaluation.longform_statistics import cluster_bootstrap_mean_ci
+from evaluation.writing_judge import POINTWISE_PAIR_JUDGE_PROMPT_VERSION, run_pointwise_pair_judge_eval
 from app.utils.llm_output import parse_json_payload
 
 

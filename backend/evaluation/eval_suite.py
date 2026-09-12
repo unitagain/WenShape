@@ -21,13 +21,13 @@ from typing import Any, Dict, List
 from app.schemas.canon import Fact
 from app.context_engine.select_engine import ContextSelectEngine
 from app.context_engine.relation_graph import RelationGraph, Relation
-from app.eval.retrieval_eval import evaluate_retrieval_recall
+from evaluation.retrieval_eval import evaluate_retrieval_recall
 from app.storage.canon import CanonStorage
 from app.storage.creative_memory import CreativeMemoryStorage
 from app.storage.session_history import SessionHistoryStorage
 from app.utils.json_metrics import json_metrics_snapshot
 from app.utils.cache_metrics import cache_metrics_snapshot
-from app.eval.trace_replay import replay_trace_payload
+from evaluation.trace_replay import replay_trace_payload
 from app.context_engine.context_assembly import build_context_assembly_plan
 from app.context_engine.contextual_prefix import build_contextual_prefix, prefix_coverage
 from app.context_engine.procedural_knowledge import plan_skill_loadout

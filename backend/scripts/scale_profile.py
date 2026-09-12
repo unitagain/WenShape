@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.context_engine.select_engine import ContextSelectEngine
-from app.eval.campaign_store import CampaignStore
+from evaluation.campaign_store import CampaignStore
 from app.jobs.durable_queue import DurableTaskQueue
 from app.ops.project_maintenance import ProjectMaintenanceService
 from app.schemas.canon import Fact

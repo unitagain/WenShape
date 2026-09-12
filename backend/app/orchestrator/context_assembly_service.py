@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from app.config import config
-from app.context_engine.token_accounting import count_text_tokens
+from app.context_engine.token_accounting import count_provider_payload, count_text_tokens
 from app.context_engine.turn_scope import current_turn_scope
 
 
@@ -77,14 +77,21 @@ class ContextAssemblyService:
         existing_chapters: Optional[List[str]] = None,
         outline_push: str = "",
         relations_push: str = "",
+        style_push: str = "",
+        card_inventory_push: str = "",
+        memory_inventory_push: str = "",
+        writing_scale: str = "",
         outline_enabled: bool = True,
         clarification_policy: str = "",
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
     ) -> WriterRequest:
         system = self.build_writer_system(
             has_draft=bool(str(current_text or "").strip()),
             has_chapter=bool(str(chapter or "").strip()),
             target_word_count=target_word_count,
             outline_enabled=outline_enabled,
+            active_chapter=str(chapter or ""),
+            writing_scale=writing_scale,
         )
         # require_consult 开启时把大纲推入 system 稳定前缀（缓存友好、高信号）：AI 须遵循整体规划。
         # 大纲是规划意图，不是已发生事实——不进 Canon/Summary。
@@ -99,8 +106,32 @@ class ContextAssemblyService:
         if relations_text:
             system = (
                 f"{system}\n\n【人物关系与称呼（作者设定，写对白必须据此称呼，不得自造昵称）】\n"
-                f"读法：`A —[关系]→ B` 表示 A 是 B 的该关系；括号内为双方当面的称呼。\n"
+                f"读法：`A —[关系]→ B` 表示 A 是 B 的该关系；`B 称 A「X」` 表示 B 对 A 的称呼是 X；`A 称 B「Y」` 表示 A 对 B 的称呼是 Y。\n"
+                f"涉及这些人物的对白、叙述或内心独白时，必须优先使用上述称呼；不得把姓名替换成自造昵称，也不得交换称呼方向。缺少称呼时才使用正文既有称呼或姓名。\n"
                 f"{relations_text}"
+            )
+        style_text = str(style_push or "").strip()
+        if style_text:
+            system = (
+                f"{system}\n\n【本项目文风设定（必须遵循）】\n{style_text}\n"
+                "以上是作者明确设定的文风要求。生成或修改正文时必须落实到叙述视角、句式、节奏、用词、对白和描写密度；"
+                "不得把文风设定复述进正文，也不得用默认文风覆盖它。"
+            )
+        inventory_text = str(card_inventory_push or "").strip()
+        if inventory_text:
+            system = (
+                f"{system}\n\n【设定库目录（名称索引；正文按需查询）】\n{inventory_text}\n"
+                "只要本轮涉及目录中的人物、地点、势力或物品，写作前必须先用 lookup_card 读取对应完整设定；"
+                "目录只证明对象存在，不足以支持臆写其属性。"
+            )
+        memory_inventory_text = str(memory_inventory_push or "").strip()
+        if memory_inventory_text:
+            # 记忆目录与卡片目录（B1）同构：目录进稳定前缀、正文走 query_memory JIT。
+            # 记忆是弱约束软知识（偏好/决定/约束/进度），不是 canon 事实——不参与事实对账。
+            system = (
+                f"{system}\n\n【创作记忆目录（既往偏好与决定索引）】\n{memory_inventory_text}\n"
+                "以上是既往会话提炼的作者偏好、创作决定与约束。与本轮写作主题相关时，"
+                "先用 query_memory 查询完整记忆内容再动笔；不得凭目录臆写记忆细节，也不得违反已激活的约束。"
             )
         policy_text = str(clarification_policy or "").strip()
         if policy_text:
@@ -121,7 +152,17 @@ class ContextAssemblyService:
             reserve = int((getattr(context_plan, "budget", {}) or {}).get("output_reserve_tokens") or 0)
             if reserve > 0:
                 requested_max = min(requested_max, reserve)
-        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        history_budget = min(8_000, max(2_000, int(input_budget * 0.25))) if input_budget else 4_000
+        history_messages, history_report = self._project_conversation_history(
+            conversation_history or [],
+            current_message=message,
+            budget_tokens=history_budget,
+        )
+        messages = [
+            {"role": "system", "content": system},
+            *history_messages,
+            {"role": "user", "content": user},
+        ]
         scope = current_turn_scope()
         if scope is not None and scope.source_closure_required:
             source_rows = [
@@ -195,6 +236,46 @@ class ContextAssemblyService:
                         "artifact_ref": "cards/relations.yaml",
                     }
                 )
+            if style_text:
+                source_rows.append(
+                    {
+                        "source_id": "cards.style",
+                        "asset_type": "style_card",
+                        "content": style_text,
+                        "selection_reason": "authored_style_card_push",
+                        "artifact_ref": "cards/style.yaml",
+                    }
+                )
+            if inventory_text:
+                source_rows.append(
+                    {
+                        "source_id": "cards.inventory",
+                        "asset_type": "card_inventory",
+                        "content": inventory_text,
+                        "selection_reason": "authored_card_inventory_push",
+                        "artifact_ref": "cards/",
+                    }
+                )
+            if memory_inventory_text:
+                source_rows.append(
+                    {
+                        "source_id": "memory.inventory",
+                        "asset_type": "memory_inventory",
+                        "content": memory_inventory_text,
+                        "selection_reason": "authored_memory_inventory_push",
+                        "artifact_ref": "memory/MEMORY.md",
+                    }
+                )
+            if history_messages:
+                source_rows.append(
+                    {
+                        "source_id": "session.history",
+                        "asset_type": "session_history",
+                        "content": history_messages,
+                        "selection_reason": "recent_author_decisions_for_writer_context",
+                        "artifact_ref": "sessions/conversation.jsonl",
+                    }
+                )
             for row in source_rows:
                 scope.register_source_content(**row)
             scope.register_provider_payload(
@@ -222,10 +303,33 @@ class ContextAssemblyService:
         available = ["prompt", "user_message", "chapter", "project_config"]
         pushed = list(available)
         omitted: List[Dict[str, Any]] = []
+        if conversation_history:
+            available.append("session_history")
+            if history_messages:
+                pushed.append("session_history")
+            if history_report["omitted_count"] or history_report["projected_count"]:
+                omitted.append(
+                    {
+                        "type": "session_history",
+                        "reason": "token_budget_projection",
+                        "recoverable": True,
+                        "source_ref": "sessions/conversation.jsonl",
+                        **history_report,
+                    }
+                )
         if relations_text:
             # 关系边是卡片层设定：按 card 归桶上报，供给可观测（不与 canon 抽取关系混为一谈）。
             available.append("card")
             pushed.append("card")
+        if style_text:
+            available.append("style")
+            pushed.append("style")
+        if inventory_text:
+            available.append("card_inventory")
+            pushed.append("card_inventory")
+        if memory_inventory_text:
+            available.append("memory_inventory")
+            pushed.append("memory_inventory")
         if current_text:
             available.append("draft")
             pushed.append("draft")
@@ -264,6 +368,102 @@ class ContextAssemblyService:
             supply_report=supply_report,
         )
 
+    @classmethod
+    def _project_conversation_history(
+        cls,
+        history: List[Dict[str, Any]],
+        *,
+        current_message: str,
+        budget_tokens: int,
+    ) -> tuple[List[Dict[str, str]], Dict[str, int]]:
+        """Select model-facing history without trusting UI-only system messages."""
+
+        normalized: List[Dict[str, str]] = []
+        for item in history:
+            role = str(item.get("role") or "").strip().lower()
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            if role == "system" and str(item.get("type") or "") == "summary":
+                normalized.append(
+                    {
+                        "role": "user",
+                        "content": f"【此前对话摘要，仅作上下文参考】\n{content}",
+                    }
+                )
+            elif role in {"user", "assistant"}:
+                normalized.append({"role": role, "content": content})
+
+        if (
+            normalized
+            and normalized[-1]["role"] == "user"
+            and normalized[-1]["content"] == str(current_message or "").strip()
+        ):
+            normalized.pop()
+
+        selected: List[Dict[str, str]] = []
+        projected_count = 0
+        for item in reversed(normalized):
+            candidate = dict(item)
+            per_message_budget = max(256, min(3_000, budget_tokens))
+            projected_content, projected = cls._project_history_text(
+                candidate["content"],
+                budget_tokens=per_message_budget,
+            )
+            candidate["content"] = projected_content
+            projected_count += int(projected)
+            proposed = [candidate, *selected]
+            if count_provider_payload(proposed).upper_bound_tokens <= budget_tokens:
+                selected = proposed
+            elif not selected:
+                # Keep a compact tail even when serialization overhead consumes
+                # part of a very small caller-provided budget.
+                low, high = 1, max(1, len(candidate["content"]) // 2)
+                best = ""
+                marker = "\n…（较早对话内容按 token 预算省略）…\n"
+                prefix = candidate["content"].split(marker, 1)[0]
+                while low <= high:
+                    half = (low + high) // 2
+                    trial = dict(candidate)
+                    trial["content"] = prefix[:half] + marker
+                    if count_provider_payload([trial]).upper_bound_tokens <= budget_tokens:
+                        best = trial["content"]
+                        low = half + 1
+                    else:
+                        high = half - 1
+                if best:
+                    candidate["content"] = best
+                    selected = [candidate]
+                else:
+                    marker_candidate = dict(candidate)
+                    marker_candidate["content"] = marker
+                    if count_provider_payload([marker_candidate]).upper_bound_tokens <= budget_tokens:
+                        selected = [marker_candidate]
+
+        return selected, {
+            "selected_count": len(selected),
+            "omitted_count": max(0, len(normalized) - len(selected)),
+            "projected_count": projected_count,
+        }
+
+    @staticmethod
+    def _project_history_text(text: str, *, budget_tokens: int) -> tuple[str, bool]:
+        content = str(text or "")
+        if count_text_tokens(content).upper_bound_tokens <= budget_tokens:
+            return content, False
+        marker = "\n…（较早对话内容按 token 预算省略）…\n"
+        low, high = 1, max(1, len(content) // 2)
+        best = marker
+        while low <= high:
+            half = (low + high) // 2
+            candidate = content[:half] + marker + content[-half:]
+            if count_text_tokens(candidate).upper_bound_tokens <= budget_tokens:
+                best = candidate
+                low = half + 1
+            else:
+                high = half - 1
+        return best, True
+
     @staticmethod
     def _available_source_types(context_plan: Optional[Any]) -> List[str]:
         aliases = {
@@ -295,19 +495,24 @@ class ContextAssemblyService:
         has_chapter: bool = True,
         target_word_count: int = 3000,
         outline_enabled: bool = True,
+        active_chapter: str = "",
+        writing_scale: str = "",
     ) -> str:
         lang = "中文" if self.language == "zh" else "英文"
+        active_label = str(active_chapter or "").strip()
         base = (
             "你是小说撰稿 agent，工作方式与 AI 编程助手一致：先理解已装配的本轮上下文，必要时用检索工具核对设定，再用写作工具落笔。"
             "『写新内容』与『改旧文』不是两件事，而是你的两个工具，由你看着当前正文自主选择：\n"
             "- create_chapter(chapter_id?, title): 为新章节建立规范化目标；完整写作并 finish_turn 成功后由系统可靠保存。\n"
-            "- write_content(content[, mode]): 写入整章/整段正文（mode=replace 覆盖 / append 续写），"
+            "- write_content(chapter_id, content[, mode]): 写入整章/整段正文（mode=replace 覆盖 / append 续写），"
             "content 是你直接创作的小说正文本身。\n"
-            "- edit_lines(old_text, new_text): 精确替换正文中唯一出现的一处片段，用于局部修改/润色/删减"
+            "- edit_lines(chapter_id, old_text, new_text): 精确替换正文中唯一出现的一处片段，用于局部修改/润色/删减"
             "（old_text 须与正文逐字一致且唯一）。\n"
+            "- write_chapter(chapter_id, content[, mode]) / edit_chapter(chapter_id, old_text, new_text): "
+            "改写**其它已有章节**（非本轮活动章节）；每章形成独立 diff，同一轮可对多个章节分别调用。\n"
             "- ask_clarification(questions): 在当前上下文已注入、必要检索完成后，若仍存在会实质影响结果的作者决策缺口，提出 1-3 个由你自行选择的问题；这是可选工具，每轮最多调用一次，调用后本轮暂停等待作者回答。\n"
-            "检索工具（lookup_card/query_canon/query_relations/read_chapter/search_prose）供你按需"
-            "核对人物设定、关系、伏笔与已确立事实，避免前后矛盾。\n\n"
+            "检索工具（lookup_card/query_canon/query_relations/query_memory/read_chapter/search_prose）供你按需"
+            "核对人物设定、关系、既往偏好与约束、伏笔与已确立事实，避免前后矛盾。\n\n"
         )
         if outline_enabled:
             base += (
@@ -317,9 +522,14 @@ class ContextAssemblyService:
             )
         base += (
             "工作原则：\n"
-            "1) 先利用已注入上下文作判断，只有必要时再检索；检索要克制：通常查证 1–3 次关键设定/事实即应作出决定，切勿反复检索或空转——"
-            "工具轮次有限，迟迟不调用 write_content/edit_lines 会导致本轮无正文产出。\n"
+            "1) 先利用已注入上下文作判断，涉及设定库目录中的对象或关键事实时必须完成必要查证；"
+            "当前工具预算足以支持多次有目的的 lookup/query/read。每次检索都应缩小明确缺口，避免重复同一查询或无目标空转，"
+            "并在证据充分后及时调用 write_content/edit_lines 产出正文。\n"
             "2) 选对工具：用户要求新建章节或当前没有章节 → 先 create_chapter；正文为空或需大段新内容 → write_content；只改局部 → edit_lines。\n"
+            "2b) 章节目标必须显式且准确：write_content/edit_lines 的 chapter_id 只能是本轮活动章节"
+            + (f"（{active_label}）" if active_label else "")
+            + "；要改其它章节一律用 write_chapter/edit_chapter 并各自传该章的 chapter_id。"
+            "用户点名多个章节时，逐章分别调用对应工具，**绝不把某一章的改动写进活动章节**，也不要漏掉任何被点名的章节。\n"
             "3) 若上下文仍不足以确定关键走向，再由你决定是否调用 ask_clarification；问题必须具体、与本轮写作直接相关，不能泛问。调用后不得再调用写作工具或 finish_turn。\n"
             "4) content 只含小说正文，不夹带解释、标题或标记。\n"
             "5) 无论本轮是否修改正文，最后都必须调用 finish_turn，不能直接用自然语言结束。"
@@ -334,21 +544,47 @@ class ContextAssemblyService:
             base += (
                 "当前没有选中章节。普通交流可直接 finish_turn；若用户要求写作或新建章节，必须先调用 "
                 "create_chapter 建立章节 ID 和标题，再调用 write_content，禁止在无目标章节时直接写正文。\n"
+                + self._full_chapter_contract(target_word_count)
             )
         elif has_draft:
+            scale = str(writing_scale or "").strip().lower()
+            if scale == "expand":
+                edit_contract = (
+                    "作者要求『大幅扩写』：最终正文必须显著长于原文，并逐处把概述扩展为完整场景；"
+                    "增加有因果作用的感官、动作、心理、环境、对白潜台词与转折，禁止只做等长替换或少量润色。"
+                )
+            elif scale == "condense":
+                edit_contract = "作者要求压缩：删除重复与无效绕行，保留关键事件、因果、人物声音和必要氛围。"
+            elif scale == "rewrite":
+                edit_contract = "作者要求整体重写：可重组场景与表达，但必须保留指令未要求改变的既有事实与连续性。"
+            else:
+                edit_contract = "按作者点名的范围修改；未要求扩写或重写时，保持未涉及内容稳定。"
             base += (
                 "本章已有正文（见用户消息）。这是『编辑』场景：优先用 edit_lines 做针对性的局部修改/润色"
-                "（按需改写，不必长篇）；仅当用户明确要求重写整章时才 write_content(replace)。\n"
+                "；仅当用户明确要求重写整章时才 write_content(replace)。"
+                f"{edit_contract}\n"
             )
         else:
             base += (
-                f"本章暂无正文。这是『撰写整章』场景：必须用 write_content **一次写出完整的一整章**，"
-                f"目标约 {target_word_count} 字（这是最低完成基线，不是上限；若情节需要可自然写到 {int(target_word_count * 1.5)} 字），"
-                "要有起承转合、场景与对白充分展开，写到本章自然收束——绝不能只写开头、提纲或片段就停。"
-                "必须投入篇幅描写感官细节、人物动作与心理、环境氛围、对白潜台词和因果转折；避免概述、流水账、重复句式和仓促收尾。"
-                "先在内部规划场景节拍，再一次性写出完整正文，直到冲突和情绪完成释放。\n"
+                "本章暂无正文。"
+                + self._full_chapter_contract(target_word_count)
             )
         return f"{base}\n请用{lang}创作。"
+
+    @staticmethod
+    def _full_chapter_contract(target_word_count: int) -> str:
+        """整章撰写的长度合同：两个入口（已选空章 / 模型自建新章）共用同一份要求。
+
+        模型自行 create_chapter 的轮次（chapter 为空）此前只拿到「先建章再写」的弱指令，
+        长度要求从未进入提示——真实故障：反问恢复轮仅写 388 字即收尾（目标 3000 字）。
+        """
+        return (
+            "这是『撰写整章』场景：必须用 write_content **一次写出完整的一整章**，"
+            f"目标约 {target_word_count} 字（这是最低完成基线，不是上限；若情节需要可自然写到 {int(target_word_count * 1.5)} 字），"
+            "要有起承转合、场景与对白充分展开，写到本章自然收束——绝不能只写开头、提纲或片段就停。"
+            "必须投入篇幅描写感官细节、人物动作与心理、环境氛围、对白潜台词和因果转折；避免概述、流水账、重复句式和仓促收尾。"
+            "先在内部规划场景节拍，再一次性写出完整正文，直到冲突和情绪完成释放。\n"
+        )
 
     @staticmethod
     def build_writer_user(
@@ -403,7 +639,8 @@ class ContextAssemblyService:
         parts.append(f"\n用户指令：{str(message or '').strip()}")
         if not chapter:
             parts.append(
-                "若本轮需要写作，先调用 create_chapter 建立新章节目标，再调用 write_content；普通交流则直接 finish_turn。"
+                "若本轮需要写作，先调用 create_chapter 建立新章节目标，再用 write_content 写出"
+                f"**完整一整章**（目标约 {target_word_count} 字，写足写完，勿只开头）。"
             )
         elif not body.strip():
             parts.append(

@@ -32,6 +32,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { cardsAPI } from '../../api';
+import { useIDE } from '../../context/IDEContext';
 import { useLocale } from '../../i18n';
 import logger from '../../utils/logger';
 import { cn } from '../ui/core';
@@ -133,6 +134,7 @@ const buildDocument = (nodes, edges) => ({
 
 export default function RelationGraphView({ projectId }) {
   const { t } = useLocale();
+  const { registerSaveTarget } = useIDE();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [loading, setLoading] = useState(true);
@@ -145,6 +147,7 @@ export default function RelationGraphView({ projectId }) {
   const edgesRef = useRef(edges);
   const savingRef = useRef(false);
   const rerunRef = useRef(false);
+  const dirtyRef = useRef(false);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -194,22 +197,30 @@ export default function RelationGraphView({ projectId }) {
     };
   }, [projectId, setEdges, setNodes]);
 
-  const markDirty = useCallback(() => setRevision((value) => value + 1), []);
+  const markDirty = useCallback(() => {
+    dirtyRef.current = true;
+    setRevision((value) => value + 1);
+  }, []);
 
   const persist = useCallback(async () => {
+    if (!dirtyRef.current) return true;
     if (savingRef.current) {
       rerunRef.current = true;
-      return;
+      return false;
     }
+    const snapshot = JSON.stringify(buildDocument(nodesRef.current, edgesRef.current));
     savingRef.current = true;
     setSaveState('saving');
     try {
       await cardsAPI.saveRelations(projectId, buildDocument(nodesRef.current, edgesRef.current));
+      if (JSON.stringify(buildDocument(nodesRef.current, edgesRef.current)) === snapshot) dirtyRef.current = false;
       setSaveState('saved');
+      return true;
     } catch (error) {
       // 保存失败保留本地状态，下一次变更会重试；不静默丢弃用户操作。
       logger.error('Failed to save relation graph', error);
       setSaveState('error');
+      return false;
     } finally {
       savingRef.current = false;
       if (rerunRef.current) {
@@ -218,6 +229,16 @@ export default function RelationGraphView({ projectId }) {
       }
     }
   }, [markDirty, projectId]);
+
+  useEffect(
+    () =>
+      registerSaveTarget('relations', {
+        label: t('relationGraph.title'),
+        isDirty: () => dirtyRef.current,
+        save: persist,
+      }),
+    [persist, registerSaveTarget, t],
+  );
 
   useEffect(() => {
     if (revision === 0) return undefined; // 初次加载不触发保存

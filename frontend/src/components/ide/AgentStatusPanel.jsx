@@ -11,7 +11,7 @@ import { ChevronDown, X, Square, Brain, Check, Bot, ArrowUp } from 'lucide-react
 import { useLocale } from '../../i18n';
 import { buildAgentThread } from '../../lib/agentThread';
 import { AgentTranscript } from '../agent/AgentTranscript';
-import { PlanTaskCard } from '../agent/parts/PlanTaskCard';
+import TaskDock from '../agent/TaskDock';
 import { ClarificationPart } from '../agent/parts/ClarificationPart';
 import { WritingMemoryCard } from '../../features/agent/components/WritingMemoryCard';
 import { CanonTurnCard } from '../../features/agent/components/CanonTurnCard';
@@ -40,6 +40,9 @@ const AgentStatusPanel = ({
   onAcceptAllDiff = () => {},
   onRejectAllDiff = () => {},
   onApplySelectedDiff = () => {},
+  onSelectDiffAsset = () => {},
+  onAcceptDiffAsset = () => {},
+  onRejectDiffAsset = () => {},
   onSubmit = () => {},
   inputMaxLength = 2000,
   reasoningLevel = 'off',
@@ -50,7 +53,7 @@ const AgentStatusPanel = ({
   pendingPlan = null,
   planExecuting = false,
   planActiveStepId = null,
-  onExecutePlan = () => {},
+  planStepRuntime = null,
   onDismissPlan = () => {},
   clarification = null,
   onClarificationConfirm = () => {},
@@ -87,9 +90,23 @@ const AgentStatusPanel = ({
   const latestRunId = runs[runs.length - 1]?.id;
   const activeRunId = isGenerating ? latestRunId : undefined;
 
-  // 自动滚动到底部
+  // 自动滚动：只在作者本来就贴着底部时才跟随，且把末尾锚点对齐到**视口底部**。
+  // 两个此前的问题：
+  //  ① `scrollIntoView({behavior})` 的 block 默认是 'start'——锚点被对齐到视口顶部，
+  //     其下方全是底部留白，于是每次生成都滚成满屏空白（负责人反馈 2）。
+  //  ② 无条件跟随会在作者上翻查看历史时把视图强行拽回底部。
+  const stickToBottomRef = useRef(true);
+  const handleScroll = () => {
+    const el = scrollAreaRef.current;
+    if (!el) return;
+    // 阈值取「底部留白 + 一行余量」：留白本身属于可滚动高度，不减掉会永远判为「未贴底」。
+    const slack = composerH + 24;
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= slack + 40;
+  };
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!stickToBottomRef.current) return;
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [
     messages.length,
     progressEvents.length,
@@ -99,7 +116,8 @@ const AgentStatusPanel = ({
   ]);
 
   // 测量输入框实际高度 + 对话区可视高度 → 消息区动态底部留白：
-  // = 输入框高度 + 半屏冗余，既不被悬浮输入框遮挡，又能自由上滑约半个页面。
+  // = 输入框高度 + 固定余量。此前用「半屏冗余」，与自动滚动叠加会把正文顶出视口，
+  // 留下大片空白；改为固定小余量，既不被悬浮输入框遮挡，也不制造空屏。
   useEffect(() => {
     if (typeof ResizeObserver === 'undefined') return undefined;
     const ro = new ResizeObserver(() => {
@@ -198,7 +216,8 @@ const AgentStatusPanel = ({
       <div
         ref={scrollAreaRef}
         className="flex-1 overflow-y-auto custom-scrollbar p-3"
-        style={{ paddingBottom: composerH + 16 + Math.round(scrollH * 0.5) }}
+        onScroll={handleScroll}
+        style={{ paddingBottom: 8 }}
       >
         {!hasAnyContent ? (
           /* 欢迎提示 */
@@ -227,60 +246,6 @@ const AgentStatusPanel = ({
               />
             ) : null}
             {canonTurnState ? <CanonTurnCard state={canonTurnState} /> : null}
-            {hasDiffActions ? (
-              <div className="border border-[var(--vscode-sidebar-border)] rounded-[6px] bg-[var(--vscode-input-bg)] my-2 overflow-hidden">
-                <div className="px-3 py-2 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-bold text-[var(--vscode-fg)]">{t('agentPanel.diffDone')}</div>
-                    <div className="text-[10px] text-[var(--vscode-fg-subtle)]">
-                      {t('agentPanel.diffStats')
-                        .replace('{add}', diffSummary.additions)
-                        .replace('{del}', diffSummary.deletions)}
-                    </div>
-                  </div>
-                  <div className="text-[10px] text-[var(--vscode-fg-subtle)] mt-1">
-                    {t('agentPanel.diffSummary')
-                      .replace('{total}', diffSummary.total)
-                      .replace('{accepted}', diffSummary.accepted)
-                      .replace('{rejected}', diffSummary.rejected)
-                      .replace('{pending}', diffSummary.pending)}
-                  </div>
-                </div>
-                <div className="px-3 py-2 text-[10px] text-[var(--vscode-fg-subtle)]">{t('agentPanel.diffHint')}</div>
-                <div className="px-3 pb-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={onRejectAllDiff}
-                    className="text-[10px] px-3 py-1.5 rounded-[6px] border border-red-200 text-red-600 hover:bg-red-50 transition-colors"
-                  >
-                    {t('agentPanel.rejectAll')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onAcceptAllDiff}
-                    className="text-[10px] px-3 py-1.5 rounded-[6px] border border-green-200 text-green-700 hover:bg-green-50 transition-colors"
-                  >
-                    {t('agentPanel.acceptAll')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onApplySelectedDiff}
-                    className="text-[10px] px-3 py-1.5 rounded-[6px] border border-[var(--vscode-input-border)] bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] hover:opacity-90 transition-colors"
-                  >
-                    {t('agentPanel.applyAccepted')}
-                  </button>
-                </div>
-              </div>
-            ) : null}
-            {pendingPlan ? (
-              <PlanTaskCard
-                plan={pendingPlan}
-                executing={planExecuting}
-                activeStepId={planActiveStepId}
-                onExecute={onExecutePlan}
-                onDismiss={onDismissPlan}
-              />
-            ) : null}
             {clarification ? (
               <ClarificationPart
                 questions={clarification.questions || []}
@@ -293,11 +258,32 @@ const AgentStatusPanel = ({
           </>
         )}
 
-        <div ref={messagesEndRef} />
+        {/* 滚动锚点兼底部占位：高度 = 悬浮输入框高度 + 余量。
+            `block:'end'` 把锚点底边对齐视口底边，锚点本身撑开的这段空白正好落在输入框之下，
+            于是最后一条消息停在输入框上方而不被遮挡（此前用容器 paddingBottom，
+            锚点在 padding 之上，对齐后内容仍会贴到被输入框盖住的位置）。 */}
+        <div ref={messagesEndRef} style={{ height: composerH + 16 }} aria-hidden="true" />
       </div>
 
       {/* 底部输入框（Trae 式 · 悬浮于对话栏，左右下等距，液态玻璃） */}
       <div ref={composerRef} className="absolute bottom-0 inset-x-0 z-30 p-3">
+        {/* U9：任务栏停靠在输入框正上方，与对话栏同宽同视觉；平时一行摘要，执行中自动展开。 */}
+        <TaskDock
+          plan={pendingPlan}
+          executing={planExecuting}
+          activeStepId={planActiveStepId}
+          stepRuntime={planStepRuntime}
+          changeSet={Array.isArray(diffReview?.changeSet) ? diffReview.changeSet : []}
+          activeAsset={diffReview ? { asset_type: diffReview.assetType, asset_id: diffReview.assetId } : null}
+          diffSummary={diffSummary}
+          onSelectAsset={onSelectDiffAsset}
+          onAcceptAsset={onAcceptDiffAsset}
+          onRejectAsset={onRejectDiffAsset}
+          onAcceptAll={onAcceptAllDiff}
+          onRejectAll={onRejectAllDiff}
+          onApplyAccepted={onApplySelectedDiff}
+          onDismiss={pendingPlan ? onDismissPlan : null}
+        />
         {inputDisabled && inputDisabledReason ? (
           <div className="mb-2 text-[10px] text-[var(--vscode-fg-subtle)] border border-[var(--vscode-sidebar-border)] bg-[var(--vscode-input-bg)] rounded-[6px] px-3 py-2">
             {inputDisabledReason}

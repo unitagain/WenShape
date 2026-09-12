@@ -6,7 +6,7 @@
 
 import asyncio
 
-from app.eval.writing_judge import (
+from evaluation.writing_judge import (
     POINTWISE_PAIR_JUDGE_PROMPT_VERSION,
     build_pairwise_judge_messages,
     build_pointwise_candidate_judge_messages,
@@ -105,7 +105,7 @@ def test_judge_extra_body_disables_optional_reasoning(monkeypatch):
         "plain": {"model": "deepseek-v4-flash"},
     }
     monkeypatch.setattr(
-        "app.eval.writing_judge.llm_config_service.get_profile_by_id",
+        "evaluation.writing_judge.llm_config_service.get_profile_by_id",
         lambda profile_id: profiles.get(profile_id),
     )
     assert judge_extra_body("qwen") == {"enable_thinking": False}
@@ -134,7 +134,7 @@ def test_pointwise_pair_judge_derives_order_invariant_winner(monkeypatch):
             "model": "judge-model",
         }
 
-    monkeypatch.setattr("app.eval.writing_judge.run_pointwise_candidate_judge_eval", score)
+    monkeypatch.setattr("evaluation.writing_judge.run_pointwise_candidate_judge_eval", score)
 
     result = asyncio.run(run_pointwise_pair_judge_eval(_case(), provider="judge"))
 

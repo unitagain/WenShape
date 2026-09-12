@@ -7,7 +7,7 @@
 
 import asyncio
 
-from app.eval.eval_suite import (
+from evaluation.eval_suite import (
     run_compact_eval,
     run_consistency_eval,
     run_eval_suite,

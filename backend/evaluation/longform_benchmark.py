@@ -3,7 +3,7 @@
 
 The harness orchestrates corpus import, silver-case generation, suite runs,
 comparison, failure promotion, and report generation. Metric kernels reuse
-existing ``app.eval`` utilities where possible; this module owns benchmark file
+existing ``evaluation`` utilities where possible; this module owns benchmark file
 management and aggregation only.
 """
 
@@ -30,21 +30,21 @@ from app.error_contract import benchmark_failure, classify_benchmark_failure_rec
 from app.context_engine.embeddings import create_embeddings_backend
 from app.context_engine.reranker import create_reranker_backend
 from app.context_engine.select_engine import ContextSelectEngine
-from app.eval.eval_suite import run_p8_context_boundary_eval
-from app.eval.longform_artifacts import BenchmarkPaths, read_json, read_jsonl, write_json, write_jsonl
-from app.eval.longform_models import RETRIEVAL_STRATEGIES, RetrievalStrategySpec
-from app.eval.longform_report import render_report
-from app.eval.longform_statistics import cluster_bootstrap_mean_ci, numeric_distribution
-from app.eval.longform_pipeline import LongformBenchmarkPipeline
-from app.eval.p12_context_eval import (
+from evaluation.eval_suite import run_p8_context_boundary_eval
+from evaluation.longform_artifacts import BenchmarkPaths, read_json, read_jsonl, write_json, write_jsonl
+from evaluation.longform_models import RETRIEVAL_STRATEGIES, RetrievalStrategySpec
+from evaluation.longform_report import render_report
+from evaluation.longform_statistics import cluster_bootstrap_mean_ci, numeric_distribution
+from evaluation.longform_pipeline import LongformBenchmarkPipeline
+from evaluation.p12_context_eval import (
     P12_CONTEXT_COMPARISONS,
     analyze_p12_pairwise,
     generate_p12_candidates,
     score_p12_candidates,
 )
-from app.eval.retrieval_eval import evaluate_retrieval_recall
-from app.eval.trace_replay import replay_trace_files
-from app.eval.writing_judge import (
+from evaluation.retrieval_eval import evaluate_retrieval_recall
+from evaluation.trace_replay import replay_trace_files
+from evaluation.writing_judge import (
     POINTWISE_PAIR_JUDGE_PROMPT_VERSION as PAIRWISE_JUDGE_PROMPT_VERSION,
     judge_extra_body,
     run_pairwise_judge_eval,

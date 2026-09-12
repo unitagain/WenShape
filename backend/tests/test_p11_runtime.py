@@ -11,9 +11,9 @@ from app.context_engine.retrieval_pipeline import (
     ScoreFusion,
     TemporalScopeFilter,
 )
-from app.eval.longform_artifacts import BenchmarkPaths, read_json, write_json
-from app.eval.longform_report import render_report
-from app.eval.longform_statistics import cluster_bootstrap_mean_ci, numeric_distribution
+from evaluation.longform_artifacts import BenchmarkPaths, read_json, write_json
+from evaluation.longform_report import render_report
+from evaluation.longform_statistics import cluster_bootstrap_mean_ci, numeric_distribution
 from app.orchestrator.architecture import service_boundaries
 from app.orchestrator.context_assembly_service import ContextAssemblyService
 from app.orchestrator.turn_runtime import TurnRuntime, TurnState

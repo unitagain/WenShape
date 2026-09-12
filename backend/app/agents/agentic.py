@@ -141,6 +141,9 @@ async def run_agentic_chat(
     max_iterations: int = 4,
     thinking: Optional[Any] = None,
     on_event: OnEvent = None,
+    # DEPRECATED（保留仅为调用方签名兼容，值被忽略）：tool result 预算现由
+    # ``token_accounting.fold_payload_to_budget`` 统一负责，gateway 是唯一 folding owner。
+    # 新代码不要传这个参数；下次触及本函数签名时可直接删除。
     tool_result_budget: int = _DEFAULT_TOOL_RESULT_BUDGET,
     artifact_store: Optional[ToolArtifactStore] = None,
     deadline_seconds: Optional[float] = None,
@@ -164,7 +167,7 @@ async def run_agentic_chat(
     说明：消息回放对 OpenAI 兼容 provider 用 `assistant.tool_calls` + `role:"tool"`；
     对 Anthropic 用 `tool_use` / `tool_result` 内容块（按首个响应的 provider 判定）。
     """
-    del tool_result_budget
+    del tool_result_budget  # DEPRECATED，见签名处注释；显式丢弃以免误读为"已生效"
     started = time.monotonic()
     explicit_deadline = (
         started + float(deadline_seconds)
@@ -478,8 +481,6 @@ async def run_agentic_chat(
             tool_call_id = str(tc.get("id") or "")
             arguments = tc.get("arguments")
             terminal_checker = getattr(toolset, "is_terminal_tool", None)
-            if callable(terminal_checker) and terminal_checker(name):
-                terminal_tool_called = True
             try:
                 from app.observability.usage_diagnostics import record_tool_call
 
@@ -527,6 +528,11 @@ async def run_agentic_chat(
                         trace_id=scope.trace_id if scope is not None else "",
                         degraded=True,
                     ).to_dict()
+                elif callable(terminal_checker) and terminal_checker(name):
+                    # A rejected finish_turn is a normal tool error, not a
+                    # terminal success. Only stop the loop after the tool has
+                    # produced a terminal payload that can be committed.
+                    terminal_tool_called = bool(getattr(toolset, "has_terminal_payload", False))
             except asyncio.CancelledError:
                 raise
             except RuntimeError as exc:

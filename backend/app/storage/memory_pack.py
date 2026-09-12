@@ -24,6 +24,7 @@ from app.storage.base import BaseStorage
 from app.storage.file_lock import get_file_lock
 from app.utils.chapter_id import ChapterIDValidator, normalize_chapter_id
 from app.utils.logger import get_logger
+from app.utils.path_safety import UnsafeIdentifierError
 
 logger = get_logger(__name__)
 
@@ -55,15 +56,22 @@ class MemoryPackStorage(BaseStorage):
     """File-based storage for chapter memory packs / 章节记忆包文件存储。"""
 
     def _canonicalize_chapter_id(self, chapter_id: str) -> str:
+        """规范化章节 ID；无法识别的格式返回空串（不再回退原始字符串，A1）。"""
         normalized = normalize_chapter_id(chapter_id)
         if normalized and ChapterIDValidator.validate(normalized):
             return normalized
-        return str(chapter_id).strip() if chapter_id else ""
+        return ""
 
     def get_pack_path(self, project_id: str, chapter: str) -> Path:
         """Return the JSON path for a chapter memory pack."""
         canonical = self._canonicalize_chapter_id(chapter)
-        return self.get_project_path(project_id) / "memory_packs" / f"{canonical}.json"
+        if not canonical:
+            raise UnsafeIdentifierError(
+                "unsafe_chapter_id:invalid",
+                code="unsafe_chapter_id",
+                metadata={"reason": "invalid_or_empty"},
+            )
+        return self.asset_path(project_id, "memory_packs", f"{canonical}.json", field="chapter_id")
 
     async def read_pack(self, project_id: str, chapter: str) -> Optional[Dict[str, Any]]:
         """Read memory pack for a chapter; return None if not found."""

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan source files for likely mojibake markers."""
+"""Scan source files for likely mojibake markers and UTF-8 BOM."""
 
 from __future__ import annotations
 
@@ -9,8 +9,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCAN_EXTENSIONS = {".py", ".md", ".js", ".jsx", ".ts", ".tsx", ".json", ".yaml", ".yml"}
-SKIP_DIRS = {".git", "node_modules", "dist", "build", "__pycache__"}
+# "benchmarks" holds gitignored evaluation artifacts; scanning them makes this
+# check depend on local run history rather than on tracked sources.
+SKIP_DIRS = {".git", "node_modules", "dist", "build", "__pycache__", "benchmarks", ".venv", "venv", ".artifacts"}
 SKIP_FILES = {"check_encoding.py"}
+
+UTF8_BOM = b"\xef\xbb\xbf"
 
 # Use escaped Unicode literals to keep this script ASCII-safe in any terminal.
 SUSPICIOUS_MARKERS = (
@@ -70,8 +74,15 @@ def is_probable_mojibake(line: str) -> bool:
 def main() -> int:
     failures: list[tuple[Path, int, str]] = []
     for path in iter_files():
+        raw = path.read_bytes()
+
+        # A BOM is not a style nit: stdlib ast.parse and json.load both reject it,
+        # so a BOM'd file silently drops out of AST-based tooling.
+        if raw.startswith(UTF8_BOM):
+            failures.append((path, 0, "UTF-8 BOM found; strip it (.editorconfig declares plain UTF-8)"))
+
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
+            lines = raw.decode("utf-8").splitlines()
         except UnicodeDecodeError as exc:
             failures.append((path, 0, f"UTF-8 decode failed: {exc}"))
             continue

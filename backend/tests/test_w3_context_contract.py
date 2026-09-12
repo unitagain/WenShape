@@ -374,6 +374,40 @@ def test_writer_assembly_closes_initial_provider_payload(monkeypatch, tmp_path: 
     )
 
 
+# ------------------------------------------------ 反问恢复轮长度合同（2026-08-28）--
+
+
+def test_writer_system_full_chapter_contract_covers_self_created_chapter():
+    """模型自行 create_chapter 的轮次（chapter 为空）也必须拿到整章长度合同。
+
+    真实故障：无选中章节时只注入「先建章再写」弱指令，target 最低基线从未进入提示，
+    反问恢复轮仅写 388 字（目标 3000）即收尾。两个入口共用同一份合同文案。
+    """
+
+    service = ContextAssemblyService(language="zh")
+    no_chapter = service.build_writer_system(has_draft=False, has_chapter=False, target_word_count=3000)
+    empty_chapter = service.build_writer_system(has_draft=False, has_chapter=True, target_word_count=3000)
+
+    for system in (no_chapter, empty_chapter):
+        assert "撰写整章" in system
+        assert "最低完成基线" in system
+        assert "3000" in system
+        assert "绝不能只写开头" in system
+
+
+def test_writer_user_prompt_carries_length_goal_without_selected_chapter():
+    user = ContextAssemblyService.build_writer_user(
+        message="按大纲撰写第一章",
+        chapter="",
+        current_text="",
+        has_selection=False,
+        target_word_count=3000,
+    )
+    assert "create_chapter" in user
+    assert "完整一整章" in user
+    assert "3000" in user
+
+
 def test_gateway_blocks_source_drift_before_provider_io(monkeypatch, tmp_path: Path):
     import app.llm_gateway.gateway as gateway_module
 

@@ -160,3 +160,36 @@ def test_apply_turn_effect_requires_saved_final_draft(tmp_path):
     result = asyncio.run(orchestrator.apply_turn_effect("p", "V1C001", _turn_effect()))
 
     assert result == {"success": False, "reason": "draft_missing"}
+
+
+def test_fact_owner_deduplicates_across_analysis_and_turn_effect_paths(tmp_path):
+    orchestrator = Orchestrator(str(tmp_path))
+    chapter = "V1C001"
+    content = "沈月把铜钥匙交给林舟。"
+    asyncio.run(orchestrator.draft_storage.save_current_draft("p", chapter, content))
+    first = asyncio.run(
+        orchestrator.save_analysis(
+            "p",
+            chapter,
+            {
+                "summary": {"chapter": chapter, "volume_id": "V1", "title": "第一章"},
+                "facts": [{"statement": "沈月把铜钥匙交给林舟"}],
+            },
+        )
+    )
+    second = asyncio.run(
+        orchestrator.apply_turn_effect(
+            "p",
+            chapter,
+            _turn_effect(
+                fact_operation="merge",
+                fact_candidates=[{"statement": "沈月 把铜钥匙交给林舟。", "evidence": content}],
+            ),
+        )
+    )
+
+    assert first["success"] is True
+    assert first["stats"]["facts_saved"] == 1
+    assert second["stats"]["facts_saved"] == 0
+    assert second["stats"]["facts_deduplicated"] == 1
+    assert len(asyncio.run(orchestrator.canon_storage.get_all_facts_raw("p"))) == 1

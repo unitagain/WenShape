@@ -2,7 +2,7 @@
 """P6 golden replay gate.
 
 默认套件只使用确定性组件、真实文件存储和可回放 trace，不依赖外部 LLM。
-LLM judge 属于扩展轨道，由 app.eval.writing_judge 显式运行。
+LLM judge 属于扩展轨道，由 evaluation.writing_judge 显式运行。
 """
 
 from __future__ import annotations
@@ -11,8 +11,8 @@ import hashlib
 import json
 from typing import Any, Awaitable, Callable, Dict, List
 
-from app.eval.representative_scenarios import EVAL_ASSET_INVENTORY, evaluate_representative_scenarios
-from app.eval.trace_replay import replay_trace_payload
+from evaluation.representative_scenarios import EVAL_ASSET_INVENTORY, evaluate_representative_scenarios
+from evaluation.trace_replay import replay_trace_payload
 from app.orchestrator.architecture import route_contract
 
 
@@ -116,7 +116,7 @@ def _sample_trace_payload() -> Dict[str, Any]:
 
 
 async def _component_cases() -> List[Dict[str, Any]]:
-    from app.eval.eval_suite import (
+    from evaluation.eval_suite import (
         run_compact_eval,
         run_consistency_eval,
         run_memory_eval,

@@ -25,6 +25,7 @@ class ChatTurnService:
         chapter: str,
         message: str,
         *,
+        conversation_id: str = "",
         has_selection: bool = False,
         has_draft: bool = False,
         target_word_count: int = 3000,
@@ -52,6 +53,7 @@ class ChatTurnService:
                     project_id,
                     chapter,
                     message,
+                    conversation_id=conversation_id,
                     has_selection=has_selection,
                     has_draft=has_draft,
                     target_word_count=target_word_count,
@@ -107,6 +109,7 @@ class ChatTurnService:
         chapter: str,
         message: str,
         *,
+        conversation_id: str,
         has_selection: bool,
         has_draft: bool,
         target_word_count: int,
@@ -170,6 +173,25 @@ class ChatTurnService:
                     auto_execute_plan=auto_execute_plan,
                 )
             if scope is not None:
+                if scope.runtime.state == TurnState.CANCELLED or scope.cancelled:
+                    return {
+                        "success": False,
+                        "cancelled": True,
+                        "terminal_state": "cancelled",
+                        "reason": "turn_cancelled",
+                        "action": "plan",
+                        "decision": decision,
+                        "route_contract": route_contract("plan", auto_execute_plan=auto_execute_plan),
+                    }
+                if scope.runtime.state in {TurnState.FAILED, TurnState.INCOMPLETE, TurnState.COMPLETED}:
+                    return {
+                        "success": False,
+                        "terminal_state": scope.runtime.state.value,
+                        "reason": scope.runtime.failure or "plan_generation_unavailable",
+                        "action": "plan",
+                        "decision": decision,
+                        "route_contract": route_contract("plan", auto_execute_plan=auto_execute_plan),
+                    }
                 scope.runtime.transition(TurnState.CONTEXT_PLANNING, reason="plan_generation_unavailable")
             action = "write"
 
@@ -189,6 +211,16 @@ class ChatTurnService:
             "thinking": thinking,
             "target_word_count": target_word_count,
         }
+        if decision.get("scale"):
+            writer_options["writing_scale"] = decision["scale"]
+        conversation_history = await self.owner.session_history.load(
+            project_id,
+            conversation_id=conversation_id,
+        )
+        # Preserve compatibility with lightweight WriterService test doubles and
+        # custom integrations when there is no persisted history to inject.
+        if conversation_history:
+            writer_options["conversation_history"] = conversation_history
         if reasoning_level not in {"auto", "off"}:
             writer_options["reasoning_level"] = reasoning_level
         agent_result: WritingResult = await self.owner.writing_service.run(
@@ -200,20 +232,6 @@ class ChatTurnService:
             if isinstance(chapter_target, dict)
             else str(chapter or "")
         )
-        auto_commit = agent_result.get("auto_commit")
-        if isinstance(auto_commit, dict) and auto_commit.get("committed") and result_chapter:
-            turn_effect = agent_result.get("turn_effect")
-            if isinstance(turn_effect, dict):
-                try:
-                    canon_sync = await self.owner.application.analysis.apply_turn_effect(
-                        project_id,
-                        result_chapter,
-                        turn_effect,
-                    )
-                except Exception as exc:
-                    record_degradation("created_chapter_turn_effect_sync", exc)
-                    canon_sync = {"success": False, "reason": "turn_effect_sync_failed"}
-                auto_commit["canon_sync"] = canon_sync
         await self._attach_writing_memory(
             agent_result,
             project_id=project_id,

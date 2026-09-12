@@ -29,6 +29,28 @@ def test_intent_continue_without_draft_is_write():
     assert d["action"] == "write"
 
 
+def test_outline_planning_request_stays_on_writer_path():
+    decision = asyncio.run(
+        classify_writing_intent(
+            "在大纲中继续规划后续几章剧情",
+            has_selection=False,
+            has_draft=False,
+        )
+    )
+    assert decision["action"] == "write"
+
+
+def test_explicit_multi_chapter_execution_still_uses_plan_path():
+    decision = asyncio.run(
+        classify_writing_intent(
+            "按照现有大纲逐章写完第8到10章",
+            has_selection=False,
+            has_draft=True,
+        )
+    )
+    assert decision["action"] == "plan"
+
+
 # ---------- run_chat_turn 编排 ----------
 
 
@@ -116,7 +138,7 @@ class _WriterClarificationGateway:
                         "id": "write-1",
                         "type": "function",
                         "name": "write_content",
-                        "arguments": '{"content":"林舟在桥上公开与盟友决裂。","mode":"replace"}',
+                        "arguments": '{"chapter_id":"V1C001","content":"林舟在桥上公开与盟友决裂。","mode":"replace"}',
                     }
                 ],
                 "usage": {},
@@ -145,13 +167,18 @@ class _WriterClarificationGateway:
 
 def test_writer_tool_requests_clarification_after_retrieval_without_writing(tmp_path):
     orch = _orch(tmp_path)
+    events = []
 
     async def fake_decide(*_args, **_kwargs):
         return {"action": "write"}
 
+    async def capture_progress(payload):
+        events.append(payload)
+
     gateway = _WriterClarificationGateway()
     orch.decide_writing_action = fake_decide
     orch.writing_service.gateway = gateway
+    orch.writing_service.progress_callback = capture_progress
     result = asyncio.run(orch.run_chat_turn("p", "V1C001", "写桥上对决"))
 
     assert result["terminal_state"] == "requires_input"
@@ -161,6 +188,20 @@ def test_writer_tool_requests_clarification_after_retrieval_without_writing(tmp_
     assert result.get("changed") is False
     assert asyncio.run(orch.draft_storage.get_final_draft("p", "V1C001")) is None
     assert any(tool["name"] == "ask_clarification" for tool in result["context_plan"]["tool_loadout"])
+    clarification_call = next(
+        index
+        for index, event in enumerate(events)
+        if event.get("type") == "agent_tool_call" and event.get("name") == "ask_clarification"
+    )
+    clarification_result = next(
+        index
+        for index, event in enumerate(events)
+        if event.get("type") == "agent_tool_result" and event.get("name") == "ask_clarification"
+    )
+    input_required = next(index for index, event in enumerate(events) if event.get("type") == "agent_input_required")
+    assert clarification_call < clarification_result < input_required
+    assert events[input_required]["questions"] == result["questions"]
+    assert events[input_required]["turn_id"] == result["runtime"]["turn_id"]
 
 
 def test_clarification_answers_resume_the_same_writer_loop_contract(tmp_path):
@@ -186,7 +227,7 @@ def test_clarification_answers_resume_the_same_writer_loop_contract(tmp_path):
     assert gateway.calls == 4
 
 
-def test_auto_trigger_setting_only_changes_writer_policy_not_workflow(tmp_path):
+def test_always_clarification_blocks_finish_until_writer_asks(tmp_path):
     orch = _orch(tmp_path)
     (tmp_path / "p" / "project.yaml").write_text(
         "writer:\n  clarification:\n    auto_trigger: always\n",
@@ -206,6 +247,22 @@ def test_auto_trigger_setting_only_changes_writer_policy_not_workflow(tmp_path):
             self.calls += 1
             self.system = str(messages[0].get("content") or "")
             self.tool_names = [tool["function"]["name"] for tool in kwargs.get("tools") or []]
+            if self.calls == 2:
+                assert "clarification_required" in str(messages[-1].get("content") or "")
+                return {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "ask-1",
+                            "type": "function",
+                            "name": "ask_clarification",
+                            "arguments": '{"questions":[{"text":"本章冲突应公开爆发还是暂时压下？"}]}',
+                        }
+                    ],
+                    "usage": {},
+                    "model": "fake",
+                    "finish_reason": "tool_calls",
+                }
             return {
                 "content": None,
                 "tool_calls": [
@@ -230,12 +287,84 @@ def test_auto_trigger_setting_only_changes_writer_policy_not_workflow(tmp_path):
     gateway = _PolicyGateway()
     orch.decide_writing_action = fake_decide
     orch.writing_service.gateway = gateway
+    assert asyncio.run(orch.writing_service._resolve_clarification_settings("p"))["auto_trigger"] == "always"
     result = asyncio.run(orch.run_chat_turn("p", "V1C001", "按现有设定继续"))
 
-    assert result["success"] is True
-    assert gateway.calls == 1
-    assert "主动检查" in gateway.system
+    assert result.get("terminal_state") == "requires_input", result
+    assert result["questions"] == [{"text": "本章冲突应公开爆发还是暂时压下？"}]
+    assert gateway.calls == 2
+    assert "必须先调用 ask_clarification" in gateway.system
     assert "ask_clarification" in gateway.tool_names
+
+
+def test_always_clarification_answer_resume_does_not_ask_again(tmp_path):
+    orch = _orch(tmp_path)
+    (tmp_path / "p" / "project.yaml").write_text(
+        "writer:\n  clarification:\n    auto_trigger: always\n",
+        encoding="utf-8",
+    )
+
+    class _ResumeGateway:
+        def __init__(self):
+            self.system = ""
+
+        def get_provider_for_agent(self, _name):
+            return "fake"
+
+        async def chat(self, messages, **_kwargs):
+            self.system = str(messages[0].get("content") or "")
+            if any(message.get("role") == "tool" for message in messages):
+                return {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "finish-1",
+                            "type": "function",
+                            "name": "finish_turn",
+                            "arguments": (
+                                '{"change_type":"chapter_write","fact_operation":"none",'
+                                '"chapter_summary":"","fact_candidates":[],"message":"已完成。"}'
+                            ),
+                        }
+                    ],
+                    "usage": {},
+                    "model": "fake",
+                    "finish_reason": "tool_calls",
+                }
+            return {
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "write-1",
+                        "type": "function",
+                        "name": "write_content",
+                        "arguments": '{"chapter_id":"V1C001","content":"冲突公开爆发。","mode":"replace"}',
+                    }
+                ],
+                "usage": {},
+                "model": "fake",
+                "finish_reason": "tool_calls",
+            }
+
+    async def fake_decide(*_args, **_kwargs):
+        return {"action": "write"}
+
+    orch.decide_writing_action = fake_decide
+    gateway = _ResumeGateway()
+    orch.writing_service.gateway = gateway
+    result = asyncio.run(
+        orch.run_chat_turn(
+            "p",
+            "V1C001",
+            "按现有设定继续\n\n补充信息：\n问题：冲突如何收束？\n作者回答：公开爆发",
+        )
+    )
+
+    assert result["success"] is True
+    assert result["changed"] is True
+    # 恢复轮策略文本：门控已关，提示不得再要求「必须先反问」，否则诱导重复反问
+    assert "必须先调用 ask_clarification" not in gateway.system
+    assert "已获作者回答" in gateway.system
 
 
 def test_chat_turn_without_active_chapter_still_enters_single_writer(tmp_path):
@@ -295,7 +424,7 @@ class _CreateChapterGateway:
                         "id": "write-1",
                         "type": "function",
                         "name": "write_content",
-                        "arguments": '{"content":"林舟抵达新城。","mode":"replace"}',
+                        "arguments": '{"chapter_id":"V1C1","content":"林舟抵达新城。","mode":"replace"}',
                     }
                 ],
                 "usage": {},
@@ -323,7 +452,7 @@ class _CreateChapterGateway:
         }
 
 
-def test_new_chapter_is_committed_before_turn_reports_completion(tmp_path):
+def test_new_chapter_is_proposed_before_user_acceptance(tmp_path):
     orch = _orch(tmp_path)
     events = []
 
@@ -341,16 +470,84 @@ def test_new_chapter_is_committed_before_turn_reports_completion(tmp_path):
     result = asyncio.run(orch.run_chat_turn("p", "", "新建第一章并写完"))
 
     assert result["success"] is True
-    assert result["auto_commit"]["committed"] is True
-    assert result["auto_commit"]["canon_sync"]["success"] is True
-    assert asyncio.run(orch.draft_storage.get_final_draft("p", "V1C1")) == "林舟抵达新城。"
-    summary = asyncio.run(orch.draft_storage.get_chapter_summary("p", "V1C1"))
-    assert summary.title == "雨夜新城"
-    assert summary.brief_summary == "林舟在雨夜抵达新城。"
-    facts = asyncio.run(orch.canon_storage.get_all_facts_raw("p"))
-    assert [fact["statement"] for fact in facts] == ["林舟抵达新城"]
+    assert "auto_commit" not in result
+    proposal = next(item for item in result["change_set"] if item["asset_type"] == "chapter")
+    assert proposal["asset_id"] == "V1C1"
+    assert proposal["original"] == "" and proposal["revised"] == "林舟抵达新城。"
+    assert asyncio.run(orch.draft_storage.get_final_draft("p", "V1C1")) is None
     stream_end = next(event for event in events if event.get("type") == "stream_end")
-    assert stream_end["auto_commit"]["committed"] is True
+    assert "auto_commit" not in stream_end
+    assert stream_end["change_set"][0]["asset_id"] == "V1C1"
+
+    applied = asyncio.run(orch.apply_change_set("p", [proposal]))
+    assert applied["success"] is True
+    assert asyncio.run(orch.draft_storage.get_final_draft("p", "V1C1")) == "林舟抵达新城。"
+
+
+def test_apply_change_set_preflights_all_revisions_before_any_write(tmp_path):
+    orch = _orch(tmp_path)
+    asyncio.run(orch.draft_storage.save_current_draft("p", "V1C1", "第一章。"))
+    asyncio.run(orch.draft_storage.save_current_draft("p", "V1C2", "第二章。"))
+    first_revision = orch.draft_storage.get_draft_revision("p", "V1C1")["revision"]
+
+    result = asyncio.run(
+        orch.apply_change_set(
+            "p",
+            [
+                {
+                    "asset_type": "chapter",
+                    "asset_id": "V1C1",
+                    "original": "第一章。",
+                    "revised": "第一章修改。",
+                    "base_revision": first_revision,
+                },
+                {
+                    "asset_type": "chapter",
+                    "asset_id": "V1C2",
+                    "original": "过期正文。",
+                    "revised": "第二章修改。",
+                    "base_revision": 0,
+                },
+            ],
+        )
+    )
+
+    assert result["success"] is False and result["reason"] == "revision_conflict"
+    assert asyncio.run(orch.draft_storage.get_final_draft("p", "V1C1")) == "第一章。"
+    assert asyncio.run(orch.draft_storage.get_final_draft("p", "V1C2")) == "第二章。"
+
+
+def test_apply_change_set_updates_existing_summary_word_count(tmp_path):
+    from app.schemas.draft import ChapterSummary
+
+    orch = _orch(tmp_path)
+    asyncio.run(orch.draft_storage.save_current_draft("p", "V1C1", "旧文"))
+    asyncio.run(
+        orch.draft_storage.save_chapter_summary(
+            "p",
+            ChapterSummary(chapter="V1C1", volume_id="V1", title="第一章", word_count=999),
+        )
+    )
+    revision = orch.draft_storage.get_draft_revision("p", "V1C1")["revision"]
+
+    result = asyncio.run(
+        orch.apply_change_set(
+            "p",
+            [
+                {
+                    "asset_type": "chapter",
+                    "asset_id": "V1C1",
+                    "original": "旧文",
+                    "revised": "新的章节正文",
+                    "base_revision": revision,
+                }
+            ],
+        )
+    )
+
+    assert result["success"] is True
+    summary = asyncio.run(orch.draft_storage.get_chapter_summary("p", "V1C1"))
+    assert summary.word_count == len("新的章节正文")
 
 
 def test_chat_turn_attaches_writing_memory_status_and_turn_context(tmp_path):
@@ -400,6 +597,42 @@ def test_chat_turn_passes_only_writing_service_contract_arguments(tmp_path):
         orch.run_chat_turn("p", "V1C001", "continue", has_draft=True, target_word_count=180)
     )
     assert result["success"] is True
+
+
+def test_chat_turn_loads_selected_conversation_history(tmp_path):
+    orch = _orch(tmp_path)
+    conversation = asyncio.run(orch.session_history.create_conversation("p", title="记忆"))
+    conversation_id = conversation["id"]
+    asyncio.run(
+        orch.session_history.append(
+            "p", {"role": "user", "content": "上一轮决定让林舟留在新城"}, conversation_id=conversation_id
+        )
+    )
+    asyncio.run(
+        orch.session_history.append(
+            "p", {"role": "assistant", "content": "记住了这个设定。"}, conversation_id=conversation_id
+        )
+    )
+    captured = {}
+
+    async def fake_decide(*_args, **_kwargs):
+        return {"action": "continue"}
+
+    async def fake_service(*_args, **kwargs):
+        captured.update(kwargs)
+        return {"success": True, "action": "agentic_write"}
+
+    orch.decide_writing_action = fake_decide
+    orch.writing_service.run = fake_service
+    result = asyncio.run(
+        orch.run_chat_turn("p", "V1C001", "继续", conversation_id=conversation_id)
+    )
+
+    assert result["success"] is True
+    assert [item["content"] for item in captured["conversation_history"]] == [
+        "上一轮决定让林舟留在新城",
+        "记住了这个设定。",
+    ]
 
 
 def test_chat_turn_forwards_explicit_reasoning_level(tmp_path):
@@ -484,6 +717,40 @@ def test_chat_turn_routes_plan(tmp_path):
     assert r["context_plan"]["route_path"] == "plan_workflow"
 
 
+def test_cancelled_plan_generation_does_not_revive_terminal_runtime(tmp_path):
+    from app.context_engine.turn_scope import current_turn_scope
+
+    orch = _orch(tmp_path)
+
+    async def fake_decide(*_args, **_kwargs):
+        return {"action": "plan"}
+
+    async def fake_create(*_args, **_kwargs):
+        current_turn_scope().cancel()
+        return None
+
+    orch.decide_writing_action = fake_decide
+    orch.application.plans.create_plan = fake_create
+    result = asyncio.run(orch.run_chat_turn("p", "V1C001", "规划后续章节"))
+
+    assert result["terminal_state"] == "cancelled"
+    assert result["runtime"]["state"] == "cancelled"
+    assert result["reason"] == "turn_cancelled"
+
+
+def test_new_turn_scope_is_not_poisoned_by_legacy_session_cancel_flag(tmp_path):
+    from app.context_engine.turn_scope import bind_turn_scope, new_turn_scope
+
+    orch = _orch(tmp_path)
+    orch.cancel_session()
+    scope = new_turn_scope(project_id="p", chapter_id="V1C001")
+
+    with bind_turn_scope(scope):
+        assert orch.writing_service.is_cancelled() is False
+        scope.cancel()
+        assert orch.writing_service.is_cancelled() is True
+
+
 def test_chat_turn_auto_execute_plan(tmp_path):
     orch = _orch(tmp_path)
 
@@ -536,7 +803,7 @@ class _AgentGateway:
         return {
             "content": None,
             "tool_calls": [
-                {"id": "w1", "type": "function", "name": "write_content", "arguments": '{"content":"夜色四合。"}'}
+                {"id": "w1", "type": "function", "name": "write_content", "arguments": '{"chapter_id":"V1C001","content":"夜色四合。"}'}
             ],
             "usage": {},
             "model": "fake",
@@ -564,7 +831,7 @@ class _RepeatedEditGateway:
         return {
             "content": None,
             "tool_calls": [
-                {"id": "e1", "type": "function", "name": "edit_lines", "arguments": '{"old_text":"夜色","new_text":"暮色"}'}
+                {"id": "e1", "type": "function", "name": "edit_lines", "arguments": '{"chapter_id":"V1C001","old_text":"夜色","new_text":"暮色"}'}
             ],
             "usage": {},
             "model": "fake",

@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
-from app.eval.longform_artifacts import read_json, write_jsonl
+from evaluation.longform_artifacts import read_json, write_jsonl
 
 
 def export_p12_cases_from_traces(

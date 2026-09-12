@@ -31,11 +31,11 @@ class EvidenceIndexStorage(BaseStorage):
 
     def get_index_path(self, project_id: str, index_name: str):
         """Return the JSONL path for an index."""
-        return self.get_index_dir(project_id) / f"{index_name}.jsonl"
+        return self.asset_path(project_id, "index", f"{index_name}.jsonl", field="index_name")
 
     def get_meta_path(self, project_id: str, index_name: str):
         """Return the metadata path for an index."""
-        return self.get_index_dir(project_id) / f"{index_name}.meta.json"
+        return self.asset_path(project_id, "index", f"{index_name}.meta.json", field="index_name")
 
     async def write_items(self, project_id: str, index_name: str, items: List[EvidenceItem]) -> None:
         """Write evidence items to index storage."""

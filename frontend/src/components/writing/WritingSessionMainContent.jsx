@@ -53,7 +53,20 @@ export default function WritingSessionMainContent({ vm }) {
 
   const body =
     activeDocument?.type === 'outline' && projectId ? (
-      <OutlineView projectId={projectId} />
+      diffReview?.assetType === 'outline' ? (
+        <DiffReviewView
+          ops={diffReview.ops}
+          hunks={diffReview.hunks}
+          stats={diffReview.stats}
+          decisions={diffDecisions}
+          onAcceptHunk={onAcceptDiffHunk}
+          onRejectHunk={onRejectDiffHunk}
+          originalVersion={t('writingSession.currentText')}
+          revisedVersion={t('writingSession.revisedText')}
+        />
+      ) : (
+        <OutlineView projectId={projectId} />
+      )
     ) : (
       <AnimatePresence mode="wait">
         {status === 'card_editing' && activeCard ? (

@@ -15,13 +15,11 @@ License: PolyForm Noncommercial License 1.0.0
 
 import hashlib
 import re
-import time
 from typing import Any, Dict, List, Optional
 
 from app.schemas.canon import Fact, TimelineEvent, CharacterState
 from app.schemas.draft import ChapterSummary
 from app.schemas.card import StyleCard
-from app.schemas.evidence import EvidenceItem
 from app.utils.chapter_id import ChapterIDValidator, normalize_chapter_id
 from app.error_contract import safe_error_code
 from app.utils.logger import get_logger
@@ -39,6 +37,81 @@ class AnalysisMixin:
     updating character states, detecting proposals, and managing card creation.
     Supports batch operations for efficient multi-chapter processing.
     """
+
+    @staticmethod
+    def _normalize_fact_statement(value: Any) -> str:
+        return re.sub(r"[\s\W_]+", "", str(value or "")).casefold()
+
+    async def _persist_fact_candidates(
+        self,
+        project_id: str,
+        candidates: List[Any],
+        *,
+        chapter: str,
+        source_ref: str,
+        default_status: str = "needs_review",
+    ) -> Dict[str, int]:
+        """唯一事实写入 owner：统一去重、编号、状态与出处绑定。"""
+
+        existing = await self.canon_storage.get_all_facts_raw(project_id)
+        existing_ids = {str(item.get("id") or "") for item in existing}
+        statements = {
+            self._normalize_fact_statement(item.get("statement") or item.get("content")) for item in existing
+        }
+        statements.discard("")
+        next_index = 1
+        for fact_id in existing_ids:
+            match = re.match(r"^F(\d+)$", fact_id, re.IGNORECASE)
+            if match:
+                next_index = max(next_index, int(match.group(1)) + 1)
+
+        saved = 0
+        deduplicated = 0
+        for raw in candidates:
+            if hasattr(raw, "model_dump"):
+                data = raw.model_dump(exclude_none=True)
+            elif isinstance(raw, dict):
+                data = dict(raw)
+            else:
+                continue
+            statement = str(data.get("statement") or data.get("content") or "").strip()
+            normalized = self._normalize_fact_statement(statement)
+            if not normalized or normalized in statements:
+                deduplicated += 1
+                continue
+            requested_id = str(data.get("id") or "")
+            if not requested_id or requested_id in existing_ids:
+                while f"F{next_index:04d}" in existing_ids:
+                    next_index += 1
+                requested_id = f"F{next_index:04d}"
+                next_index += 1
+            evidence = str(data.pop("evidence", "") or "").strip()
+            evidence_refs = list(data.get("evidence_refs") or [])
+            if evidence:
+                evidence_hash = hashlib.sha256(evidence.encode("utf-8")).hexdigest()
+                evidence_refs.append(f"chapter:{chapter}#sha256:{evidence_hash}")
+                data.setdefault("context_prefix", f"证据：{evidence[:240]}")
+            source_refs = list(data.get("source_refs") or [])
+            if source_ref and source_ref not in source_refs:
+                source_refs.append(source_ref)
+            fact = Fact(
+                **{
+                    **data,
+                    "id": requested_id,
+                    "statement": statement,
+                    "source": data.get("source") or chapter,
+                    "introduced_in": data.get("introduced_in") or chapter,
+                    "status": data.get("status") or default_status,
+                    "confidence_method": data.get("confidence_method") or "model_declared",
+                    "source_refs": source_refs,
+                    "evidence_refs": evidence_refs,
+                }
+            )
+            await self.canon_storage.add_fact(project_id, fact)
+            existing_ids.add(requested_id)
+            statements.add(normalized)
+            saved += 1
+        return {"saved": saved, "deduplicated": deduplicated}
 
     def _resolve_volume_id_from_analysis(self, chapter: str, analysis: Dict[str, Any]) -> str:
         """
@@ -142,49 +215,17 @@ class AnalysisMixin:
         if operation == "replace_chapter":
             await self.canon_storage.delete_unconfirmed_generated_facts_by_chapter(project_id, normalized_chapter)
 
-        existing_facts = await self.canon_storage.get_all_facts_raw(project_id)
-        existing_statements = {
-            re.sub(r"[\s\W_]+", "", str(item.get("statement") or item.get("content") or "")).lower()
-            for item in existing_facts
-        }
-        existing_ids = {str(item.get("id") or "") for item in existing_facts}
-        next_fact_index = 1
-        for existing_id in existing_ids:
-            match = re.match(r"^F(\d+)$", existing_id, re.IGNORECASE)
-            if match:
-                next_fact_index = max(next_fact_index, int(match.group(1)) + 1)
-
         facts_saved = 0
+        facts_deduplicated = 0
         if operation != "none":
-            for candidate in candidates:
-                statement = str(candidate.get("statement") or "").strip()
-                normalized_statement = re.sub(r"[\s\W_]+", "", statement).lower()
-                if not statement or not normalized_statement or normalized_statement in existing_statements:
-                    continue
-                while f"F{next_fact_index:04d}" in existing_ids:
-                    next_fact_index += 1
-                fact_id = f"F{next_fact_index:04d}"
-                next_fact_index += 1
-                evidence = str(candidate.get("evidence") or "").strip()
-                evidence_hash = hashlib.sha256(evidence.encode("utf-8")).hexdigest()
-                await self.canon_storage.add_fact(
-                    project_id,
-                    Fact(
-                        id=fact_id,
-                        statement=statement,
-                        source=normalized_chapter,
-                        introduced_in=normalized_chapter,
-                        confidence=0.8,
-                        status="needs_review",
-                        context_prefix=f"证据：{evidence[:240]}",
-                        source_refs=[f"writer_turn:{normalized_chapter}"],
-                        evidence_refs=[f"chapter:{normalized_chapter}#sha256:{evidence_hash}"],
-                        confidence_method="model_declared",
-                    ),
-                )
-                existing_ids.add(fact_id)
-                existing_statements.add(normalized_statement)
-                facts_saved += 1
+            persisted = await self._persist_fact_candidates(
+                project_id,
+                candidates,
+                chapter=normalized_chapter,
+                source_ref=f"writer_turn:{normalized_chapter}",
+            )
+            facts_saved = persisted["saved"]
+            facts_deduplicated = persisted["deduplicated"]
 
         try:
             from app.services.chapter_binding_service import chapter_binding_service
@@ -203,7 +244,7 @@ class AnalysisMixin:
             "stats": {
                 "facts_saved": facts_saved,
                 "facts_rejected_evidence": rejected_evidence,
-                "facts_deduplicated": max(0, len(candidates) - facts_saved),
+                "facts_deduplicated": facts_deduplicated,
             },
         }
 
@@ -528,39 +569,16 @@ class AnalysisMixin:
                 except Exception as exc:
                     logger.warning("Failed to clear chapter relations on overwrite: %s", exc)
 
-            # Load existing fact IDs once before the loop (avoid N × O(M) scans)
-            existing_facts = await self.canon_storage.get_all_facts_raw(project_id)
-            existing_ids = {item.get("id") for item in existing_facts if item.get("id")}
-            next_fact_index = 1
-            for existing_id in existing_ids:
-                match = re.match(r"^F(\d+)$", str(existing_id or ""), re.IGNORECASE)
-                if match:
-                    next_fact_index = max(next_fact_index, int(match.group(1)) + 1)
-
             facts_input = analysis.get("facts", []) or []
             if len(facts_input) > 5:
                 facts_input = facts_input[:5]
-
-            for item in facts_input:
-                fact_data = item if isinstance(item, dict) else {}
-                fact_data = {**fact_data}
-                if not fact_data.get("statement") and not fact_data.get("content"):
-                    continue
-                fact_data["statement"] = fact_data.get("statement") or fact_data.get("content") or ""
-                fact_data["source"] = fact_data.get("source") or summary.chapter
-                fact_data["introduced_in"] = fact_data.get("introduced_in") or summary.chapter
-                fact_data.setdefault("confidence_method", "model_declared")
-                fact_data.setdefault("source_refs", [f"chapter_analysis:{summary.chapter}"])
-                if not fact_data.get("id") or fact_data.get("id") in existing_ids:
-                    while f"F{next_fact_index:04d}" in existing_ids:
-                        next_fact_index += 1
-                    fact_data["id"] = f"F{next_fact_index:04d}"
-                    next_fact_index += 1
-                existing_ids.add(fact_data["id"])
-                # Phase 14：AI 章末抽取的事实默认 needs_review（待作者确认），不直接污染 confirmed 主 canon。
-                fact_data.setdefault("status", "needs_review")
-                await self.canon_storage.add_fact(project_id, Fact(**fact_data))
-                facts_saved += 1
+            persisted = await self._persist_fact_candidates(
+                project_id,
+                facts_input,
+                chapter=summary.chapter,
+                source_ref=f"chapter_analysis:{summary.chapter}",
+            )
+            facts_saved = persisted["saved"]
 
             for item in analysis.get("timeline_events", []) or []:
                 event_data = item if isinstance(item, dict) else {}
@@ -645,13 +663,12 @@ class AnalysisMixin:
                 final_draft=content,
             )
 
-            for fact in canon_updates.get("facts", []) or []:
-                # Phase 14：AI 抽取默认 needs_review，待作者确认后才进 confirmed 主 canon。
-                try:
-                    fact.status = "needs_review"
-                except (AttributeError, TypeError, ValueError):
-                    pass
-                await self.canon_storage.add_fact(project_id, fact)
+            await self._persist_fact_candidates(
+                project_id,
+                list(canon_updates.get("facts", []) or []),
+                chapter=normalized_chapter,
+                source_ref=f"chapter_analysis:{normalized_chapter}",
+            )
 
             for event in canon_updates.get("timeline_events", []) or []:
                 await self.canon_storage.add_timeline_event(project_id, event)
@@ -775,114 +792,3 @@ class AnalysisMixin:
         """
         style_text = await self.archivist.extract_style_profile(sample_text)
         return StyleCard(style=style_text)
-
-    async def _persist_research_trace_memory(
-        self,
-        project_id: str,
-        chapter: str,
-        working_memory_payload: Optional[Dict[str, Any]],
-    ) -> None:
-        """
-        持久化研究追踪为内存证据项 / Persist research trace as memory evidence items.
-
-        Converts research trace information (queries, rounds, sufficiency) into
-        evidence items for later retrieval and context building.
-
-        Args:
-            project_id: 项目ID / Project identifier.
-            chapter: 章节ID / Chapter identifier.
-            working_memory_payload: 工作记忆载荷 / Working memory payload with research trace.
-        """
-        if not working_memory_payload:
-            return
-        trace = working_memory_payload.get("research_trace") or []
-        stop_reason = working_memory_payload.get("research_stop_reason") or ""
-        report = working_memory_payload.get("sufficiency_report") or {}
-        if not trace:
-            return
-
-        lines = [f"研究轮次: {len(trace)}", f"停止原因: {stop_reason or 'unknown'}"]
-        if report:
-            needs = "是" if report.get("needs_user_input") else "否"
-            lines.append(f"证据不足需反问: {needs}")
-            weak = report.get("weak_gaps") or []
-            if weak:
-                lines.append("薄弱缺口: " + "；".join([str(item) for item in weak[:4]]))
-
-        for item in trace[:5]:
-            if not isinstance(item, dict):
-                continue
-            queries = item.get("queries") or []
-            types = item.get("types") or {}
-            count = item.get("count")
-            lines.append(f"第{item.get('round')}轮: {', '.join(queries[:4])} | types={types} | count={count}")
-
-        text = "\n".join([line for line in lines if line])
-        if not text:
-            return
-
-        try:
-            from app.services.evidence_service import evidence_service
-        except Exception as exc:
-            logger.debug("evidence_service not available: %s", exc)
-            return
-
-        item = EvidenceItem(
-            id=f"memory:research:{int(time.time())}",
-            type="memory",
-            text=text,
-            source={"chapter": chapter, "kind": "research_trace"},
-            scope="chapter",
-            entities=[],
-            meta={"kind": "research_trace"},
-        )
-        await evidence_service.append_memory_items(project_id, [item])
-
-    async def _persist_answer_memory(
-        self,
-        project_id: str,
-        chapter: str,
-        answers: List[Dict[str, Any]],
-    ) -> None:
-        """
-        持久化预写答题为内存证据项 / Persist pre-writing answers as memory evidence items.
-
-        Converts user-provided pre-writing answers into evidence items
-        for retrieval and context building in future sessions.
-
-        Args:
-            project_id: 项目ID / Project identifier.
-            chapter: 章节ID / Chapter identifier.
-            answers: 用户答题列表 / List of user answer dicts.
-        """
-        if not answers:
-            return
-        try:
-            from app.services.evidence_service import evidence_service
-            from app.services.working_memory_service import _answer_to_evidence_items
-        except Exception as exc:
-            logger.debug("evidence/working_memory service not available: %s", exc)
-            return
-
-        items = []
-        for raw in _answer_to_evidence_items(answers, chapter=chapter):
-            try:
-                items.append(
-                    EvidenceItem(
-                        id=raw.get("id") or "",
-                        type="memory",
-                        text=raw.get("text") or "",
-                        source={
-                            **(raw.get("source") or {}),
-                            "chapter": chapter,
-                        },
-                        scope="chapter",
-                        entities=[],
-                        meta=raw.get("meta") or {},
-                    )
-                )
-            except (KeyError, TypeError, ValueError):
-                continue
-
-        if items:
-            await evidence_service.append_memory_items(project_id, items)

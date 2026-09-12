@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileText, Loader2, Check, AlertCircle } from 'lucide-react';
 
 import { outlineAPI } from '../../api';
+import { useIDE } from '../../context/IDEContext';
 import { useLocale } from '../../i18n';
 
 /**
@@ -11,6 +12,7 @@ import { useLocale } from '../../i18n';
  */
 export default function OutlineView({ projectId }) {
   const { t } = useLocale();
+  const { registerSaveTarget } = useIDE();
   const [content, setContent] = useState('');
   const [settings, setSettings] = useState({ enabled: true, require_consult: false });
   const [loading, setLoading] = useState(true);
@@ -49,7 +51,8 @@ export default function OutlineView({ projectId }) {
 
   // 末次写入生效：不传 expected_revision，单文档单用户永不冲突、永不丢内容。
   const flushSave = useCallback(async () => {
-    if (!dirtyRef.current || savingRef.current) return;
+    if (!dirtyRef.current) return true;
+    if (savingRef.current) return false;
     const snapshot = contentRef.current;
     savingRef.current = true;
     dirtyRef.current = false;
@@ -65,6 +68,7 @@ export default function OutlineView({ projectId }) {
         setSaveState('saved');
         setTimeout(() => setSaveState((s) => (s === 'saved' ? 'idle' : s)), 1500);
       }
+      return true;
     } catch (_e) {
       savingRef.current = false;
       dirtyRef.current = true; // 保留脏标记，稍后重试，不丢内容。
@@ -74,8 +78,19 @@ export default function OutlineView({ projectId }) {
         retryTimerRef.current = null;
         void flushSave();
       }, 2500);
+      return false;
     }
   }, [projectId]);
+
+  useEffect(
+    () =>
+      registerSaveTarget('outline', {
+        label: t('outline.title') || '大纲',
+        isDirty: () => dirtyRef.current,
+        save: flushSave,
+      }),
+    [flushSave, registerSaveTarget, t],
+  );
 
   // Agent 通过 edit_outline 改写大纲后同步到编辑器；用户正在编辑（dirty）时不覆盖其输入。
   const refreshFromServer = useCallback(async () => {

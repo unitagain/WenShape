@@ -135,222 +135,101 @@ def get_archivist_system_prompt(language: str = "zh") -> str:
     )
 
 
-def archivist_style_profile_prompt(sample_text: str, language: str = "zh") -> PromptPair:
-    """
-    生成文风提炼提示词。
 
-    设计目标：
-    - 全方位、系统性地提炼写作手法
-    - 输出可直接用于指导后续写作
-    - 从宏观到微观，从结构到细节，层层递进
-    - 避免泛泛而谈，聚焦具体可执行的技法
+_STYLE_SECTIONS_ZH = [
+    "一、叙事视角与距离：人称、聚焦对象、进入内心的深度、时态与叙述者立场",
+    "二、句式与节奏：长短句配比、段落长度、信息释放快慢、留白与停顿习惯",
+    "三、描写偏好：优先调用的感官通道、反复出现的意象群、细节密度、环境/动作/心理的配比",
+    "四、对话与心理：对话在文中的占比、说话标签与动作插入习惯、内心独白的呈现方式",
+    "五、惯用手法与癖好：反复使用的修辞、转场方式、标点与排版习惯、可辨识的表达偏好",
+    "六、明显回避：该文风刻意不用的写法",
+]
+
+_STYLE_SECTIONS_EN = [
+    "1. POV and distance: person, focalization, depth of interiority, tense, narrator stance",
+    "2. Sentence and rhythm: long/short mix, paragraph length, pacing of information, use of white space",
+    "3. Description preferences: dominant sensory channels, recurring imagery, detail density, "
+    "balance of setting/action/interiority",
+    "4. Dialogue and interiority: dialogue share, speech-tag and beat habits, how inner thought is rendered",
+    "5. Signature habits: recurring rhetorical moves, transitions, punctuation and layout habits",
+    "6. Deliberate avoidances: what this voice clearly refuses to do",
+]
+
+
+def archivist_style_profile_prompt(sample_text: str, language: str = "zh") -> PromptPair:
+    """生成文风提炼提示词。
+
+    产出目标是一份**可直接作为写作指令注入的文风提示词**，不是文学评论。
+    因此要求：精准、简洁、可执行；只写从样本中真正看得出来的偏好。
+
+    设计取向（U9 修订）：早期版本要求输出 A-H 八大节（含指标区间、模板骨架、自检清单），
+    实测产出冗长、易撞 max_tokens 被截断（截断后 content 可能为空 → 前端表现为「提炼完没有文风」），
+    且大量篇幅并不影响实际写作。现收敛为 6 节短清单并显式限长——文风卡每轮都进 Writer
+    稳定前缀，长度直接换算成每轮固定 token 成本。
     """
+
     if language == "en":
         style_system = _u_shape(
             "\n".join(
                 [
                     "### Role",
-                    "You are a senior fiction editor and writing coach.",
-                    "Your job is to extract reusable writing techniques from sample prose.",
+                    "You are a senior fiction editor. Extract a reusable STYLE PROMPT from the sample prose.",
+                    "The output will be injected verbatim as writing instructions for another model.",
                     "",
-                    "### Constraints",
-                    "",
-                    "[P0-MUST] Actionable only: every point must be directly applicable while writing.",
-                    "[P0-MUST] No vague praise/judgment.",
-                    "[P0-MUST] Focus on how to write, not what happened.",
-                    "[P0-MUST] Do not copy long spans from sample text.",
+                    "### Hard rules",
+                    "[P0-MUST] Actionable directives only - how to write, never what happened.",
+                    "[P0-MUST] No praise, no evaluation, no literary criticism.",
+                    "[P0-MUST] No character names, place names, or plot details.",
+                    "[P0-MUST] Do not copy any span of 8+ words from the sample.",
+                    "[P0-MUST] Only state preferences actually visible in the sample; drop a whole "
+                    "section rather than guess.",
+                    "[P0-MUST] Under 350 words total. Short bullets. No preamble, no closing remarks.",
                 ]
             ),
             "\n".join(
-                [
-                    "### Analysis Angles",
-                    "",
-                    "- Genre and narrative positioning",
-                    "- POV, narrative distance, tense, stance",
-                    "- Rhythm and information release",
-                    "- Sentence texture and dialogue/inner-thought balance",
-                    "- Sensory preferences and recurring imagery",
-                    "- Distinctive techniques vs common writing habits",
-                ]
+                ["### Sections (keep this order; drop any you cannot support)", "", *_STYLE_SECTIONS_EN]
             ),
         )
         user = "\n".join(
             [
-                "### Style Manual Task",
+                "### Sample",
                 "",
-                "Extract an executable style handbook from the sample.",
-                "",
-                "### Output Structure (A-H)",
-                "",
-                "A. Genre/narrative positioning (6-10 items)",
-                "B. Core style principles (3-6 items: principle -> methods -> use-case -> risk)",
-                "C. Observable style fingerprint (range-level metrics)",
-                "D. Paragraph-level recipes by function",
-                "E. Tunable knobs (at least 6, each with low/medium/high)",
-                "F. Pitfalls and anti-patterns (5-10)",
-                "G. Minimal skeleton templates (1-2, placeholders only)",
-                "H. Self-check checklist (6 items)",
-                "",
-                "### Quality Rules",
-                "",
-                "[P0-MUST] Every bullet must include concrete operations.",
-                "[P0-MUST] No character/place names and no plot retelling.",
-                "[P1-SHOULD] If uncertain, explicitly mark as uncertain.",
-                "",
-                "### Sample Text",
-                "",
-                "<<<SAMPLE_TEXT_START>>>",
+                "<<<SAMPLE_START>>>",
                 smart_truncate(str(sample_text or ""), max_chars=20000),
-                "<<<SAMPLE_TEXT_END>>>",
+                "<<<SAMPLE_END>>>",
                 "",
-                "### Start Output",
-                "Output in English with A-H headings and this exact order.",
+                "Output the style prompt in English now. Bullets only.",
             ]
         )
         return PromptPair(system=style_system, user=user)
-    # 专用系统提示词 - 文学分析专家角色
+
     style_system = _u_shape(
         "\n".join(
             [
-                "### 角色定位",
-                "你是一位资深文学编辑与写作教练，拥有20年小说创作与编辑经验。",
-                "核心职责：从范文中提炼「可复制的写作技法体系」，用于指导后续创作。",
+                "### 角色",
+                "你是资深小说编辑。你的任务是从样本中提炼一份**可直接用作写作指令的文风提示词**。",
+                "输出会被原样注入给另一个模型作为写作约束，因此必须精准、简洁、可执行。",
                 "",
-                "### 专业能力",
-                "- 擅长：叙事结构分析、文体风格鉴定、写作技法提炼、创作指导",
-                "- 分析视角：从宏观架构到微观笔触，从叙事策略到语言肌理",
-                "",
-                "=" * 50,
-                "### 核心约束",
-                "=" * 50,
-                "",
-                f"{P0_MARKER} 可执行性原则：",
-                "  - 每条指导必须是「可直接应用于写作」的具体技法",
-                "  - 禁止空洞评价（如「文笔优美」「情感细腻」「引人入胜」）",
-                "  - 禁止主观判断（如「写得很好」「非常精彩」）",
-                "",
-                f"{P0_MARKER} 技法导向原则：",
-                "  - 聚焦「怎么写」而非「写了什么」",
-                "  - 提炼「方法」而非「内容」",
-                "  - 输出「规则」而非「感受」",
-                "",
-                f"{P0_MARKER} 原创性原则：",
-                "  - 禁止粘贴/改写样本文本：禁止出现任意连续8个字与原文完全一致",
-                "  - 禁止出现人物姓名/专名/地名/具体剧情细节（用抽象占位符代替）",
-                "  - 用抽象化的技法描述替代具体内容引用",
+                "### 硬性约束",
+                f"{P0_MARKER} 只写「怎么写」的可执行指令，不写「写了什么」。",
+                f"{P0_MARKER} 禁止任何评价与赞美（如「文笔优美」「情感细腻」），禁止文学评论腔。",
+                f"{P0_MARKER} 禁止出现人物姓名、地名、专名与具体情节。",
+                f"{P0_MARKER} 禁止与样本连续 8 字以上雷同。",
+                f"{P0_MARKER} 只写样本中**确实看得出**的偏好；看不出的整节略去，不要猜测填充。",
+                f"{P0_MARKER} 全文不超过 500 字。短条目，不要开场白、不要结束语、不要自我说明。",
             ]
         ),
-        "\n".join(
-            [
-                "### 分析提示（不追求凑齐，追求可用）",
-                "",
-                "你可以参考以下视角，但不要求每项都写；如果某项无法从样本稳定判断，请明确写“不确定”。",
-                "- 题材/体裁与读者预期",
-                "- 叙事视角、叙述距离、时态与叙述姿态",
-                "- 节奏与信息释放（推进/抒情/对话/转场/高潮）",
-                "- 语言肌理（句长分布、短长句切换、动词/形容词倾向）",
-                "- 对白与内心的组织方式（留白、暗示、反问、停顿等）",
-                "- 感官与意象偏好（偏视觉/触觉/听觉，意象是否反复出现）",
-                "- 差异化写法：与常见写法的“可操作差异点”",
-                "",
-                "输出前做质量闸门：任何空泛建议一律删掉或改写成可执行表述。",
-            ]
-        ),
+        "\n".join(["### 输出结构（保持顺序；无法支撑的整节略去）", "", *_STYLE_SECTIONS_ZH]),
     )
-
-    critical = "\n".join(
-        [
-            "### 文风提炼任务",
-            "",
-            "从样本文本中提炼一份可执行的「文风作战手册」，用于指导后续创作稳定复现写法。",
-            "",
-            "=" * 50,
-            "### 输出结构（严格遵循）",
-            "=" * 50,
-            "",
-            "## A. 题材/体裁与叙事定位（6-10条）",
-            "- 用提纲句描述：题材/子类型倾向、叙事视角与距离、时态与叙述姿态、读者预期、文本边界（更像什么/不像什么）。",
-            "",
-            "## B. 风格核心原则（3-6条）",
-            "- 每条格式：原则一句话 → 具体做法（2-4条）→ 适用场景 → 常见副作用/误区。",
-            "",
-            "## C. 风格指纹（可观察/可量化）",
-            "- 给出区间或档位描述（不要求精确数字）：句长分布、短长句切换、对白占比、解释密度、感官偏好、比喻密度、镜头远近、内心/动作比例等。",
-            "",
-            "## D. 段落级写法（按功能给“操作配方”）",
-            "- 至少覆盖：推进段/抒情段/对话段/转场段/高潮段（可按样本特点增删）。",
-            "- 每类给 3-6 条可执行操作（句式/段落组织/信息释放顺序/节奏控制）。",
-            "",
-            "## E. 可调旋钮（每项 3 档）",
-            "- 至少给 6 个旋钮，例如：节奏、解释密度、情绪外显、感官密度、对白密度、比喻密度、镜头距离。",
-            "- 每个旋钮输出：低/中/高 三档的“写法表现 + 适用场景 + 风险”。",
-            "",
-            "## F. 禁忌与易错点（5-10条）",
-            "- 写清楚：会破坏该文风的具体写法，以及替代方案。",
-            "",
-            "## G. 最小骨架模板（1-2个）",
-            "- 只给占位符与结构，不给可被模仿的具体文句。",
-            "",
-            "## H. 自检清单（6项）",
-            "- 我是否输出了空话？每条是否可直接落笔？是否含专名/剧情？是否示例过多导致刻意模仿？是否与样本文本特点对齐？",
-        ]
-    )
-
-    quality_rules = "\n".join(
-        [
-            "### 输出质量标准",
-            "",
-            f"{P0_MARKER} 具体且可执行：",
-            "  - 每条建议都要写成“动作指令”，并包含至少一个可操作要素（位置/频率/比例/触发条件/句式/段落组织）。",
-            "  - 避免“好看/高级/细腻/有张力”这类形容词；必须解释为可落笔的写法。",
-            "",
-            f"{P0_MARKER} 少示例策略：",
-            "  - 禁止给出大量示例句；只允许在 G 部分提供 1-2 个“占位符骨架模板”。",
-            "",
-            f"{P1_MARKER} 自适应覆盖：",
-            "  - 不追求凑齐维度或凑条目；宁缺毋滥，但要写出样本的“差异化写法”。",
-            "",
-            f"{P1_MARKER} 允许不确定：",
-            "  - 无法稳定判断的点请标注“不确定/可能”，不要猜。",
-        ]
-    )
-
-    examples = "\n".join(
-        [
-            "### 格式示例（仅展示标题与占位符，禁止照抄内容）",
-            "",
-            "## A. 题材/体裁与叙事定位（示例）",
-            "- ……",
-            "",
-            "## B. 风格核心原则（示例）",
-            "- 原则：…… → 做法：…… → 场景：…… → 风险：……",
-            "",
-            "## G. 最小骨架模板（示例）",
-            "- 【动作】→【感官】→【内心（克制）】→【留白/反问】→【收束意象】",
-        ]
-    )
-
     user = "\n".join(
         [
-            critical,
+            "### 样本",
             "",
-            quality_rules,
-            "",
-            "### 示例文本（仅用于提取技法，不要复述内容）",
-            "",
-            "<<<SAMPLE_TEXT_START>>>",
+            "<<<样本开始>>>",
             smart_truncate(str(sample_text or ""), max_chars=20000),
-            "<<<SAMPLE_TEXT_END>>>",
+            "<<<样本结束>>>",
             "",
-            examples,
-            "",
-            "### 开始输出",
-            "请严格按 A-H 的标题与顺序输出；若某部分信息不足，请写“信息不足/不确定”并说明原因。",
-            "",
-            "─" * 40,
-            "【核心要求重复 - 请务必遵守】",
-            "",
-            f"{P0_MARKER} 只输出中文；不抄原句；不含专名/剧情；每条必须可执行；宁缺毋滥。",
+            "现在输出文风提示词。只输出条目本身。",
         ]
     )
     return PromptPair(system=style_system, user=user)

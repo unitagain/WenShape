@@ -8,14 +8,14 @@ from datetime import datetime, timedelta, timezone
 from app.context_engine.compact_artifact import CompactArtifactV2, CompactVerifier
 from app.context_engine.context_plan import build_context_plan_v2
 from app.context_engine.memory_record import MemoryRecordV2
-from app.eval.p12_context_eval import (
+from evaluation.p12_context_eval import (
     analyze_p12_pairwise,
     assemble_p12_context,
     generate_p12_candidates,
     p12_pair_fingerprint,
     score_p12_candidates,
 )
-from app.eval.writing_judge import POINTWISE_PAIR_JUDGE_PROMPT_VERSION
+from evaluation.writing_judge import POINTWISE_PAIR_JUDGE_PROMPT_VERSION
 from app.storage.creative_memory import CreativeMemoryStorage
 from app.storage.session_history import SessionHistoryStorage
 from app.orchestrator.architecture import service_boundaries
@@ -267,7 +267,7 @@ def test_p12_scoring_uses_order_free_pointwise_protocol(monkeypatch):
             "usage_rows": [{"total_tokens": 10}, {"total_tokens": 12}],
         }
 
-    monkeypatch.setattr("app.eval.p12_context_eval.run_pointwise_pair_judge_eval", pointwise)
+    monkeypatch.setattr("evaluation.p12_context_eval.run_pointwise_pair_judge_eval", pointwise)
     candidates = [
         {
             "id": "p1-A",

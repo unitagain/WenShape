@@ -419,7 +419,7 @@ def _parser() -> argparse.ArgumentParser:
 
 async def _main() -> int:
     _ensure_sys_path()
-    from app.eval.longform_benchmark import LongformBenchmarkHarness, ensure_benchmark_gitignore
+    from evaluation.longform_benchmark import LongformBenchmarkHarness, ensure_benchmark_gitignore
 
     args = _parser().parse_args()
     harness = LongformBenchmarkHarness(args.root)

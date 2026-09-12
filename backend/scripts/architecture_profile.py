@@ -57,13 +57,34 @@ def _module_name(path: Path) -> str:
     return ".".join(parts)
 
 
-def _imports(tree: ast.AST) -> set[str]:
+def _imports(tree: ast.AST, *, package_parts: list[str] | None = None) -> set[str]:
+    """Collect imported app.* modules (absolute and package-relative).
+
+    Relative imports (``from .writer import WriterAgent`` inside ``app/agents/__init__.py``)
+    must resolve against the importer's package, or every package-``__init__`` re-export
+    chain looks disconnected and live modules get flagged as unreachable.
+    *package_parts* is the importer's package path (``["app", "agents"]`` for both
+    ``app/agents/__init__.py`` and ``app/agents/base.py``); None keeps only absolute imports
+    (used for external consumers under tests/scripts/evaluation).
+    """
+
     result: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             result.update(alias.name for alias in node.names if alias.name.startswith("app."))
-        elif isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("app."):
-            result.add(node.module)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and node.module.startswith("app.") and not node.level:
+                result.add(node.module)
+            elif node.level and package_parts is not None:
+                # level=1 → 当前包；level=2 → 上一级包……基点取导入者的包路径。
+                climb = min(node.level - 1, len(package_parts))
+                base_parts = package_parts[: len(package_parts) - climb]
+                if node.module:
+                    resolved = ".".join([*base_parts, node.module])
+                else:
+                    resolved = ".".join(base_parts)
+                if resolved.startswith("app."):
+                    result.add(resolved)
     return result
 
 
@@ -77,7 +98,10 @@ def _dependency_graph() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
             tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
         except (OSError, SyntaxError, UnicodeError):
             continue
-        for imported in _imports(tree):
+        # 相对导入的解析基点：包模块（__init__.py）的包是自身，普通模块的包是父级。
+        module_parts = module.split(".")
+        package_parts = module_parts if path.name == "__init__.py" else module_parts[:-1]
+        for imported in _imports(tree, package_parts=package_parts):
             target = imported
             while target and target not in modules:
                 target = target.rpartition(".")[0]
@@ -87,6 +111,80 @@ def _dependency_graph() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
             importers[target].add(module)
         graph.setdefault(module, set())
     return graph, importers
+
+
+def _external_import_roots() -> set[str]:
+    """app.* modules imported from outside app/ (tests, scripts, evaluation).
+
+    The dependency graph spans app/ only, so a module used exclusively by an
+    external consumer would look dead to a pure app-internal reachability walk.
+    The project's dead-code criterion (U10-C2) counts references across
+    tests/scripts/evaluation too, so those imports become roots here.
+    """
+
+    roots: set[str] = set()
+    modules: set[str] = set()
+    for path in APP_ROOT.rglob("*.py"):
+        modules.add(_module_name(path))
+        parent = _module_name(path)
+        while "." in parent:
+            parent = parent.rpartition(".")[0]
+            modules.add(parent)
+    for directory in ("tests", "scripts", "evaluation"):
+        root = BACKEND_ROOT / directory
+        if not root.exists():
+            continue
+        for path in root.rglob("*.py"):
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+            except (OSError, SyntaxError, UnicodeError):
+                continue
+            for imported in _imports(tree):
+                target = imported
+                while target and target not in modules:
+                    target = target.rpartition(".")[0]
+                if target:
+                    roots.add(target)
+    return roots
+
+
+def _unreachable_modules(graph: dict[str, set[str]]) -> list[str]:
+    """Modules no runtime or tooling entry can import (dead-module candidates).
+
+    Roots are every importable entry the host actually loads: the FastAPI app,
+    each router module (registered dynamically), dependencies, plus every app.*
+    module imported by tests/scripts/evaluation. Reference counting can only
+    find dead *leaves* — a dead *subgraph* whose members import each other looks
+    alive to it (this is exactly how working_memory_service survived the U10-C2
+    sweep). Reachability from real entry points closes that gap.
+
+    Note: package ``__init__`` modules are excluded from the dead list — a
+    package is "reached" whenever any submodule is imported, and star-import
+    chains (app.prompts -> app.prompt_templates.*) are already edges in the
+    graph because ``ast.ImportFrom`` records the parent module.
+    """
+
+    roots = {"app.main", "app.dependencies", "app.routers"}
+    roots.update(name for name in graph if name.startswith("app.routers."))
+    roots.update(_external_import_roots())
+    seen: set[str] = set()
+    stack = [name for name in roots if name in graph]
+    while stack:
+        module = stack.pop()
+        if module in seen:
+            continue
+        seen.add(module)
+        stack.extend(graph.get(module, ()))
+    # 祖先闭包放在 BFS 之后：import 子模块隐式导入父包，父包因此可达。
+    # 不能在遍历中提前把父包标为 seen——那会跳过父包 __init__ 自己的
+    # re-export 出边（providers.__init__ → 6 个 provider），活模块会被误判为死。
+    reachable = set(seen)
+    for module in seen:
+        parent = module.rpartition(".")[0]
+        while parent and parent != "app":
+            reachable.add(parent)
+            parent = parent.rpartition(".")[0]
+    return sorted(name for name in graph if name not in reachable and not name.endswith(".__init__") and name != "app")
 
 
 def _cycles(graph: dict[str, set[str]]) -> list[list[str]]:
@@ -130,8 +228,10 @@ def _cycles(graph: dict[str, set[str]]) -> list[list[str]]:
 
 def _external_private_accesses(roots: list[Path] | None = None) -> list[str]:
     violations: list[str] = []
-    roots = roots or [BACKEND_ROOT / name for name in ("app/routers", "app/jobs", "scripts", "tests")]
-    private_modules = ("app.orchestrator._", "app.llm_gateway._", "app.eval._")
+    # evaluation/ 自 V3 起独立于 app/：它仍受本检查约束（其 longform_pipeline 有 owner port 规则），
+    # 故必须显式列入扫描根——否则移出 app/ 会让既有规则静默失效。
+    roots = roots or [BACKEND_ROOT / name for name in ("app/routers", "app/jobs", "evaluation", "scripts", "tests")]
+    private_modules = ("app.orchestrator._", "app.llm_gateway._", "evaluation._")
     owner_types = {"Orchestrator", "LLMGateway"}
     for root in roots:
         if not root.exists():
@@ -186,7 +286,7 @@ def _external_private_accesses(roots: list[Path] | None = None) -> list[str]:
                 if (
                     isinstance(node, ast.Attribute)
                     and node.attr.startswith("_")
-                    and relative == "app/eval/longform_pipeline.py"
+                    and relative == "evaluation/longform_pipeline.py"
                     and isinstance(node.value, ast.Attribute)
                     and node.value.attr == "backend"
                 ):
@@ -229,7 +329,7 @@ def build_profile() -> dict[str, Any]:
             }
         )
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "backend_root": str(BACKEND_ROOT),
         "orchestrator": str(ORCHESTRATOR_PATH.relative_to(BACKEND_ROOT)),
         "method_count": len(rows),
@@ -244,12 +344,15 @@ def build_architecture_profile() -> dict[str, Any]:
     profile = build_profile()
     graph, importers = _dependency_graph()
     cycles = _cycles(graph)
+    unreachable = _unreachable_modules(graph)
     profile.update(
         {
             "module_count": len(graph),
             "dependency_edges": sum(len(targets) for targets in graph.values()),
             "dependency_cycles": cycles,
             "dependency_cycle_count": len(cycles),
+            "unreachable_modules": unreachable,
+            "unreachable_module_count": len(unreachable),
             "external_private_accesses": _external_private_accesses(),
             "change_fanout": [
                 {"module": module, "importers": len(sources), "importer_modules": sorted(sources)}
@@ -265,10 +368,13 @@ def architecture_violations(profile: dict[str, Any]) -> list[str]:
     violations: list[str] = []
     cycles = profile.get("dependency_cycles") or []
     private_accesses = profile.get("external_private_accesses") or []
+    unreachable = profile.get("unreachable_modules") or []
     if cycles:
         violations.append(f"dependency_cycles:{len(cycles)}")
     if private_accesses:
         violations.append(f"external_private_accesses:{len(private_accesses)}")
+    if unreachable:
+        violations.append(f"unreachable_modules:{len(unreachable)}:{','.join(unreachable[:8])}")
     return violations
 
 

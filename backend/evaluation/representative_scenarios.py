@@ -18,7 +18,7 @@ from app.agents.runtime_result import AgentRunStatus
 from app.agents.writing_actions import WritingActionToolset
 from app.context_engine.select_engine import ContextSelectEngine
 from app.context_engine.tool_artifact import ToolArtifactStore, ToolExecutionStatus
-from app.eval.retrieval_eval import evaluate_retrieval_recall
+from evaluation.retrieval_eval import evaluate_retrieval_recall
 from app.llm_gateway.capabilities import CapabilityNegotiator
 from app.llm_gateway.providers.base import BaseLLMProvider
 from app.schemas.canon import Fact
@@ -150,21 +150,21 @@ SCENARIO_MANIFESTS: Tuple[ScenarioManifest, ...] = (
 EVAL_ASSET_INVENTORY: Tuple[Dict[str, Any], ...] = (
     {
         "id": "golden_replay",
-        "owner": "app.eval.golden_replay",
+        "owner": "evaluation.golden_replay",
         "layer": "deterministic",
         "coverage": "covered",
         "evidence": ("component", "route", "trace", "representative_scenario"),
     },
     {
         "id": "retrieval_eval",
-        "owner": "app.eval.retrieval_eval",
+        "owner": "evaluation.retrieval_eval",
         "layer": "deterministic",
         "coverage": "covered",
         "evidence": ("recall", "ranking_trace", "latency_diagnostic"),
     },
     {
         "id": "trace_replay",
-        "owner": "app.eval.trace_replay",
+        "owner": "evaluation.trace_replay",
         "layer": "deterministic",
         "coverage": "covered",
         "evidence": ("terminal_route", "fallback", "token", "latency", "tool_failure"),
@@ -178,7 +178,7 @@ EVAL_ASSET_INVENTORY: Tuple[Dict[str, Any], ...] = (
     },
     {
         "id": "longform_provider_eval",
-        "owner": "app.eval.longform_benchmark",
+        "owner": "evaluation.longform_benchmark",
         "layer": "provider_optional",
         "coverage": "partial",
         "evidence": ("retrieval", "context_ab", "judge_diagnostic"),

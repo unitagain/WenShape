@@ -8,7 +8,8 @@ import { cn } from '../ui/core';
 import logger from '../../utils/logger';
 import { useLocale } from '../../i18n';
 import ExportDialog from './ExportDialog';
-import CloudAccountButton from '../cloud/CloudAccountButton';
+// U9：登录入口已隐去（见下方渲染处注释）；保留导入会触发 no-unused-vars。
+// import CloudAccountButton from '../cloud/CloudAccountButton';
 import {
   isDesktopRuntime,
   openDesktopDataDirectory,
@@ -24,12 +25,13 @@ const DIALOG_MAX_CHARS_PREF_KEY = 'wenshape_dialog_max_chars';
 const DIALOG_MAX_CHARS_VALUES = new Set([2000, 6000]);
 
 // Writer 反问工具策略（项目级，后端为唯一持久化 owner）：
-// always=主动检查 | auto=模型自行判断 | off=不主动触发。文案复用 agentPanel.clarify*Full。
+// always=固定反问（每轮都按情况反问）| auto=按需反问（模型自行判断）。
+// U9：移除 off。「不主动触发」与「按需」对作者是同一种体感（都可能不问），
+// 却让设置面板出现一个语义不可辨的第三项；后端仍接受 off，旧项目值照常读取。
 const CLARIFY_MODES = new Set(['always', 'auto', 'off']);
 const CLARIFY_MODE_OPTIONS = [
   { mode: 'always', labelKey: 'agentPanel.clarifyAlwaysFull' },
   { mode: 'auto', labelKey: 'agentPanel.clarifyAutoFull' },
-  { mode: 'off', labelKey: 'agentPanel.clarifyOffFull' },
 ];
 
 /** Read streaming preference from localStorage (default: true) */
@@ -571,7 +573,8 @@ export function TitleBar({ projectName, chapterTitle, currentChapter, rightActio
 
       <div className="flex items-center gap-2">
         {rightActions}
-        <CloudAccountButton />
+        {/* U9：登录入口按负责人要求隐去（本地优先形态下云端账户非必需）。
+            组件与 CloudAuthContext 保留，需要时恢复这一行即可。 */}
         <button
           onClick={() => dispatch({ type: 'TOGGLE_RIGHT_PANEL' })}
           className={cn(

@@ -5,7 +5,7 @@ import json
 import asyncio
 
 from app.context_engine.trace_collector import TraceCollector, TraceEventType, trace_collector
-from app.eval.trace_replay import replay_trace_file, replay_trace_payload, summarize_trace
+from evaluation.trace_replay import replay_trace_file, replay_trace_payload, summarize_trace
 from app.llm_gateway.telemetry import GatewayTelemetryPort
 
 

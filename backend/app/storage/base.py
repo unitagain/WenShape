@@ -206,6 +206,48 @@ class BaseStorage:
         validate_path_within(project_path, self.data_dir)
         return project_path
 
+    def asset_path(
+        self,
+        project_id: str,
+        *segments: str,
+        field: str = "asset",
+        max_length: int = 128,
+    ) -> Path:
+        """
+        构造项目内资产路径（资产段拒绝式校验 + 最终归属检查）
+
+        Build a project asset path (reject-only per-segment validation + final containment check).
+
+        ``get_project_path`` 只约束第一段（project_id）；本方法把同一拒绝式校验扩展到
+        后续每个资产段，并对最终路径做归属复核。资产名（卡名、章节 ID、卷 ID 等）可能
+        来自模型工具参数或 HTTP 路径参数，不能默认它们与 project_id 一样可信——只校验
+        project_id 挡不住 ``cards/characters/../../其他项目/x.yaml`` 这类段内越界（A1，
+        评估报告 F01）。常量段（"cards"、"characters" 等）天然通过校验，与其他段统一处理。
+
+        与 :func:`app.utils.path_safety.validate_identifier` 一致：校验为拒绝式，绝不改写。
+
+        Args:
+            project_id: 项目ID / Project ID
+            *segments: 依次拼接的路径段 / Path segments to append in order
+            field: 进入错误码的资产名字段名 / Asset field name used in the error code
+            max_length: 单段最大长度 / Maximum length per segment
+
+        Returns:
+            项目内资产路径 / Asset path inside the project directory
+
+        Raises:
+            UnsafeIdentifierError: 任一段不安全，或最终路径逃逸数据目录
+                / If any segment is unsafe, or the final path escapes the data directory
+        """
+        path = self.get_project_path(project_id)
+        for segment in segments:
+            validate_identifier(str(segment), max_length=max_length, field=field)
+            path = path / segment
+        # 纵深防御：所有段均已拒绝式校验，仍对最终路径做一次归属复核，
+        # 覆盖符号链接等文件系统层面的逃逸。
+        validate_path_within(path, self.data_dir)
+        return path
+
     def ensure_dir(self, path: Path) -> None:
         """
         确保目录存在，必要时创建

@@ -38,6 +38,13 @@ def test_no_draft_is_write():
     assert d["action"] == "write" and d["via"] == "heuristic"
 
 
+def test_edit_scale_is_detected_deterministically():
+    assert _run(message="请大幅扩写这一章", has_draft=True)["scale"] == "expand"
+    assert _run(message="精简并去掉重复", has_draft=True)["scale"] == "condense"
+    assert _run(message="整体重写这一章", has_draft=True)["scale"] == "rewrite"
+    assert _run(message="只润色措辞", has_draft=True)["scale"] == "polish"
+
+
 def test_ambiguous_no_gateway_falls_back_to_edit_document():
     d = _run(message="改一下这里", has_selection=False, has_draft=True)
     assert d["action"] == "edit" and d["scope"] == "document" and d["via"] == "heuristic"

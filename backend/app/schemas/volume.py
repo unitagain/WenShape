@@ -1,4 +1,4 @@
-﻿"""
+"""
 中文说明：分卷相关数据模型定义。
 
 Volume schema models.

@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 文枢 WenShape - 深度上下文感知的智能体小说创作系统
 WenShape - Deep Context-Aware Agent-Based Novel Writing System
@@ -37,7 +37,6 @@ from app.services.tavern_cards import (
     parse_tavern_asset,
 )
 from app.utils.language import normalize_language
-from app.utils.path_safety import sanitize_id
 from app.utils.trust import permission_with_trust
 
 router = APIRouter(prefix="/projects/{project_id}/cards", tags=["cards"])
@@ -126,12 +125,9 @@ async def get_character_card(project_id: str, character_name: str):
         角色卡片对象 / CharacterCard object.
 
     Raises:
-        HTTPException: 404 if card not found, 400 if name invalid.
+        HTTPException: 404 if card not found. 无效名称由存储层统一拒绝并映射 400
+            / Invalid names are rejected by the storage boundary (400).
     """
-    try:
-        sanitize_id(character_name)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid character name")
     card = await card_storage.get_character_card(project_id, character_name)
     if not card:
         raise HTTPException(status_code=404, detail="Character card not found")
@@ -182,12 +178,9 @@ async def delete_character_card(project_id: str, character_name: str):
         成功消息 / Success response.
 
     Raises:
-        HTTPException: 404 if card not found, 400 if name invalid.
+        HTTPException: 404 if card not found. 无效名称由存储层统一拒绝并映射 400
+            / Invalid names are rejected by the storage boundary (400).
     """
-    try:
-        sanitize_id(character_name)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid character name")
     success = await card_storage.delete_character_card(project_id, character_name)
     if not success:
         raise HTTPException(status_code=404, detail="Character card not found")
@@ -284,10 +277,6 @@ async def list_world_cards_index(project_id: str) -> List[WorldCard]:
 @router.get("/world/{card_name}")
 async def get_world_card(project_id: str, card_name: str):
     """Get a world card."""
-    try:
-        sanitize_id(card_name)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid card name")
     card = await card_storage.get_world_card(project_id, card_name)
     if not card:
         raise HTTPException(status_code=404, detail="World card not found")
@@ -312,10 +301,6 @@ async def update_world_card(project_id: str, card_name: str, card: WorldCard):
 @router.delete("/world/{card_name}")
 async def delete_world_card(project_id: str, card_name: str):
     """Delete a world card."""
-    try:
-        sanitize_id(card_name)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid card name")
     success = await card_storage.delete_world_card(project_id, card_name)
     if not success:
         raise HTTPException(status_code=404, detail="World card not found")
@@ -355,6 +340,11 @@ async def extract_style_card(project_id: str, request: StyleExtractRequest):
         language=language,
     )
     style_text = await archivist.extract_style_profile(content)
+    if not style_text.strip():
+        # 空结果不得当成成功返回：provider 在超长输出被截断、内容过滤或只回 reasoning_content
+        # 时会给出空 content，此前会原样返回 {"style": ""}，前端拿到后**用空串覆盖已保存的文风卡**
+        # ——表现为「提炼完没有文风」，实为一次静默的数据破坏（§4「不静默吞关键异常」）。
+        raise HTTPException(status_code=502, detail="style_extraction_empty")
     return {"style": style_text}
 
 
@@ -455,10 +445,6 @@ async def export_tavern_character(
     口吻项写入 ``mes_example``；``system_prompt`` 与 ``post_history_instructions``
     始终为空——WenShape 不产出这类指令，也不把它们写进对外流通的文件。
     """
-    try:
-        sanitize_id(character_name)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid character name")
     card = await card_storage.get_character_card(project_id, character_name)
     if not card:
         raise HTTPException(status_code=404, detail="Character card not found")

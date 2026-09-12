@@ -119,6 +119,12 @@ class ChatTurnRequest(BaseModel):
     """Request for Phase 12 unified chat-turn entry（单 Writer 主循环统一对话入口）。"""
 
     chapter: Optional[str] = Field(None, max_length=50, description="Chapter ID")
+    conversation_id: Optional[str] = Field(
+        None,
+        max_length=80,
+        pattern=r"^[A-Za-z0-9_-]+$",
+        description="Target conversation; active one by default",
+    )
     message: str = Field(..., min_length=1, max_length=6000, description="User chat message")
     has_selection: bool = Field(False, description="Editor has a selection")
     has_draft: bool = Field(
@@ -229,6 +235,7 @@ async def chat_turn(project_id: str, request: ChatTurnRequest):
         project_id,
         request.chapter or "",
         request.message,
+        conversation_id=request.conversation_id or "",
         has_selection=request.has_selection,
         has_draft=request.has_draft,
         target_word_count=request.target_word_count,
@@ -496,6 +503,13 @@ class ApplyTurnEffectRequest(BaseModel):
     turn_effect: Dict[str, object] = Field(default_factory=dict, description="Writer finish_turn payload")
 
 
+class ApplyChangeSetRequest(BaseModel):
+    """Atomically preflight and apply accepted Agent asset proposals."""
+
+    language: Optional[str] = Field(None)
+    changes: List[Dict[str, object]] = Field(default_factory=list)
+
+
 class AnalyzeBatchRequest(BaseModel):
     """Request body for batch analysis."""
 
@@ -558,6 +572,13 @@ async def apply_turn_effect(project_id: str, request: ApplyTurnEffectRequest):
         request.chapter,
         dict(request.turn_effect or {}),
     )
+
+
+@router.post("/projects/{project_id}/session/apply-change-set")
+async def apply_change_set(project_id: str, request: ApplyChangeSetRequest):
+    """Apply accepted multi-asset Agent changes after revision preflight."""
+    orchestrator = get_orchestrator(project_id, request.language)
+    return await orchestrator.apply_change_set(project_id, [dict(item) for item in request.changes])
 
 
 @router.post("/projects/{project_id}/session/analyze-batch")

@@ -20,6 +20,10 @@ from app.storage.character_relations import MAX_EDGES, MAX_LABEL_CHARS, Characte
 from app.schemas.card import CharacterCard
 
 
+def _run(coro):
+    return asyncio.run(coro)
+
+
 def _storage(tmp_path: Path) -> CharacterRelationStorage:
     return CharacterRelationStorage(str(tmp_path))
 
@@ -38,7 +42,7 @@ def _edge(source: str, target: str, relation: str, appellation: str = "", edge_i
 def _seed_characters(tmp_path: Path, *names: str) -> CardStorage:
     cards = CardStorage(str(tmp_path))
     for name in names:
-        asyncio.run(cards.save_character_card("p", CharacterCard(name=name, description=f"{name} 的设定")))
+        _run(cards.save_character_card("p", CharacterCard(name=name, description=f"{name} 的设定")))
     return cards
 
 
@@ -46,7 +50,7 @@ def _seed_characters(tmp_path: Path, *names: str) -> CardStorage:
 
 
 def test_load_document_returns_empty_when_missing(tmp_path: Path):
-    document = asyncio.run(_storage(tmp_path).load_document("p"))
+    document = _run(_storage(tmp_path).load_document("p"))
     assert document == {"edges": [], "layout": {}}
 
 
@@ -56,7 +60,7 @@ def test_save_and_load_roundtrip(tmp_path: Path):
         "edges": [_edge("林清越", "林清河", "姐姐", "阿姐", edge_id="a1b2c3d4", reverse="小河")],
         "layout": {"林清越": {"x": 120, "y": 80}, "林清河": {"x": 340, "y": 80}},
     }
-    saved = asyncio.run(storage.save_document("p", payload, existing_characters=["林清越", "林清河"]))
+    saved = _run(storage.save_document("p", payload, existing_characters=["林清越", "林清河"]))
 
     assert saved["edges"][0] == {
         "id": "a1b2c3d4",
@@ -71,13 +75,13 @@ def test_save_and_load_roundtrip(tmp_path: Path):
     assert (tmp_path / "p" / "cards" / "relations.yaml").is_file()
     assert not (tmp_path / "p" / "canon").exists()
 
-    reloaded = asyncio.run(storage.load_document("p"))
+    reloaded = _run(storage.load_document("p"))
     assert reloaded == saved
 
 
 def test_missing_edge_id_is_generated_and_unique(tmp_path: Path):
     storage = _storage(tmp_path)
-    saved = asyncio.run(
+    saved = _run(
         storage.save_document(
             "p",
             {"edges": [_edge("A", "B", "师父"), _edge("A", "B", "同门", edge_id="dup"), _edge("B", "A", "徒弟", edge_id="dup")]},
@@ -90,7 +94,7 @@ def test_missing_edge_id_is_generated_and_unique(tmp_path: Path):
 
 def test_layout_prunes_unknown_characters(tmp_path: Path):
     storage = _storage(tmp_path)
-    saved = asyncio.run(
+    saved = _run(
         storage.save_document(
             "p",
             {"edges": [], "layout": {"林清越": {"x": 1, "y": 2}, "已删除的人": {"x": 3, "y": 4}}},
@@ -105,7 +109,7 @@ def test_corrupted_file_degrades_to_empty_document(tmp_path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("edges: [this is: not: valid yaml", encoding="utf-8")
 
-    assert asyncio.run(_storage(tmp_path).load_document("p")) == {"edges": [], "layout": {}}
+    assert _run(_storage(tmp_path).load_document("p")) == {"edges": [], "layout": {}}
 
 
 # ----------------------------------------------------------------- 校验 --
@@ -168,7 +172,7 @@ def test_validate_accepts_empty_document(tmp_path: Path):
 def test_delete_character_card_purges_its_edges_only(tmp_path: Path):
     cards = _seed_characters(tmp_path, "林清越", "林清河", "谢无咎")
     relations = _storage(tmp_path)
-    asyncio.run(
+    _run(
         relations.save_document(
             "p",
             {
@@ -182,16 +186,16 @@ def test_delete_character_card_purges_its_edges_only(tmp_path: Path):
         )
     )
 
-    assert asyncio.run(cards.delete_character_card("p", "林清越")) is True
+    assert _run(cards.delete_character_card("p", "林清越")) is True
 
-    remaining = asyncio.run(relations.load_document("p"))
+    remaining = _run(relations.load_document("p"))
     assert [edge["from"] for edge in remaining["edges"]] == ["谢无咎"]  # 无关边保留
     assert "林清越" not in remaining["layout"]
 
 
 def test_purge_character_is_noop_without_relations(tmp_path: Path):
     _seed_characters(tmp_path, "独行者")
-    assert asyncio.run(_storage(tmp_path).purge_character("p", "独行者")) is False
+    assert _run(_storage(tmp_path).purge_character("p", "独行者")) is False
     assert not (tmp_path / "p" / "cards" / "relations.yaml").exists()  # 不因删除而创建文件
 
 
@@ -225,7 +229,7 @@ def _write_canon_relations(path: Path, rows: list) -> None:
 
 def test_query_relations_merges_card_edges_with_canon(tmp_path: Path):
     storage = _storage(tmp_path)
-    asyncio.run(
+    _run(
         storage.save_document(
             "p",
             {"edges": [_edge("林清越", "林清河", "姐姐", "阿姐", reverse="小河")]},
@@ -236,7 +240,7 @@ def test_query_relations_merges_card_edges_with_canon(tmp_path: Path):
     _write_canon_relations(canon_path, [{"subject": "林清越", "relation": "并肩作战", "object": "林清河", "chapter": "V1C003"}])
 
     toolset = WriterToolset("p", _Adapter(canon_path, storage), _FakeSelect(), current_chapter="V1C010")
-    output = asyncio.run(toolset.execute("query_relations", {"entity": "林清越"}))
+    output = _run(toolset.execute("query_relations", {"entity": "林清越"}))
 
     # 设定关系（含双向称呼）与 Canon 抽取关系（带出处）同列展示，模型自行区分
     assert "姐姐" in output and "林清河称林清越「阿姐」" in output and "林清越称林清河「小河」" in output
@@ -246,12 +250,12 @@ def test_query_relations_merges_card_edges_with_canon(tmp_path: Path):
 def test_query_relations_card_edges_ignore_chapter_window(tmp_path: Path):
     """设定边没有章节出处，不该被『未来章节』过滤掉。"""
     storage = _storage(tmp_path)
-    asyncio.run(storage.save_document("p", {"edges": [_edge("A", "B", "宿敌")]}, existing_characters=["A", "B"]))
+    _run(storage.save_document("p", {"edges": [_edge("A", "B", "宿敌")]}, existing_characters=["A", "B"]))
     canon_path = tmp_path / "p" / "canon" / "relations.jsonl"
     _write_canon_relations(canon_path, [{"subject": "A", "relation": "结盟", "object": "B", "chapter": "V1C099"}])
 
     toolset = WriterToolset("p", _Adapter(canon_path, storage), _FakeSelect(), current_chapter="V1C001")
-    output = asyncio.run(toolset.execute("query_relations", {"entity": "A", "other": "B"}))
+    output = _run(toolset.execute("query_relations", {"entity": "A", "other": "B"}))
 
     assert "宿敌" in output  # 设定边保留
     assert "结盟" not in output  # 未来章节的 Canon 关系仍被挡住
@@ -265,7 +269,7 @@ def test_query_relations_without_card_edges_matches_previous_behavior(tmp_path: 
         def get_relations_path(self, _project_id):
             return canon_path
 
-    output = asyncio.run(
+    output = _run(
         WriterToolset("p", _CanonOnlyAdapter(), _FakeSelect()).execute("query_relations", {"entity": "张三"})
     )
     assert "敌对" in output and "称" not in output
@@ -314,17 +318,17 @@ def _writing_service(adapter):
 
 def test_relations_push_renders_edges_with_appellations():
     service = _writing_service(_EdgeAdapter([_edge("林清越", "林清河", "姐姐", "阿姐", reverse="小河")]))
-    push = asyncio.run(service._resolve_relations_push("p"))
+    push = _run(service._resolve_relations_push("p"))
     assert push == "- 林清越 —[姐姐]→ 林清河（林清河称林清越「阿姐」；林清越称林清河「小河」）"
 
 
 def test_relations_push_is_empty_without_edges_or_storage():
-    assert asyncio.run(_writing_service(_EdgeAdapter([]))._resolve_relations_push("p")) == ""
+    assert _run(_writing_service(_EdgeAdapter([]))._resolve_relations_push("p")) == ""
 
     class _NoRelations:
         pass
 
-    assert asyncio.run(_writing_service(_NoRelations())._resolve_relations_push("p")) == ""
+    assert _run(_writing_service(_NoRelations())._resolve_relations_push("p")) == ""
 
 
 def test_relations_push_marks_overflow_instead_of_silent_truncation():
@@ -332,7 +336,7 @@ def test_relations_push_marks_overflow_instead_of_silent_truncation():
 
     limit = int((config.get("retrieval", {}).get("relations", {}) or {}).get("max_push_edges") or 80)
     edges = [_edge(f"A{index}", f"B{index}", "同门") for index in range(limit + 5)]
-    push = asyncio.run(_writing_service(_EdgeAdapter(edges))._resolve_relations_push("p"))
+    push = _run(_writing_service(_EdgeAdapter(edges))._resolve_relations_push("p"))
 
     lines = push.splitlines()
     assert len(lines) == limit + 1  # limit 条关系 + 1 行溢出说明
@@ -354,6 +358,8 @@ def test_writer_system_prompt_carries_relations_block_only_when_present():
     )
     system = request.messages[0]["content"]
     assert "人物关系与称呼（作者设定" in system and push in system
+    assert "不得交换称呼方向" in system
+    assert "B 称 A「X」" in system
     assert "card" in request.supply_report.pushed  # 供给可观测：卡片层设定已推送
 
     without = assembly.assemble_writer_request(
@@ -365,6 +371,43 @@ def test_writer_system_prompt_carries_relations_block_only_when_present():
     )
     assert "人物关系与称呼" not in without.messages[0]["content"]
     assert "card" not in without.supply_report.pushed
+
+
+def test_writer_system_prompt_carries_authored_style_as_mandatory_guidance():
+    from app.orchestrator.context_assembly_service import ContextAssemblyService
+
+    request = ContextAssemblyService(language="zh").assemble_writer_request(
+        message="写第一章",
+        chapter="V1C1",
+        current_text="",
+        has_selection=False,
+        target_word_count=3000,
+        style_push="短句为主，克制冷峻，避免华丽比喻。",
+    )
+
+    system = request.messages[0]["content"]
+    assert "本项目文风设定（必须遵循）" in system
+    assert "短句为主，克制冷峻" in system
+    assert "不得用默认文风覆盖它" in system
+    assert "style" in request.supply_report.pushed
+
+
+def test_writer_system_prompt_pushes_bounded_card_inventory_index():
+    from app.orchestrator.context_assembly_service import ContextAssemblyService
+
+    request = ContextAssemblyService(language="zh").assemble_writer_request(
+        message="写林舟进入旧宅",
+        chapter="V1C1",
+        current_text="",
+        has_selection=False,
+        target_word_count=3000,
+        card_inventory_push="- [角色] 林舟\n- [世界] 旧宅",
+    )
+
+    system = request.messages[0]["content"]
+    assert "设定库目录" in system
+    assert "必须先用 lookup_card" in system
+    assert "card_inventory" in request.supply_report.pushed
 
 
 def test_relation_from_card_edge_direction_semantics():

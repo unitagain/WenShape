@@ -7,6 +7,7 @@ export type AgentTerminalState =
 
 export interface ChatTurnRequest {
   chapter?: string;
+  conversation_id?: string;
   message: string;
   has_selection?: boolean;
   /** 当前选区的有限文本，随本轮 Writer 上下文注入，用于确定修改范围。 */
@@ -30,6 +31,7 @@ export interface ChatTurnResponse {
     type?: string;
     key?: string;
     text?: string;
+    question?: string;
     reason?: string;
     impact?: string;
     impact_score?: number;
@@ -60,18 +62,41 @@ export interface ChatTurnResponse {
     title?: string;
     create?: boolean;
   };
-  auto_commit?: {
-    committed?: boolean;
-    chapter?: string;
-    title?: string;
-    word_count?: number;
-    reason?: string;
-    canon_sync?: Record<string, unknown>;
-  };
 }
 
 export function shouldRecoverChangedTurn(data: ChatTurnResponse, streamUsed: boolean, streamActive: boolean): boolean {
   return data.changed === true && typeof data.content === 'string' && (!streamUsed || streamActive);
+}
+
+export function clarificationQuestionsFromResponse(data: ChatTurnResponse | null | undefined): Array<Record<string, unknown>> {
+  const direct = Array.isArray(data?.questions) ? data.questions : [];
+  if (direct.length) return direct;
+  return Array.isArray(data?.clarification?.questions) ? data.clarification.questions : [];
+}
+
+export function normalizeClarificationQuestionsFromResponse(
+  data: ChatTurnResponse | null | undefined,
+): Array<Record<string, unknown>> {
+  return clarificationQuestionsFromResponse(data)
+    .map((question, index) => ({
+      type: typeof question?.type === 'string' && question.type ? question.type : 'clarification',
+      key:
+        typeof question?.key === 'string' && question.key
+          ? question.key
+          : `${typeof question?.type === 'string' && question.type ? question.type : 'clarification'}-${index}`,
+      text:
+        typeof question?.text === 'string'
+          ? question.text.trim()
+          : typeof question?.question === 'string'
+            ? question.question.trim()
+            : '',
+      reason: question?.reason,
+      impact: question?.impact,
+      impact_score: question?.impact_score,
+      options: Array.isArray(question?.options) ? question.options : [],
+      default: question?.default,
+    }))
+    .filter((question) => Boolean(question.text));
 }
 
 export interface AgentTurnView {

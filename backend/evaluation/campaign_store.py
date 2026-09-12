@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List
 
-from app.eval.longform_artifacts import read_json, read_jsonl
+from evaluation.longform_artifacts import read_json, read_jsonl
 
 
 class CampaignStore:

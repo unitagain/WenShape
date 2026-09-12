@@ -23,6 +23,7 @@ from app.error_contract import record_degradation
 from app.storage.file_lock import get_file_lock
 from app.storage.volumes import VolumeStorage
 from app.utils.chapter_id import ChapterIDValidator, normalize_chapter_id
+from app.utils.path_safety import UnsafeIdentifierError
 
 # Max number of previous-version backups to keep per chapter.
 _storage_cfg = app_cfg.get("storage", {})
@@ -39,23 +40,42 @@ class DraftStorage(BaseStorage):
         self.volume_storage = VolumeStorage(data_dir)
 
     def _canonicalize_chapter_id(self, chapter_id: str) -> str:
+        """规范化章节 ID；无法识别的格式返回空串。
+
+        空串是「无效输入」信号，由路径构造点（_require_chapter_id）统一拒绝；
+        此处不回退原始字符串——原始串直接进路径拼接正是越界读取的入口（A1）。
+        """
         normalized = normalize_chapter_id(chapter_id)
         if normalized and ChapterIDValidator.validate(normalized):
             return normalized
-        return str(chapter_id).strip() if chapter_id else ""
+        return ""
+
+    def _require_chapter_id(self, chapter_id: str) -> str:
+        """入口拒绝式校验：无法规范化为合法章节 ID 的输入直接拒绝（A1）。
+
+        读取侧由调用方决定是否吞掉 ValueError（如 get_working_text 保持容错返回空），
+        写入侧任由 UnsafeIdentifierError 传播（HTTP 映射 400、工具层转 tool_error）。
+        """
+        canonical = self._canonicalize_chapter_id(chapter_id)
+        if not canonical:
+            raise UnsafeIdentifierError(
+                "unsafe_chapter_id:invalid",
+                code="unsafe_chapter_id",
+                metadata={"reason": "invalid_or_empty"},
+            )
+        return canonical
 
     def _resolve_chapter_dir_name(self, project_id: str, chapter: str) -> str:
+        canonical = self._require_chapter_id(chapter)
         drafts_dir = self.get_project_path(project_id) / "drafts"
-        canonical = self._canonicalize_chapter_id(chapter)
         if drafts_dir.exists():
             canonical_path = drafts_dir / canonical
             if canonical_path.exists():
                 return canonical
-            raw_path = drafts_dir / str(chapter)
-            if raw_path.exists():
-                return str(chapter)
             for path in drafts_dir.iterdir():
                 if path.is_dir() and self._canonicalize_chapter_id(path.name) == canonical:
+                    # 磁盘来源的目录名是单段且不含分隔符，但仍统一经 get_chapter_draft_dir
+                    # 的 asset_path 校验后再拼路径。
                     return path.name
         return canonical
 
@@ -68,9 +88,12 @@ class DraftStorage(BaseStorage):
 
         Returns:
             Draft directory path.
+
+        Raises:
+            UnsafeIdentifierError: 章节ID无法规范化为合法格式 / If the chapter id is invalid.
         """
         resolved = self._resolve_chapter_dir_name(project_id, chapter)
-        return self.get_project_path(project_id) / "drafts" / resolved
+        return self.asset_path(project_id, "drafts", resolved, field="chapter_id")
 
     def get_latest_draft_file(self, project_id: str, chapter: str) -> Optional[Path]:
         """Return the most recently modified draft file for a chapter.
@@ -127,9 +150,9 @@ class DraftStorage(BaseStorage):
             return "", None
 
     def _final_paths(self, project_id: str, chapter: str) -> Tuple[Path, Path]:
-        canonical = self._canonicalize_chapter_id(chapter)
+        canonical = self._require_chapter_id(chapter)
         self._migrate_chapter_dir(project_id, chapter, canonical)
-        chapter_dir = self.get_project_path(project_id) / "drafts" / canonical
+        chapter_dir = self.asset_path(project_id, "drafts", canonical, field="chapter_id")
         final_path = chapter_dir / "final.md"
         history_dir = chapter_dir / "history"
         return final_path, history_dir
@@ -183,7 +206,7 @@ class DraftStorage(BaseStorage):
         Returns:
             Draft meta object (version 固定为 "current").
         """
-        canonical = self._canonicalize_chapter_id(chapter)
+        canonical = self._require_chapter_id(chapter)
         final_path, history_dir = self._final_paths(project_id, canonical)
         file_lock = get_file_lock()
         async with self.content_transaction(project_id):
@@ -300,14 +323,11 @@ class DraftStorage(BaseStorage):
 
     def _resolve_summary_path(self, project_id: str, chapter: str) -> Optional[Path]:
         summaries_dir = self.get_project_path(project_id) / "summaries"
-        canonical = self._canonicalize_chapter_id(chapter)
+        canonical = self._require_chapter_id(chapter)
         if summaries_dir.exists():
             canonical_path = summaries_dir / f"{canonical}_summary.yaml"
             if canonical_path.exists():
                 return canonical_path
-            raw_path = summaries_dir / f"{chapter}_summary.yaml"
-            if raw_path.exists():
-                return raw_path
             for path in summaries_dir.glob("*_summary.yaml"):
                 name = path.stem.replace("_summary", "")
                 if self._canonicalize_chapter_id(name) == canonical:
@@ -330,7 +350,7 @@ class DraftStorage(BaseStorage):
     async def get_scene_brief(self, project_id: str, chapter: str) -> Optional[SceneBrief]:
         """Get a scene brief."""
         resolved = self._resolve_chapter_dir_name(project_id, chapter)
-        file_path = self.get_project_path(project_id) / "drafts" / resolved / "scene_brief.yaml"
+        file_path = self.asset_path(project_id, "drafts", resolved, "scene_brief.yaml", field="chapter_id")
         if not file_path.exists():
             return None
         data = await self.read_yaml(file_path)
@@ -347,7 +367,7 @@ class DraftStorage(BaseStorage):
         expected_revision: Optional[int] = None,
     ) -> Draft:
         """Save a draft."""
-        canonical = self._canonicalize_chapter_id(chapter)
+        canonical = self._require_chapter_id(chapter)
         self._migrate_chapter_dir(project_id, chapter, canonical)
         draft = Draft(
             chapter=canonical,
@@ -358,8 +378,12 @@ class DraftStorage(BaseStorage):
             created_at=datetime.now(),
         )
 
-        file_path = self.get_project_path(project_id) / "drafts" / canonical / f"draft_{version}.md"
-        meta_path = self.get_project_path(project_id) / "drafts" / canonical / f"draft_{version}.meta.yaml"
+        file_path = self.asset_path(
+            project_id, "drafts", canonical, f"draft_{version}.md", field="chapter_id"
+        )
+        meta_path = self.asset_path(
+            project_id, "drafts", canonical, f"draft_{version}.meta.yaml", field="chapter_id"
+        )
         file_lock = get_file_lock()
         async with self.content_transaction(project_id):
             async with file_lock.lock(file_path.parent / ".draft_transaction"):
@@ -391,8 +415,12 @@ class DraftStorage(BaseStorage):
         """Get a draft."""
         resolved = self._resolve_chapter_dir_name(project_id, chapter)
         canonical = self._canonicalize_chapter_id(chapter)
-        file_path = self.get_project_path(project_id) / "drafts" / resolved / f"draft_{version}.md"
-        meta_path = self.get_project_path(project_id) / "drafts" / resolved / f"draft_{version}.meta.yaml"
+        file_path = self.asset_path(
+            project_id, "drafts", resolved, f"draft_{version}.md", field="chapter_id"
+        )
+        meta_path = self.asset_path(
+            project_id, "drafts", resolved, f"draft_{version}.meta.yaml", field="chapter_id"
+        )
         file_lock = get_file_lock()
         async with file_lock.lock(file_path.parent / ".draft_transaction"):
             if not file_path.exists():
@@ -427,8 +455,7 @@ class DraftStorage(BaseStorage):
 
     async def list_draft_versions(self, project_id: str, chapter: str) -> List[str]:
         """List draft versions for a chapter."""
-        resolved = self._resolve_chapter_dir_name(project_id, chapter)
-        drafts_dir = self.get_project_path(project_id) / "drafts" / resolved
+        drafts_dir = self.get_chapter_draft_dir(project_id, chapter)
         if not drafts_dir.exists():
             return []
 
@@ -446,15 +473,15 @@ class DraftStorage(BaseStorage):
 
     async def save_review(self, project_id: str, chapter: str, review: ReviewResult) -> None:
         """Save a review result."""
-        canonical = self._canonicalize_chapter_id(chapter)
+        canonical = self._require_chapter_id(chapter)
         self._migrate_chapter_dir(project_id, chapter, canonical)
-        file_path = self.get_project_path(project_id) / "drafts" / canonical / "review.yaml"
+        file_path = self.asset_path(project_id, "drafts", canonical, "review.yaml", field="chapter_id")
         await self.write_yaml(file_path, review.model_dump())
 
     async def get_review(self, project_id: str, chapter: str) -> Optional[ReviewResult]:
         """Get a review result."""
         resolved = self._resolve_chapter_dir_name(project_id, chapter)
-        file_path = self.get_project_path(project_id) / "drafts" / resolved / "review.yaml"
+        file_path = self.asset_path(project_id, "drafts", resolved, "review.yaml", field="chapter_id")
         if not file_path.exists():
             return None
         data = await self.read_yaml(file_path)
@@ -477,14 +504,14 @@ class DraftStorage(BaseStorage):
         )
 
     def get_draft_revision(self, project_id: str, chapter: str, version: str = "current") -> Dict[str, Any]:
-        canonical = self._canonicalize_chapter_id(chapter)
+        canonical = self._require_chapter_id(chapter)
         name = "final.md" if version == "current" else f"draft_{version}.md"
         return self.control_store.get_revision("draft", f"{project_id}/{canonical}/{name}")
 
     async def get_final_draft(self, project_id: str, chapter: str) -> Optional[str]:
         """Get a final draft."""
         resolved = self._resolve_chapter_dir_name(project_id, chapter)
-        file_path = self.get_project_path(project_id) / "drafts" / resolved / "final.md"
+        file_path = self.asset_path(project_id, "drafts", resolved, "final.md", field="chapter_id")
         if file_path.exists():
             return await self.read_text(file_path)
 
@@ -512,10 +539,12 @@ class DraftStorage(BaseStorage):
     async def save_chapter_summary(self, project_id: str, summary: ChapterSummary) -> None:
         """Save a chapter summary."""
         raw_chapter = summary.chapter
-        summary.chapter = self._canonicalize_chapter_id(summary.chapter)
+        summary.chapter = self._require_chapter_id(summary.chapter)
         summary = self._ensure_volume_id(summary)
         self._migrate_summary_file(project_id, raw_chapter, summary.chapter)
-        file_path = self.get_project_path(project_id) / "summaries" / f"{summary.chapter}_summary.yaml"
+        file_path = self.asset_path(
+            project_id, "summaries", f"{summary.chapter}_summary.yaml", field="chapter_id"
+        )
         await self.write_yaml(file_path, summary.model_dump())
 
     async def get_chapter_summary(self, project_id: str, chapter: str) -> Optional[ChapterSummary]:
@@ -695,9 +724,9 @@ class DraftStorage(BaseStorage):
 
     async def save_conflict_report(self, project_id: str, chapter: str, report: Dict[str, Any]) -> None:
         """Save a conflict report."""
-        canonical = self._canonicalize_chapter_id(chapter)
+        canonical = self._require_chapter_id(chapter)
         self._migrate_chapter_dir(project_id, chapter, canonical)
-        file_path = self.get_project_path(project_id) / "drafts" / canonical / "conflicts.yaml"
+        file_path = self.asset_path(project_id, "drafts", canonical, "conflicts.yaml", field="chapter_id")
         await self.write_yaml(file_path, report)
 
     def _ensure_volume_id(self, summary: ChapterSummary) -> ChapterSummary:

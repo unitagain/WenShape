@@ -210,9 +210,9 @@ def normalize_clarification_questions(value: Any) -> List[Dict[str, Any]]:
     return normalized
 
 
-def writing_action_schemas() -> List[Dict[str, Any]]:
+def writing_action_schemas(*, multi_asset: bool = False) -> List[Dict[str, Any]]:
     """返回写作动作与强制收尾工具定义。"""
-    return [
+    tools = [
         {
             "type": "function",
             "function": {
@@ -285,10 +285,15 @@ def writing_action_schemas() -> List[Dict[str, Any]]:
                 "description": (
                     "写入正文：覆盖或追加整章/整段。当需要从空白写新章、或大段重写时调用。"
                     "content 必须是你直接生成的小说正文本身（不要写解释、不要带标记）。"
+                    "只能写入本轮活动章节；修改其它已有章节必须改用 write_chapter。"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "chapter_id": {
+                            "type": "string",
+                            "description": "目标章节 ID，必须等于本轮活动章节（如 V1C4）；改其它章节请用 write_chapter",
+                        },
                         "content": {
                             "type": "string",
                             "description": "要写入的完整正文（你生成的小说正文，纯文本，不含解释或 markdown 标记）",
@@ -299,7 +304,7 @@ def writing_action_schemas() -> List[Dict[str, Any]]:
                             "description": "replace=覆盖全文（默认）；append=追加到现有正文末尾（续写）",
                         },
                     },
-                    "required": ["content"],
+                    "required": ["chapter_id", "content"],
                 },
             },
         },
@@ -311,10 +316,15 @@ def writing_action_schemas() -> List[Dict[str, Any]]:
                     "精确替换正文中的一处文本，用于局部修改/润色（改措辞、调情节、删冗余、扩写一段）。"
                     "old_text 必须与正文逐字一致且在正文中唯一出现；new_text 为替换后的文本（删除则留空字符串）。"
                     "若 old_text 不唯一，请提供更长、含上下文的片段以精确定位。"
+                    "只能修改本轮活动章节；修改其它已有章节必须改用 edit_chapter。"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "chapter_id": {
+                            "type": "string",
+                            "description": "目标章节 ID，必须等于本轮活动章节（如 V1C4）；改其它章节请用 edit_chapter",
+                        },
                         "old_text": {
                             "type": "string",
                             "description": "要被替换的原文片段（必须与正文完全一致且唯一出现）",
@@ -324,7 +334,39 @@ def writing_action_schemas() -> List[Dict[str, Any]]:
                             "description": "替换后的新文本（删除该片段则传空字符串）",
                         },
                     },
-                    "required": ["old_text", "new_text"],
+                    "required": ["chapter_id", "old_text", "new_text"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "edit_chapter",
+                "description": "编辑指定已有章节的一处文本。用于一次对话修改多个章节；chapter_id 必须是已存在章节，工具会先读取该章并生成独立 diff。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "chapter_id": {"type": "string", "description": "目标章节 ID，如 V1C001"},
+                        "old_text": {"type": "string", "description": "目标章节中唯一的原文片段"},
+                        "new_text": {"type": "string", "description": "替换后的文本"},
+                    },
+                    "required": ["chapter_id", "old_text", "new_text"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "write_chapter",
+                "description": "整体重写或追加指定已有章节。一次 turn 可多次调用以修改多个章节，每章会形成独立 diff。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "chapter_id": {"type": "string", "description": "目标章节 ID"},
+                        "content": {"type": "string", "description": "章节正文"},
+                        "mode": {"type": "string", "enum": ["replace", "append"]},
+                    },
+                    "required": ["chapter_id", "content"],
                 },
             },
         },
@@ -373,6 +415,9 @@ def writing_action_schemas() -> List[Dict[str, Any]]:
             },
         },
     ]
+    if not multi_asset:
+        tools = [item for item in tools if item.get("function", {}).get("name") not in {"edit_chapter", "write_chapter"}]
+    return tools
 
 
 class WritingActionToolset:
@@ -395,11 +440,16 @@ class WritingActionToolset:
         active_chapter: str = "",
         existing_chapters: Optional[List[str]] = None,
         require_chapter_target: bool = False,
+        multi_asset: bool = False,
+        clarification_required: bool = False,
+        writing_scale: str = "",
+        target_word_count: int = 3000,
     ):
         self.original_text = str(original_text or "")
         self.working_text = self.original_text
         self.retrieval = retrieval_toolset
         self.actions: List[Dict[str, Any]] = []
+        self._asset_buffers: Dict[str, Dict[str, Any]] = {}
         self._turn_effect_raw: Dict[str, Any] | None = None
         self._clarification: Dict[str, Any] | None = None
         self.active_chapter = normalize_chapter_id(active_chapter) if active_chapter else ""
@@ -412,6 +462,52 @@ class WritingActionToolset:
         self.chapter_title = ""
         self.create_chapter_requested = False
         self.require_chapter_target = bool(require_chapter_target)
+        self.multi_asset = bool(multi_asset)
+        self.clarification_required = bool(clarification_required)
+        self.writing_scale = str(writing_scale or "").strip().lower()
+        self.target_word_count = max(1, int(target_word_count or 3000))
+        self._output_contract_warned = False
+        self.output_contract_degraded = False
+
+    def _clarification_gate(self) -> str:
+        if not self.clarification_required or self._clarification is not None:
+            return ""
+        return (
+            "[tool_error code=clarification_required] 当前项目启用了积极确认。"
+            "在本轮任何写作、修改或 finish_turn 之前，必须先调用 ask_clarification 提出 1-3 个具体作者选择；"
+            "不得重试当前工具绕过反问。"
+        )
+
+    def _output_contract_error(self) -> str:
+        """可核查的产出下限合同；warn-once-then-degrade（一次警告，仍不达标则放行并标记降级）。
+
+        - expand：既有正文大幅扩写，下限取基线增幅与目标字数的最大值（既有行为）。
+        - 新建章节整章撰写（create_chapter_requested）：装配层已把 target_word_count
+          声明为「最低完成基线」，此处对齐执行——否则模型写数百字即 finish 也能通过
+          （真实故障：反问恢复轮仅写 388 字交付）。用户显式要短章时，第二次 finish
+          仍会放行并标记 degraded，不阻断。
+        """
+        baseline = len(self.original_text.strip())
+        actual = len(self.working_text.strip())
+        if self.writing_scale == "expand" and baseline:
+            minimum = max(baseline + 300, int(baseline * 1.25), self.target_word_count)
+            shortcoming = "作者要求大幅扩写"
+        elif self.create_chapter_requested and not baseline:
+            minimum = self.target_word_count
+            shortcoming = "本章为整章撰写"
+        else:
+            return ""
+        if actual >= minimum:
+            return ""
+        if self._output_contract_warned:
+            self.output_contract_degraded = True
+            return ""
+        self._output_contract_warned = True
+        return (
+            f"[tool_error code=output_contract_unmet] {shortcoming}，但当前正文仅 {actual} 字；"
+            f"本轮可核查下界为 {minimum} 字。请继续扩展场景、动作、感官、心理、环境与对白潜台词"
+            "（可用 write_content mode=append 续写）后再 finish_turn。"
+        )
 
     def schemas(self) -> List[Dict[str, Any]]:
         """写作工具（+ 可选检索工具）的合并 schema 列表。检索工具在前，便于 agent 先查后写。"""
@@ -421,11 +517,30 @@ class WritingActionToolset:
                 tools.extend(self.retrieval.schemas())
             except Exception as exc:  # 检索工具异常不应阻断写作能力
                 logger.warning("retrieval toolset schemas() failed: %s", safe_error_code(exc), exc_info=True)
-        tools.extend(writing_action_schemas())
+        tools.extend(writing_action_schemas(multi_asset=self.multi_asset))
+        # 积极确认前置告警：模型选工具时看的是 schema 描述；反问要求若只存在于系统
+        # 提示与被拦后的错误消息里，模型会先生成一整段正文再被拒——一次完整生成被
+        # 作废（实测：先建章 → write_content 721 字被拦 → 才反问）。
+        # create_chapter / ask_clarification 不受门控，不加注。
+        if self.clarification_required and self._clarification is None:
+            notice = (
+                "注意：当前项目启用积极确认——本轮必须先调用 ask_clarification 提出问题并暂停等待作者回答，"
+                "之后才能调用本工具；未反问前直接调用会被拒绝。"
+            )
+            for item in tools:
+                function = item.get("function", {})
+                if str(function.get("name") or "") in {
+                    "write_content",
+                    "edit_lines",
+                    "edit_chapter",
+                    "write_chapter",
+                    "finish_turn",
+                }:
+                    function["description"] = f"{notice}{function.get('description') or ''}"
         return tools
 
     def is_result_recoverable(self, name: str) -> bool:
-        if name in {"ask_clarification", "create_chapter", "write_content", "edit_lines", "finish_turn"}:
+        if name in {"ask_clarification", "create_chapter", "write_content", "edit_lines", "edit_chapter", "write_chapter", "finish_turn"}:
             return False
         checker = getattr(self.retrieval, "is_result_recoverable", None)
         return bool(checker(name)) if callable(checker) else False
@@ -448,12 +563,50 @@ class WritingActionToolset:
                     str(args.get("title") or ""),
                 )
             if name == "write_content":
-                return self._write_content(str(args.get("content") or ""), str(args.get("mode") or "replace"))
+                gated = self._clarification_gate()
+                if gated:
+                    return gated
+                return self._write_content(
+                    str(args.get("content") or ""),
+                    str(args.get("mode") or "replace"),
+                    chapter_id=str(args.get("chapter_id") or ""),
+                )
             if name == "edit_lines":
-                return self._edit_lines(str(args.get("old_text") or ""), str(args.get("new_text") or ""))
+                gated = self._clarification_gate()
+                if gated:
+                    return gated
+                return self._edit_lines(
+                    str(args.get("old_text") or ""),
+                    str(args.get("new_text") or ""),
+                    chapter_id=str(args.get("chapter_id") or ""),
+                )
+            if name == "edit_chapter":
+                gated = self._clarification_gate()
+                if gated:
+                    return gated
+                return await self._edit_chapter(
+                    str(args.get("chapter_id") or ""),
+                    str(args.get("old_text") or ""),
+                    str(args.get("new_text") or ""),
+                )
+            if name == "write_chapter":
+                gated = self._clarification_gate()
+                if gated:
+                    return gated
+                return await self._write_chapter(
+                    str(args.get("chapter_id") or ""),
+                    str(args.get("content") or ""),
+                    str(args.get("mode") or "replace"),
+                )
             if name == "finish_turn":
                 if self._clarification is not None:
                     return "[tool_error code=clarification_pending] ask_clarification 已暂停本轮，不能提交 finish_turn"
+                gated = self._clarification_gate()
+                if gated:
+                    return gated
+                contract_error = self._output_contract_error()
+                if contract_error:
+                    return contract_error
                 self._turn_effect_raw = dict(args)
                 effect = self.terminal_payload()
                 return f"本轮已收尾（change_type={effect['change_type']}, fact_operation={effect['fact_operation']}）。"
@@ -472,8 +625,11 @@ class WritingActionToolset:
     def _ask_clarification(self, raw_questions: Any) -> str:
         """Record a Writer-authored input request and pause the current turn."""
 
+        # 先行条件只看「正文是否已被实际写入/修改」；create_chapter 仅声明目标章节、
+        # 不落任何正文，若也纳入封禁，积极确认模式会形成死锁（先建章 → write 被
+        # clarification_required 门控 → ask 又因 create_chapter 被拒 → 写不进也问不了）。
         if self._turn_effect_raw is not None or any(
-            action.get("action") in {"create_chapter", "write", "edit"} for action in self.actions
+            action.get("action") in {"write", "edit"} for action in self.actions
         ):
             return "[tool_error code=clarification_must_precede_writing] ask_clarification 必须在写入或修改正文前调用"
         if self._clarification is not None:
@@ -578,11 +734,42 @@ class WritingActionToolset:
                 max_number = max(max_number, int(parsed["chapter"]))
         return f"{volume_id}C{max_number + 1}"
 
-    def _write_content(self, content: str, mode: str) -> str:
+    def _check_primary_chapter(self, chapter_id: str, alternative: str) -> str:
+        """校验流式写作工具的目标必须是本轮活动章节；通过时返回空串。
+
+        U9：`write_content`/`edit_lines` 的参数会作为 provisional 正文**流式推进前端编辑器**
+        （`agentic.py` 的 `tool_call_delta` → `provisional_content`），编辑器展示的是活动章节，
+        因此这两个工具只能作用于活动章节；跨章修改必须走非流式的 `write_chapter`/`edit_chapter`，
+        否则会把甲章的文本流进乙章的编辑器。
+
+        强制显式 `chapter_id` 的目的：把「静默写错章」变成模型可自纠的显式错误
+        （历史故障：活动章节停在 V1C8 时要求改 V1C1/V1C2，隐式目标把改动落到了 V1C8）。
+        `require_chapter_target=False` 的简化工具集没有章节语义，此时忽略该参数。
+        """
+
+        if not self.require_chapter_target:
+            return ""
+        requested = normalize_chapter_id(chapter_id) if str(chapter_id or "").strip() else ""
+        if not requested:
+            return (
+                "[tool_error code=chapter_id_required] 请显式传入 chapter_id"
+                f"（本轮活动章节：{self.target_chapter}）"
+            )
+        if requested != self.target_chapter:
+            return (
+                f"[tool_error code=chapter_target_mismatch] chapter_id={requested} 不是本轮活动章节"
+                f"（{self.target_chapter}）；修改其它章节请改用 {alternative}。"
+            )
+        return ""
+
+    def _write_content(self, content: str, mode: str, *, chapter_id: str = "") -> str:
         if self._clarification is not None:
             return "[tool_error code=clarification_pending] ask_clarification 已暂停本轮，不能写入正文"
         if self.require_chapter_target and not self.target_chapter:
             return "[当前没有目标章节；请先调用 create_chapter，再写入正文]"
+        mismatch = self._check_primary_chapter(chapter_id, "write_chapter")
+        if mismatch:
+            return mismatch
         content = str(content or "")
         if not content.strip():
             return "[write_content 需要非空 content]"
@@ -596,11 +783,14 @@ class WritingActionToolset:
         self.actions.append({"action": "write", "mode": mode, "chars": len(content)})
         return f"已{verb} {len(content)} 字（mode={mode}）。当前正文共 {len(self.working_text)} 字。"
 
-    def _edit_lines(self, old_text: str, new_text: str) -> str:
+    def _edit_lines(self, old_text: str, new_text: str, *, chapter_id: str = "") -> str:
         if self._clarification is not None:
             return "[tool_error code=clarification_pending] ask_clarification 已暂停本轮，不能修改正文"
         if self.require_chapter_target and not self.target_chapter:
             return "[当前没有目标章节；请先选择章节，或调用 create_chapter 新建章节]"
+        mismatch = self._check_primary_chapter(chapter_id, "edit_chapter")
+        if mismatch:
+            return mismatch
         old_text = str(old_text or "")
         new_text = str(new_text or "")
         if not old_text:
@@ -635,10 +825,80 @@ class WritingActionToolset:
         hint = "" if match.layer == "exact" else f"（经 {_EDIT_LAYER_LABELS[match.layer]}定位）"
         return f"已替换 1 处{hint}（{delta}）。当前正文共 {len(self.working_text)} 字。"
 
+    async def _load_asset(self, chapter: str) -> tuple[str, int]:
+        target = normalize_chapter_id(chapter)
+        if not target:
+            return "", 0
+        buffered = self._asset_buffers.get(target)
+        if buffered is not None:
+            return str(buffered.get("working") or ""), int(buffered.get("revision") or 0)
+        if target == self.target_chapter:
+            return self.working_text, 0
+        loader = getattr(self.retrieval, "load_chapter_content", None)
+        if not callable(loader):
+            return "", 0
+        content, revision = await loader(target)
+        return str(content or ""), int(revision or 0)
+
+    async def _edit_chapter(self, chapter: str, old_text: str, new_text: str) -> str:
+        target = normalize_chapter_id(chapter)
+        if not target:
+            return "[edit_chapter 需要有效 chapter_id]"
+        if target == self.target_chapter:
+            return self._edit_lines(old_text, new_text, chapter_id=target)
+        content, revision = await self._load_asset(target)
+        if not content:
+            return f"章节『{target}』暂无正文或不存在。"
+        match = _locate_edit_span(content, old_text)
+        if match is None:
+            return f"章节『{target}』未找到 old_text。"
+        if match.count != 1:
+            return f"章节『{target}』中的 old_text 不唯一（{match.count} 处）。"
+        revised = content[: match.start] + new_text + content[match.end :]
+        prior = self._asset_buffers.get(target)
+        original = str(prior.get("original") or "") if prior else content
+        self._asset_buffers[target] = {"original": original, "working": revised, "revision": revision}
+        self.actions.append({"action": "edit", "chapter": target, "old_chars": len(old_text), "new_chars": len(new_text)})
+        return f"已修改章节 {target}，形成独立 diff；尚未写入磁盘。"
+
+    async def _write_chapter(self, chapter: str, content: str, mode: str) -> str:
+        target = normalize_chapter_id(chapter)
+        if not target or not content.strip():
+            return "[write_chapter 需要 chapter_id 和非空 content]"
+        if target == self.target_chapter:
+            return self._write_content(content, mode, chapter_id=target)
+        original, revision = await self._load_asset(target)
+        if not original and target not in self.existing_chapters:
+            return f"章节『{target}』不存在；新章节请使用 create_chapter + write_content。"
+        revised = original.rstrip() + "\n\n" + content if mode == "append" and original.strip() else content
+        prior = self._asset_buffers.get(target)
+        baseline = str(prior.get("original") or "") if prior else original
+        self._asset_buffers[target] = {"original": baseline, "working": revised, "revision": revision}
+        self.actions.append({"action": "write", "chapter": target, "mode": mode, "chars": len(content)})
+        return f"已生成章节 {target} 的独立 diff（{len(revised)} 字），尚未写入磁盘。"
+
     @property
     def changed(self) -> bool:
         """工作副本是否相对原文发生变化（决定是否需要交付 diff）。"""
-        return self.working_text != self.original_text
+        return self.working_text != self.original_text or any(
+            item.get("working") != item.get("original") for item in self._asset_buffers.values()
+        )
+
+    def change_proposals(self) -> List[Dict[str, Any]]:
+        proposals = []
+        for chapter, item in self._asset_buffers.items():
+            if item.get("working") == item.get("original"):
+                continue
+            proposals.append(
+                {
+                    "asset_type": "chapter",
+                    "asset_id": chapter,
+                    "original": item.get("original", ""),
+                    "revised": item.get("working", ""),
+                    "base_revision": int(item.get("revision") or 0),
+                }
+            )
+        return proposals
 
     @property
     def requires_terminal_tool(self) -> bool:

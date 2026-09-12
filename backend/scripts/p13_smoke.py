@@ -12,10 +12,10 @@ backend_dir = Path(__file__).resolve().parents[1]
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from app.eval.campaign_models import EvalCampaign
-from app.eval.campaign_runner import CampaignRunner
-from app.eval.longform_artifacts import read_jsonl, write_jsonl
-from app.eval.longform_benchmark import LongformBenchmarkHarness
+from evaluation.campaign_models import EvalCampaign
+from evaluation.campaign_runner import CampaignRunner
+from evaluation.longform_artifacts import read_jsonl, write_jsonl
+from evaluation.longform_benchmark import LongformBenchmarkHarness
 
 
 async def main() -> None:

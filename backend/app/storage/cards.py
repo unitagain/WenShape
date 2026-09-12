@@ -1,4 +1,4 @@
-﻿"""
+"""
 中文说明：卡片存储读写服务。
 
 Card storage.
@@ -19,7 +19,9 @@ class CardStorage(BaseStorage):
         project_id: str,
         character_name: str,
     ) -> Optional[CharacterCard]:
-        file_path = self.get_project_path(project_id) / "cards" / "characters" / f"{character_name}.yaml"
+        file_path = self.asset_path(
+            project_id, "cards", "characters", f"{character_name}.yaml", field="card_name"
+        )
 
         if not file_path.exists():
             return None
@@ -29,7 +31,9 @@ class CardStorage(BaseStorage):
         return CharacterCard(**coerced)
 
     async def save_character_card(self, project_id: str, card: CharacterCard) -> None:
-        file_path = self.get_project_path(project_id) / "cards" / "characters" / f"{card.name}.yaml"
+        file_path = self.asset_path(
+            project_id, "cards", "characters", f"{card.name}.yaml", field="card_name"
+        )
 
         payload = card.model_dump(exclude_none=True)
         if file_path.exists():
@@ -55,7 +59,9 @@ class CardStorage(BaseStorage):
         return [f.stem for f in cards_dir.glob("*.yaml")]
 
     async def delete_character_card(self, project_id: str, character_name: str) -> bool:
-        file_path = self.get_project_path(project_id) / "cards" / "characters" / f"{character_name}.yaml"
+        file_path = self.asset_path(
+            project_id, "cards", "characters", f"{character_name}.yaml", field="card_name"
+        )
 
         if file_path.exists():
             file_path.unlink()
@@ -75,7 +81,7 @@ class CardStorage(BaseStorage):
         return CharacterRelationStorage(str(self.data_dir))
 
     async def get_world_card(self, project_id: str, card_name: str) -> Optional[WorldCard]:
-        file_path = self.get_project_path(project_id) / "cards" / "world" / f"{card_name}.yaml"
+        file_path = self.asset_path(project_id, "cards", "world", f"{card_name}.yaml", field="card_name")
         if not file_path.exists():
             return None
 
@@ -84,7 +90,7 @@ class CardStorage(BaseStorage):
         return WorldCard(**coerced)
 
     async def save_world_card(self, project_id: str, card: WorldCard) -> None:
-        file_path = self.get_project_path(project_id) / "cards" / "world" / f"{card.name}.yaml"
+        file_path = self.asset_path(project_id, "cards", "world", f"{card.name}.yaml", field="card_name")
         payload = card.model_dump(exclude_none=True)
         # World cards are now description-first; stop writing deprecated fields.
         payload.pop("rules", None)
@@ -110,7 +116,7 @@ class CardStorage(BaseStorage):
         return [f.stem for f in cards_dir.glob("*.yaml")]
 
     async def delete_world_card(self, project_id: str, card_name: str) -> bool:
-        file_path = self.get_project_path(project_id) / "cards" / "world" / f"{card_name}.yaml"
+        file_path = self.asset_path(project_id, "cards", "world", f"{card_name}.yaml", field="card_name")
         if file_path.exists():
             file_path.unlink()
             await self._purge_card_index(project_id, card_name)

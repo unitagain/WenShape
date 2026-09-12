@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from app.agents.agentic import run_agentic_chat
 from app.agents.tools import WriterToolset
@@ -25,9 +25,11 @@ from app.orchestrator.runtime_contracts import (
     WriterAgentPort,
     WritingResult,
 )
-from app.schemas.draft import ChapterSummary
-from app.utils.chapter_id import ChapterIDValidator
 from app.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from app.services.consistency_annotation_service import ConsistencyAnnotationService
+    from app.storage.creative_memory import CreativeMemoryStorage
 
 logger = get_logger(__name__)
 
@@ -63,6 +65,9 @@ def _safe_tool_call_arguments(name: Any, arguments: Any) -> Any:
     summary: Dict[str, Any] = {}
     if "mode" in parsed:
         summary["mode"] = parsed.get("mode")
+    # U9：chapter_id 是章节标识而非正文，保留在轨迹里——写错章的诊断全靠它。
+    if "chapter_id" in parsed:
+        summary["chapter_id"] = str(parsed.get("chapter_id") or "")
     for field in ("content", "new_text", "old_text"):
         if field in parsed:
             summary[f"{field}_chars"] = len(str(parsed.get(field) or ""))
@@ -84,6 +89,8 @@ class WritingService:
         progress_callback: Optional[ProgressCallback] = None,
         detect_proposals: Optional[ProposalDetector] = None,
         is_cancelled: Optional[Callable[[], bool]] = None,
+        memory_storage: Optional["CreativeMemoryStorage"] = None,
+        consistency_service: Optional["ConsistencyAnnotationService"] = None,
     ):
         self.gateway = gateway
         self.writer = writer
@@ -94,6 +101,11 @@ class WritingService:
         self.progress_callback = progress_callback
         self.detect_proposals = detect_proposals
         self.is_cancelled = is_cancelled or (lambda: False)
+        # 创作记忆存储（P1 接线）：query_memory 工具与记忆目录推送的数据源。
+        # None = 记忆能力降级（工具返回不可用提示、目录推送为空），不阻断写作主路径。
+        self.memory_storage = memory_storage
+        # 一致性标注服务（P4）：change set 生成后、作者审阅前的确定性提示性标注。
+        self.consistency_service = consistency_service
 
     async def run(
         self,
@@ -105,6 +117,8 @@ class WritingService:
         thinking: bool = False,
         reasoning_level: str = "off",
         target_word_count: int = 3000,
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+        writing_scale: Optional[str] = None,
     ) -> WritingResult:
         current_text, current_path = await self._load_working_text(project_id, chapter)
         try:
@@ -112,15 +126,35 @@ class WritingService:
         except Exception:
             existing_chapters = []
         outline_settings, outline_push = await self._resolve_outline(project_id)
+        if not outline_push and any(marker in str(message or "").lower() for marker in ("大纲", "outline")):
+            outline = getattr(self.storage_adapter, "outline", None)
+            if outline is not None and outline_settings.get("enabled", True):
+                try:
+                    data = await outline.get_outline(project_id)
+                    outline_push = str(data.get("content") or "")[:12000]
+                except Exception as exc:
+                    record_degradation("writer_explicit_outline_push", exc)
         relations_push = await self._resolve_relations_push(project_id)
+        style_push = await self._resolve_style_push(project_id)
+        card_inventory_push = await self._resolve_card_inventory_push(project_id)
+        memory_inventory_push = await self._resolve_memory_inventory_push(project_id)
         clarification_settings = await self._resolve_clarification_settings(project_id)
-        clarification_policy = self._clarification_policy_text(clarification_settings)
+        clarification_resumed = "作者回答：" in str(message or "") or "作者暂不补充以下问题" in str(message or "")
+        clarification_policy = self._clarification_policy_text(clarification_settings, resumed=clarification_resumed)
+        clarification_required = (
+            str(clarification_settings.get("auto_trigger") or clarification_settings.get("mode") or "auto")
+            .strip()
+            .lower()
+            == "always"
+        )
         retrieval = WriterToolset(
             project_id,
             self.storage_adapter,
             self.select_engine,
             current_chapter=chapter,
             outline_enabled=bool(outline_settings.get("enabled", True)),
+            defer_writes=True,
+            memory_storage=self.memory_storage,
         )
         writing_tools = WritingActionToolset(
             current_text,
@@ -128,6 +162,10 @@ class WritingService:
             active_chapter=chapter,
             existing_chapters=existing_chapters,
             require_chapter_target=True,
+            multi_asset=True,
+            clarification_required=clarification_required and not clarification_resumed,
+            writing_scale=str(writing_scale or ""),
+            target_word_count=target_word_count,
         )
         scope = current_turn_scope()
         request = self.context_assembly.assemble_writer_request(
@@ -140,8 +178,13 @@ class WritingService:
             existing_chapters=existing_chapters,
             outline_push=outline_push,
             relations_push=relations_push,
+            style_push=style_push,
+            card_inventory_push=card_inventory_push,
+            memory_inventory_push=memory_inventory_push,
+            writing_scale=str(writing_scale or ""),
             outline_enabled=bool(outline_settings.get("enabled", True)),
             clarification_policy=clarification_policy,
+            conversation_history=conversation_history,
         )
         if scope is not None and scope.source_closure_required and current_text and current_path is not None:
             try:
@@ -274,6 +317,35 @@ class WritingService:
                         }
                     )
             await self._emit_agent_event(project_id, current_chapter(), event)
+            if event.get("type") == "tool_result" and str(event.get("name") or "") == _CLARIFICATION_TOOL:
+                execution = event.get("tool_result")
+                execution = execution if isinstance(execution, dict) else {}
+                if str(execution.get("status") or ToolExecutionStatus.SUCCEEDED.value) == ToolExecutionStatus.SUCCEEDED.value:
+                    clarification = writing_tools.input_required_payload()
+                    questions = normalize_clarification_questions(
+                        clarification.get("questions") if isinstance(clarification, dict) else None
+                    )
+                    if questions:
+                        normalized = dict(clarification or {})
+                        normalized.update(
+                            {
+                                "decision": "ask",
+                                "questions": questions,
+                                "question_count": len(questions),
+                            }
+                        )
+                        await self._safe_progress(
+                            {
+                                "type": "agent_input_required",
+                                "project_id": project_id,
+                                "chapter": current_chapter(),
+                                "turn_id": str(getattr(current_turn_scope(), "turn_id", "") or ""),
+                                "terminal_state": "requires_input",
+                                "reason": "clarification_requested",
+                                "questions": questions,
+                                "clarification": normalized,
+                            }
+                        )
 
         async def close_provisional(status: str, reason: str = "") -> None:
             # 不变量：只要发过 provisional stream_start，就必须补发一个终止流事件，
@@ -342,8 +414,27 @@ class WritingService:
 
         agent_run = response.to_dict()
         response_payload = dict(getattr(response, "response", {}) or {})
+        outline_proposals = retrieval.change_proposals()
+        chapter_asset_proposals = writing_tools.change_proposals()
         chapter_target = current_chapter_target()
         target_chapter = current_chapter()
+        primary_proposals: List[Dict[str, Any]] = []
+        if writing_tools.working_text != writing_tools.original_text:
+            primary_proposals.append(
+                {
+                    "asset_type": "chapter",
+                    "asset_id": target_chapter,
+                    "original": writing_tools.original_text,
+                    "revised": writing_tools.working_text,
+                    "base_revision": await self._draft_revision(project_id, target_chapter),
+                    "chapter_target": chapter_target,
+                }
+            )
+        all_change_set = primary_proposals + chapter_asset_proposals + outline_proposals
+        # P4 一致性标注：提案生成后、交付审阅前，对章节资产附加确定性提示性标注
+        # （相关既有事实 / 称呼核对）。非阻断——失败时 service 内部已降级。
+        if self.consistency_service is not None and all_change_set:
+            await self.consistency_service.annotate_change_set(project_id, all_change_set)
         supply_report = dict(supply_report_payload)
         retrieved_types = sorted(
             {
@@ -351,6 +442,7 @@ class WritingService:
                     "lookup_card": "card",
                     "query_canon": "canon",
                     "query_relations": "canon",
+                    "query_memory": "memory",
                     "read_chapter": "prose",
                     "search_prose": "prose",
                 }.get(name, "")
@@ -361,6 +453,9 @@ class WritingService:
         )
         supply_report["retrieved"] = retrieved_types
         supply_report["used"] = sorted(set(request.supply_report.used) | set(retrieved_types))
+        if writing_tools.output_contract_degraded:
+            agent_run["degraded"] = True
+            agent_run.setdefault("degradations", []).append("output_contract_unmet")
         if response.cancelled:
             await close_provisional("cancelled", response.finish_reason or "turn_cancelled")
             return {
@@ -405,7 +500,7 @@ class WritingService:
                     "context_supply": supply_report,
                 }
             turn_effect = writing_tools.terminal_payload()
-            if writing_tools.changed:
+            if writing_tools.changed or outline_proposals:
                 proposals = await self._stream_text_as_diff(
                     project_id,
                     target_chapter,
@@ -414,7 +509,9 @@ class WritingService:
                     stream_started=stream_state["started"],
                     turn_effect=turn_effect,
                     chapter_target=chapter_target,
+                    change_set=all_change_set,
                 )
+                proposals.extend(all_change_set)
                 return {
                     "success": True,
                     "terminal_state": "incomplete",
@@ -425,6 +522,7 @@ class WritingService:
                     "reason": reason,
                     "content": writing_tools.working_text,
                     "proposals": proposals,
+                    "change_set": proposals,
                     "actions": writing_tools.actions,
                     "summary": "已达到单轮工具调用上限，已交付当前修改供审阅。",
                     "assembly_fingerprint": request.fingerprint,
@@ -437,13 +535,23 @@ class WritingService:
             return incomplete_result(reason, agent_run)
         if not response.success:
             reason = str((response.error or {}).get("code") or response.finish_reason or "agent_run_failed")
+            # 失败必须留痕：此前本分支静默返回，作者只看到「本轮执行失败：<code>」而后端无任何日志，
+            # 无法区分 provider 故障、工具越权还是装配拒绝。只记结构化字段，不记正文/prompt。
+            logger.warning(
+                "agentic writing turn failed: reason=%s status=%s finish_reason=%s iterations=%s tool_calls=%s",
+                reason,
+                response.status,
+                response.finish_reason,
+                response.iterations,
+                len(response.tool_results),
+            )
             await close_provisional("failed", reason)
             if reason in {"turn_deadline_exceeded", "timeout"}:
                 return incomplete_result(reason, agent_run)
             return failed_result(reason, agent_run)
 
         turn_effect = writing_tools.terminal_payload()
-        if not writing_tools.changed:
+        if not writing_tools.changed and not outline_proposals:
             if not tools_used_any:
                 await close_provisional("incomplete", "no_tool_calls")
                 return incomplete_result("no_tool_calls", agent_run)
@@ -460,33 +568,6 @@ class WritingService:
                 "chapter_target": chapter_target,
             }
 
-        auto_commit: Optional[Dict[str, Any]] = None
-        if isinstance(chapter_target, dict) and chapter_target.get("create"):
-            try:
-                auto_commit = await self._commit_created_chapter(
-                    project_id,
-                    target_chapter,
-                    writing_tools.working_text,
-                    str(chapter_target.get("title") or ""),
-                )
-            except Exception as exc:
-                logger.warning("Created chapter commit failed: %s", safe_error_code(exc), exc_info=True)
-                await close_provisional("failed", "chapter_commit_failed")
-                failed = failed_result("chapter_commit_failed", agent_run)
-                failed.update(
-                    {
-                        "content": writing_tools.working_text,
-                        "chapter_target": chapter_target,
-                        "turn_effect": turn_effect,
-                        "auto_commit": {
-                            "committed": False,
-                            "chapter": target_chapter,
-                            "reason": safe_error_code(exc),
-                        },
-                    }
-                )
-                return failed
-
         proposals = await self._stream_text_as_diff(
             project_id,
             target_chapter,
@@ -495,14 +576,16 @@ class WritingService:
             stream_started=stream_state["started"],
             turn_effect=turn_effect,
             chapter_target=chapter_target,
-            auto_commit=auto_commit,
+            change_set=all_change_set,
         )
+        proposals.extend(all_change_set)
         return {
             "success": True,
             "action": "agentic_write",
             "changed": True,
             "content": writing_tools.working_text,
             "proposals": proposals,
+            "change_set": proposals,
             "actions": writing_tools.actions,
             "summary": str(turn_effect.get("message") or response.get("content") or "").strip(),
             "assembly_fingerprint": request.fingerprint,
@@ -510,48 +593,26 @@ class WritingService:
             "context_supply": supply_report,
             "turn_effect": turn_effect,
             "chapter_target": chapter_target,
-            "auto_commit": auto_commit,
+            "degraded": writing_tools.output_contract_degraded,
         }
 
-    async def _commit_created_chapter(
-        self,
-        project_id: str,
-        chapter: str,
-        content: str,
-        title: str,
-    ) -> Dict[str, Any]:
-        """Persist a successfully completed new chapter before announcing stream completion."""
-
-        target = str(chapter or "").strip()
-        text = str(content or "")
-        if not target or not text.strip():
-            raise ValueError("created_chapter_missing_content")
-        await self.draft_storage.save_current_draft(
-            project_id=project_id,
-            chapter=target,
-            content=text,
-            word_count=len(text),
-            create_prev_backup=False,
-        )
-        summary = await self.draft_storage.get_chapter_summary(project_id, target)
-        clean_title = str(title or "").strip() or target
-        if summary is None:
-            summary = ChapterSummary(
-                chapter=target,
-                volume_id=ChapterIDValidator.extract_volume_id(target) or "V1",
-                title=clean_title,
-                word_count=len(text),
-            )
-        else:
-            summary.title = clean_title
-            summary.word_count = len(text)
-        await self.draft_storage.save_chapter_summary(project_id, summary)
-        return {
-            "committed": True,
-            "chapter": target,
-            "title": clean_title,
-            "word_count": len(text),
-        }
+    async def _draft_revision(self, project_id: str, chapter: str) -> int:
+        """Read the control-plane revision used by DraftStorage optimistic writes."""
+        getter = getattr(self.draft_storage, "get_revision", None)
+        if callable(getter):
+            try:
+                value = await getter(project_id, chapter)
+                return int(value or 0)
+            except Exception as exc:
+                logger.debug("draft revision lookup degraded: %s", safe_error_code(exc))
+        getter = getattr(self.draft_storage, "get_draft_revision", None)
+        if callable(getter):
+            try:
+                value = getter(project_id, chapter)
+                return int((value or {}).get("revision") or 0) if isinstance(value, dict) else int(value or 0)
+            except Exception as exc:
+                logger.debug("draft revision lookup degraded: %s", safe_error_code(exc))
+        return 0
 
     async def _resolve_outline(self, project_id: str) -> tuple[Dict[str, Any], str]:
         """解析大纲设置；require_consult 开启且启用时返回要推入 writer 稳定前缀的大纲文本。
@@ -618,6 +679,83 @@ class WritingService:
             lines.append(f"（另有 {remaining} 条设定关系未在此列出，需要时用 query_relations 按人物查询）")
         return "\n".join(lines)
 
+    async def _resolve_style_push(self, project_id: str) -> str:
+        """Load the authored writing-style card for every writer turn."""
+        try:
+            card_storage = getattr(self.storage_adapter, "card", None)
+            if card_storage is None:
+                return ""
+            card = await card_storage.get_style_card(project_id)
+            if not card:
+                return ""
+            value = getattr(card, "style", None)
+            if value is None and isinstance(card, dict):
+                value = card.get("style")
+            return str(value or "").strip()
+        except Exception as exc:
+            record_degradation("writer_style_push", exc)
+            return ""
+
+    async def _resolve_card_inventory_push(self, project_id: str) -> str:
+        """Push a bounded name index so the Writer knows which cards are queryable."""
+
+        limit = max(1, int(config.get("retrieval", {}).get("card_inventory_max_items", 80)))
+        try:
+            list_characters = getattr(self.storage_adapter, "list_character_cards", None)
+            list_world = getattr(self.storage_adapter, "list_world_cards", None)
+            characters = list(await list_characters(project_id)) if callable(list_characters) else []
+            world = list(await list_world(project_id)) if callable(list_world) else []
+        except Exception as exc:
+            record_degradation("writer_card_inventory_push", exc)
+            return ""
+        rows = [("角色", str(name).strip()) for name in characters]
+        rows.extend(("世界", str(name).strip()) for name in world)
+        rows = [(kind, name) for kind, name in rows if name]
+        if not rows:
+            return ""
+        visible = rows[:limit]
+        lines = [f"- [{kind}] {name}" for kind, name in visible]
+        remaining = len(rows) - len(visible)
+        if remaining > 0:
+            lines.append(f"（另有 {remaining} 张卡片未列出；需要时用 lookup_card 按名称查询，不得视为不存在。）")
+        return "\n".join(lines)
+
+    async def _resolve_memory_inventory_push(self, project_id: str) -> str:
+        """Push a bounded creative-memory index so the Writer knows prior author decisions.
+
+        与卡片目录（B1）同构：目录（name + description）有界、进稳定前缀；
+        记忆正文走 query_memory JIT。只列 active 状态——needs_review/rejected/
+        supersed/conflict 的记忆本来就不允许进入召回，目录同样不列。
+        超出条数上限时显式标注剩余条数并指向 query_memory，不静默截断。
+        """
+
+        if self.memory_storage is None:
+            return ""
+        limit = max(1, int(config.get("retrieval", {}).get("memory_inventory_max_items", 40)))
+        try:
+            headers = list(await self.memory_storage.list_headers(project_id) or [])
+        except Exception as exc:
+            record_degradation("writer_memory_inventory_push", exc)
+            return ""
+        rows = []
+        for header in headers:
+            if not isinstance(header, dict):
+                continue
+            name = str(header.get("name") or header.get("slug") or "").strip()
+            if not name:
+                continue
+            description = str(header.get("description") or "").strip()
+            kind = f"{header.get('type') or 'preference'}/{header.get('scope') or 'project'}"
+            rows.append((kind, name, description))
+        if not rows:
+            return ""
+        visible = rows[:limit]
+        lines = [f"- [{kind}] {name}：{description}" if description else f"- [{kind}] {name}" for kind, name, description in visible]
+        remaining = len(rows) - len(visible)
+        if remaining > 0:
+            lines.append(f"（另有 {remaining} 条记忆未列出；需要时用 query_memory 查询，不得视为不存在。）")
+        return "\n".join(lines)
+
     async def _resolve_clarification_settings(self, project_id: str) -> Dict[str, Any]:
         """Load the Writer tool policy without invoking another model or workflow."""
 
@@ -636,12 +774,21 @@ class WritingService:
             return {"auto_trigger": "auto", "mode": "auto"}
 
     @staticmethod
-    def _clarification_policy_text(settings: Dict[str, Any]) -> str:
-        """Describe policy to the Writer; this is guidance, not deterministic routing."""
+    def _clarification_policy_text(settings: Dict[str, Any], *, resumed: bool = False) -> str:
+        """Describe policy to the Writer; this is guidance, not deterministic routing.
+
+        resumed=True 时本轮是「反问后的继续轮」：门控已关闭，若仍注入 always 策略的
+        「必须先反问、不得直接写作」文案，提示与门控互相矛盾，会诱导重复反问。
+        """
 
         trigger = str(settings.get("auto_trigger") or settings.get("mode") or "auto").strip().lower()
-        if trigger == "always":
-            posture = "完成必要检索后，主动检查是否存在会显著改变本轮结果的未决作者选择；有则调用工具，没有则继续写作。"
+        if resumed:
+            posture = (
+                "上一轮的反问已获作者回答（见用户消息中的补充信息），本轮反问门控已解除："
+                "直接基于作者回答与既有上下文继续写作，不要再重复询问已回答或已跳过的问题。"
+            )
+        elif trigger == "always":
+            posture = "完成必要检索后，必须先调用 ask_clarification 提出 1-3 个具体作者选择，再等待作者回答；不得直接写作或调用 finish_turn。"
         elif trigger == "off":
             posture = "除非用户明确要求你先确认，否则不要主动调用该工具；工具仍可按你的判断使用。"
         else:
@@ -724,7 +871,7 @@ class WritingService:
         stream_started: bool = False,
         turn_effect: Optional[Dict[str, Any]] = None,
         chapter_target: Optional[Dict[str, Any]] = None,
-        auto_commit: Optional[Dict[str, Any]] = None,
+        change_set: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         text = str(final_text or "")
         if self.progress_callback:
@@ -760,7 +907,7 @@ class WritingService:
                     "proposals": proposals,
                     "turn_effect": dict(turn_effect or {}),
                     "chapter_target": dict(chapter_target or {}),
-                    "auto_commit": dict(auto_commit or {}),
+                    "change_set": list(change_set or []),
                     "provisional_replaced": not emit_tokens,
                 }
             )

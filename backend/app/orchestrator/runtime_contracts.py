@@ -28,6 +28,7 @@ class WritingResult(TypedDict, total=False):
     action: str
     changed: bool
     partial: bool
+    degraded: bool
     content: str
     message: str
     summary: str
@@ -35,12 +36,13 @@ class WritingResult(TypedDict, total=False):
     agent_run: Dict[str, Any]
     context_supply: Dict[str, Any]
     proposals: List[Dict[str, Any]]
+    # U8 多资产写作：一次 turn 可产出多个资产（章节/大纲）的独立 diff 提案。
+    change_set: List[Dict[str, Any]]
     actions: List[Dict[str, Any]]
     writing_memory: Dict[str, Any]
     turn_effect: Dict[str, Any]
-    # 新建章节与自动提交只在对应路径产生；未发生时显式为 None，消费方按 isinstance(dict) 判定。
+    # 新建章节只在对应路径产生。
     chapter_target: Optional[Dict[str, Any]]
-    auto_commit: Optional[Dict[str, Any]]
     clarification: Dict[str, Any]
     clarify_decision: str
     questions: List[Dict[str, Any]]
@@ -67,7 +69,6 @@ class ChatTurnResult(TypedDict, total=False):
     writing_memory: Dict[str, Any]
     turn_effect: Dict[str, Any]
     chapter_target: Optional[Dict[str, Any]]
-    auto_commit: Optional[Dict[str, Any]]
     clarification: Dict[str, Any]
     clarify_decision: str
     questions: List[Dict[str, Any]]
@@ -118,6 +119,14 @@ class ContextPlanPort(Protocol):
 
 class SessionHistoryPort(Protocol):
     async def current_context_epoch(self, project_id: str) -> int: ...
+
+    async def load(
+        self,
+        project_id: str,
+        *,
+        limit: int = 0,
+        conversation_id: str = "",
+    ) -> List[Dict[str, Any]]: ...
 
 
 class RankingTracePort(Protocol):

@@ -41,9 +41,8 @@
  */
 
 import React, { useMemo } from 'react';
-import { motion } from 'framer-motion';
 import { cn } from '../ui/core';
-import { Plus, Minus, FileText } from 'lucide-react';
+import { Plus, Minus, FileText, Check, X } from 'lucide-react';
 import { useLocale } from '../../i18n';
 
 const renderLine = (line) => (line === '' ? '\u00A0' : line);
@@ -127,89 +126,83 @@ const DiffReviewView = ({
   );
 };
 
+/**
+ * 单层变更块（对齐主流编程 IDE）：删除行红底、新增行绿底，各自左侧一条色条；
+ * 右上角一对勾/叉即为全部操作。
+ *
+ * U9：此前每块是「卡片边框 + 头部栏 + 状态药丸 + 两个文字按钮 + 内层圆角块」的多层结构，
+ * 正文被层层包裹，长 diff 极难扫读（负责人反馈：不用差异块层层显示）。
+ * 现在只保留一层色块，决策状态用勾/叉的实心态与整块淡出表达，不再占用垂直空间。
+ */
 const InlineChangeBlock = ({ decision, onAccept, onReject, deletedLines = [], addedLines = [] }) => {
   const { t } = useLocale();
-  const statusText =
-    decision === 'accepted'
-      ? t('diff.decision.accepted')
-      : decision === 'rejected'
-        ? t('diff.decision.rejected')
-        : t('diff.decision.pending');
+  const accepted = decision === 'accepted';
+  const rejected = decision === 'rejected';
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="my-2 rounded-[6px] border border-[var(--vscode-sidebar-border)] bg-[var(--vscode-input-bg)] overflow-hidden"
-    >
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-mono text-[var(--vscode-fg-subtle)]">{t('diff.hunkLabel')}</span>
-          <span
-            className={cn(
-              'text-[10px] px-2 py-0.5 rounded-full border',
-              decision === 'accepted'
-                ? 'bg-green-50 text-green-700 border-green-200'
-                : decision === 'rejected'
-                  ? 'bg-red-50 text-red-700 border-red-200'
-                  : 'bg-amber-50 text-amber-700 border-amber-200',
-            )}
-          >
-            {statusText}
-          </span>
+    <div className="group relative my-1">
+      {deletedLines.length > 0 ? (
+        <div
+          className={cn(
+            'border-l-[3px] border-red-400 bg-red-50/70 py-0.5 pl-2 pr-16',
+            accepted && 'opacity-40',
+          )}
+        >
+          {deletedLines.map((line, idx) => (
+            <div
+              key={`del-${idx}`}
+              className="whitespace-pre-wrap break-words leading-loose text-red-800 line-through decoration-red-400"
+            >
+              {renderLine(line)}
+            </div>
+          ))}
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onReject}
-            className={cn(
-              'text-[10px] px-2 py-1 rounded-[6px] border transition-colors',
-              decision === 'rejected'
-                ? 'bg-red-600 text-white border-red-600'
-                : 'text-red-600 border-red-200 hover:bg-red-50',
-            )}
-          >
-            {t('diff.reject')}
-          </button>
-          <button
-            type="button"
-            onClick={onAccept}
-            className={cn(
-              'text-[10px] px-2 py-1 rounded-[6px] border transition-colors',
-              decision === 'accepted'
-                ? 'bg-green-600 text-white border-green-600'
-                : 'text-green-700 border-green-200 hover:bg-green-50',
-            )}
-          >
-            {t('diff.accept')}
-          </button>
+      ) : null}
+      {addedLines.length > 0 ? (
+        <div
+          className={cn(
+            'border-l-[3px] border-green-500 bg-green-50/70 py-0.5 pl-2 pr-16',
+            rejected && 'opacity-40 line-through decoration-green-500',
+          )}
+        >
+          {addedLines.map((line, idx) => (
+            <div key={`add-${idx}`} className="whitespace-pre-wrap break-words leading-loose text-green-900">
+              {renderLine(line)}
+            </div>
+          ))}
         </div>
-      </div>
+      ) : null}
 
-      <div className="px-3 py-2 space-y-1">
-        {deletedLines.length > 0 ? (
-          <div className="rounded-[6px] border border-red-100 bg-red-50/60 p-2">
-            {deletedLines.map((line, idx) => (
-              <div
-                key={`del-${idx}`}
-                className="text-sm text-red-700 line-through decoration-red-500 decoration-2 whitespace-pre-wrap break-words"
-              >
-                {renderLine(line)}
-              </div>
-            ))}
-          </div>
-        ) : null}
-        {addedLines.length > 0 ? (
-          <div className="rounded-[6px] border border-green-100 bg-green-50/60 p-2">
-            {addedLines.map((line, idx) => (
-              <div key={`add-${idx}`} className="text-sm text-green-800 whitespace-pre-wrap break-words">
-                {renderLine(line)}
-              </div>
-            ))}
-          </div>
-        ) : null}
+      {/* 勾/叉：低存在感常驻，悬停增强；已决策的一侧保持实心，便于扫读当前状态。 */}
+      <div className="absolute right-1 top-1 flex gap-1 opacity-50 transition-opacity group-hover:opacity-100">
+        <button
+          type="button"
+          title={t('diff.reject')}
+          onClick={onReject}
+          className={cn(
+            'rounded-[4px] p-1 transition-colors',
+            rejected
+              ? 'bg-red-600 text-white'
+              : 'bg-[var(--vscode-input-bg)] text-red-600 hover:bg-red-100',
+          )}
+        >
+          <X size={12} />
+        </button>
+        <button
+          type="button"
+          title={t('diff.accept')}
+          onClick={onAccept}
+          className={cn(
+            'rounded-[4px] p-1 transition-colors',
+            accepted
+              ? 'bg-green-600 text-white'
+              : 'bg-[var(--vscode-input-bg)] text-green-700 hover:bg-green-100',
+          )}
+        >
+          <Check size={12} />
+        </button>
       </div>
-    </motion.div>
+    </div>
   );
 };
 

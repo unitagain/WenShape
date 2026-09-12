@@ -3,9 +3,9 @@
 
 import asyncio
 
-import app.eval.golden_replay as golden_replay
-from app.eval.golden_replay import run_golden_replay_suite
-from app.eval.representative_scenarios import SCENARIO_MANIFESTS
+import evaluation.golden_replay as golden_replay
+from evaluation.golden_replay import run_golden_replay_suite
+from evaluation.representative_scenarios import SCENARIO_MANIFESTS
 
 
 def test_golden_replay_suite_passes_default_gate():

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Any, Dict, Iterable, List, Optional
 
 from app.context_engine.embeddings import cosine_similarity
@@ -14,6 +15,51 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 RRF_K = 60
+
+# Late-interaction 分块阈值：bge-small-zh 的输入窗口为 512 token（中文约 1 字 ≈ 1 token），
+# 整卡/整事实单向量会把超窗的尾部字段直接截断、不参与打分。超过该保守字符数的索引文本
+# 按行/句边界分块，候选语义分取各块与 query 的最大 cosine（max-over-chunks）。
+_CHUNK_CHAR_LIMIT = 600
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？；!?;])")
+
+
+def _split_long_line(line: str, limit: int) -> List[str]:
+    """把超过 limit 的单行按句界切开；仍超长的句子按 limit 硬切。"""
+
+    pieces: List[str] = []
+    for sentence in _SENTENCE_SPLIT_RE.split(line):
+        if len(sentence) <= limit:
+            pieces.append(sentence)
+            continue
+        pieces.extend(sentence[i : i + limit] for i in range(0, len(sentence), limit))
+    return pieces
+
+
+def _chunk_text(text: str, *, limit: int = _CHUNK_CHAR_LIMIT) -> List[str]:
+    """把长索引文本切成 ≤limit 的块，边界优先取换行与句号。
+
+    空文本返回空列表（该候选语义分为 0，与历史行为一致）。
+    """
+
+    text = str(text or "")
+    if not text.strip():
+        return []
+    if len(text) <= limit:
+        return [text]
+    chunks: List[str] = []
+    current: List[str] = []
+    length = 0
+    for line in text.split("\n"):
+        for piece in _split_long_line(line, limit):
+            if length and length + len(piece) + 1 > limit:
+                chunks.append("\n".join(current))
+                current, length = [], 0
+            current.append(piece)
+            length += len(piece) + 1
+    if current:
+        chunks.append("\n".join(current))
+    return [chunk for chunk in chunks if chunk.strip()]
 
 
 class StorageCandidateSource:
@@ -92,7 +138,15 @@ class ContextualIndexBuilder:
 
 
 class VectorIndexAdapter:
-    """Own content-addressed embedding cache and semantic scoring."""
+    """Own content-addressed embedding cache and semantic scoring.
+
+    Long candidates (whole cards, prefixed facts) are chunked at line/sentence
+    boundaries and score by their best-matching chunk (late interaction), so
+    fields beyond the encoder's 512-token window still compete for the query
+    signal instead of being silently truncated away. Chunk vectors are cached
+    by content hash exactly like whole-text vectors, so embed-once semantics
+    carry over at chunk granularity.
+    """
 
     def __init__(self, embeddings: Any):
         self.embeddings = embeddings
@@ -102,13 +156,24 @@ class VectorIndexAdapter:
     async def scores(
         self, query: str, candidates: List[ContextItem], *, project_id: str = "", storage: Any = None
     ) -> List[float]:
-        texts = [str(item.metadata.get("_index_text") or item.content or "") for item in candidates]
+        segment_lists: List[List[str]] = []
+        for item in candidates:
+            text = str(item.metadata.get("_index_text") or item.content or "")
+            if 0 < len(text) <= _CHUNK_CHAR_LIMIT:
+                segments = [text]
+            else:
+                segments = _chunk_text(text)
+            segment_lists.append(segments)
         store = self._get_store(project_id, storage)
-        hashes = [hashlib.sha1(text.encode("utf-8")).hexdigest() for text in texts]
+        segment_hashes: List[List[str]] = [
+            [hashlib.sha1(segment.encode("utf-8")).hexdigest() for segment in segments]
+            for segments in segment_lists
+        ]
         misses: Dict[str, str] = {}
-        for content_hash, text in zip(hashes, texts):
-            if text and not store.has(content_hash):
-                misses.setdefault(content_hash, text)
+        for segments, hashes in zip(segment_lists, segment_hashes):
+            for segment, content_hash in zip(segments, hashes):
+                if segment and not store.has(content_hash):
+                    misses.setdefault(content_hash, segment)
         miss_items = list(misses.items())
         vectors = await self.embeddings.embed([query] + [text for _, text in miss_items])
         if not vectors or len(vectors) != len(miss_items) + 1:
@@ -119,9 +184,13 @@ class VectorIndexAdapter:
         if miss_items:
             self._persist(project_id)
         scores: List[float] = []
-        for content_hash, text in zip(hashes, texts):
-            cached = store.get(content_hash) if text else None
-            scores.append(cosine_similarity(query_vector, cached["vector"]) if cached else 0.0)
+        for segments, hashes in zip(segment_lists, segment_hashes):
+            best = 0.0
+            for content_hash in hashes:
+                cached = store.get(content_hash)
+                if cached:
+                    best = max(best, cosine_similarity(query_vector, cached["vector"]))
+            scores.append(best)
         return scores
 
     def _get_store(self, project_id: str, storage: Any) -> VectorStore:

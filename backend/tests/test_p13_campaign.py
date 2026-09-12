@@ -6,12 +6,12 @@ import asyncio
 
 import pytest
 
-from app.eval.campaign_models import EvalCampaign, campaign_job_id
-from app.eval.campaign_privacy import export_p12_cases_from_traces
-from app.eval.campaign_runner import CampaignRunner
-from app.eval.longform_artifacts import BenchmarkPaths, read_jsonl, write_json, write_jsonl
-from app.eval.longform_benchmark import LongformBenchmarkHarness
-from app.eval.longform_pipeline import LongformBenchmarkPipeline
+from evaluation.campaign_models import EvalCampaign, campaign_job_id
+from evaluation.campaign_privacy import export_p12_cases_from_traces
+from evaluation.campaign_runner import CampaignRunner
+from evaluation.longform_artifacts import BenchmarkPaths, read_jsonl, write_json, write_jsonl
+from evaluation.longform_benchmark import LongformBenchmarkHarness
+from evaluation.longform_pipeline import LongformBenchmarkPipeline
 
 
 def _campaign(**overrides):
@@ -368,7 +368,7 @@ def test_provider_infrastructure_uses_underlying_profile_provider(monkeypatch):
         "deepseek": {"provider": "deepseek"},
     }
     monkeypatch.setattr(
-        "app.eval.campaign_runner.llm_config_service.get_profile_by_id",
+        "evaluation.campaign_runner.llm_config_service.get_profile_by_id",
         lambda profile_id: profiles.get(profile_id),
     )
 

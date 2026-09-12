@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 文枢 WenShape - 深度上下文感知的智能体小说创作系统
  * WenShape - Deep Context-Aware Agent-Based Novel Writing System
  *
@@ -7,7 +7,7 @@
  */
 
 import React from 'react';
-import { useIDE } from '../../context/IDEContext';
+import { useIDE, SIDE_PANEL_MIN_WIDTH } from '../../context/IDEContext';
 import ExplorerPanel from './panels/ExplorerPanel';
 import CardsPanel from './panels/CardsPanel';
 import AgentsPanel from './panels/AgentsPanel';
@@ -42,7 +42,7 @@ export const SidePanel = () => {
   return (
     <div
       className="h-full rounded-[8px] overflow-hidden shadow-[0_1px_3px_rgba(2,6,23,0.07)] bg-[var(--vscode-sidebar-bg)] flex flex-col relative group"
-      style={{ width: sidePanelWidth, minWidth: 160, maxWidth: 600 }}
+      style={{ width: sidePanelWidth, minWidth: SIDE_PANEL_MIN_WIDTH, maxWidth: 600 }}
     >
       {/* ========================================================================
           面板内容容器 / Panel Content Container

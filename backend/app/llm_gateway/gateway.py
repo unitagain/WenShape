@@ -24,6 +24,18 @@ from app.llm_gateway.providers import BaseLLMProvider
 
 logger = get_logger(__name__)
 
+# durable queue 是可选依赖（打包裁剪或独立使用 gateway 时可能缺失）。原先 7 处调用点
+# 各自延迟导入 + try/except ImportError，现收敛为单一容错兜底：缺失时返回 None，
+# 各调用点的 ``task_execution is not None`` 判空即自然退化为「无持久任务上下文」。
+# 反向依赖已实测为零（durable_queue 不导入 llm_gateway），模块级导入无循环风险。
+try:
+    from app.jobs.durable_queue import current_task_execution
+except ImportError:  # pragma: no cover - 仅在裁剪掉 durable queue 的环境触发
+
+    def current_task_execution() -> Any:
+        return None
+
+
 
 class LLMGateway:
     """
@@ -91,23 +103,15 @@ class LLMGateway:
         Args:
             provider: This is now the PROFILE ID, not just 'openai'
         """
-        # If provider is None, fallback to default? Or raise error?
-        # In new system, provider ID should be explicit or looked up via agent assignment
-
-        # NOTE: existing code might pass 'openai' string.
-        # We should handle backward compatibility or ensure caller passes profile ID.
-        # Actually, caller usually passes result of get_provider_for_agent()
-
+        # provider 形参实为 **profile id**；调用方通常传 get_provider_for_agent() 的返回值。
+        # 兼容性由 ProviderRegistry.resolve 统一负责：先按 profile id 查（必要时 ensure_loaded），
+        # 再回退按 provider 名匹配（历史调用可能直接传 "openai"），都找不到则抛
+        # provider_profile_not_found —— 不在此处静默兜底为默认 provider。
         self._ensure_reliability()
         requested_timeout = float(timeout_seconds or self.request_timeout)
-        try:
-            from app.jobs.durable_queue import current_task_execution
-
-            task_execution = current_task_execution()
-            if task_execution is not None:
-                requested_timeout = task_execution.bounded_timeout(requested_timeout)
-        except ImportError:
-            pass
+        task_execution = current_task_execution()
+        if task_execution is not None:
+            requested_timeout = task_execution.bounded_timeout(requested_timeout)
         deadline = RequestDeadline(requested_timeout)
         target_provider = self.provider_registry.resolve(provider)
 
@@ -148,8 +152,6 @@ class LLMGateway:
         resolved_idempotency_key = idempotency_key
         if not resolved_idempotency_key:
             try:
-                from app.jobs.durable_queue import current_task_execution
-
                 task_execution = current_task_execution()
                 if task_execution is not None:
                     resolved_idempotency_key = task_execution.next_llm_idempotency_key(
@@ -186,14 +188,9 @@ class LLMGateway:
         )
         if not egress_authorized:
             raise PermissionError("external_egress_not_authorized")
-        try:
-            from app.jobs.durable_queue import current_task_execution
-
-            task_execution = current_task_execution()
-            if task_execution is not None:
-                await task_execution.mark_external_side_effect(str(request_trace.get("request_fingerprint") or ""))
-        except ImportError:
-            pass
+        task_execution = current_task_execution()
+        if task_execution is not None:
+            await task_execution.mark_external_side_effect(str(request_trace.get("request_fingerprint") or ""))
 
         # Execute with retry
         try:
@@ -540,14 +537,9 @@ class LLMGateway:
             )
 
         requested_timeout = float(timeout_seconds or self.request_timeout)
-        try:
-            from app.jobs.durable_queue import current_task_execution
-
-            task_execution = current_task_execution()
-            if task_execution is not None:
-                requested_timeout = task_execution.bounded_timeout(requested_timeout)
-        except ImportError:
-            pass
+        task_execution = current_task_execution()
+        if task_execution is not None:
+            requested_timeout = task_execution.bounded_timeout(requested_timeout)
         deadline = RequestDeadline(requested_timeout)
         options = {
             key: value
@@ -603,13 +595,9 @@ class LLMGateway:
             runtime_metrics.increment("gateway.agentic_stream_cancelled")
 
         try:
-            from app.jobs.durable_queue import current_task_execution
-
             task_execution = current_task_execution()
             if task_execution is not None:
                 await task_execution.mark_external_side_effect(str(request_trace.get("request_fingerprint") or ""))
-        except ImportError:
-            pass
         except asyncio.CancelledError:
             await record_cancelled_egress()
             raise
@@ -794,14 +782,9 @@ class LLMGateway:
         """
         self._ensure_reliability()
         requested_timeout = float(timeout_seconds or self.request_timeout)
-        try:
-            from app.jobs.durable_queue import current_task_execution
-
-            task_execution = current_task_execution()
-            if task_execution is not None:
-                requested_timeout = task_execution.bounded_timeout(requested_timeout)
-        except ImportError:
-            pass
+        task_execution = current_task_execution()
+        if task_execution is not None:
+            requested_timeout = task_execution.bounded_timeout(requested_timeout)
         deadline = RequestDeadline(requested_timeout)
         chunk_timeout = max(1.0, float(chunk_timeout_seconds or min(30.0, deadline.total_seconds)))
         target_provider = self.provider_registry.resolve(provider)
@@ -837,14 +820,9 @@ class LLMGateway:
         )
         if not egress_authorized:
             raise PermissionError("external_egress_not_authorized")
-        try:
-            from app.jobs.durable_queue import current_task_execution
-
-            task_execution = current_task_execution()
-            if task_execution is not None:
-                await task_execution.mark_external_side_effect(str(request_trace.get("request_fingerprint") or ""))
-        except ImportError:
-            pass
+        task_execution = current_task_execution()
+        if task_execution is not None:
+            await task_execution.mark_external_side_effect(str(request_trace.get("request_fingerprint") or ""))
         started_at = time.time()
 
         # Retry loop: retry only before the first chunk arrives.

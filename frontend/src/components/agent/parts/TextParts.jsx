@@ -8,6 +8,79 @@
 import React, { useState } from 'react';
 import { Copy, Check } from 'lucide-react';
 import { useLocale } from '../../../i18n';
+import { hasMarkdownStructure, parseInline, parseMarkdownBlocks } from '../../../lib/lightMarkdown';
+
+const HEADING_CLASS = {
+  1: 'text-sm font-bold',
+  2: 'text-[13px] font-bold',
+  3: 'text-xs font-bold',
+};
+
+const Inline = ({ text }) => (
+  <>
+    {parseInline(text).map((piece, index) => {
+      if (piece.type === 'bold') return <strong key={index} className="font-semibold">{piece.text}</strong>;
+      if (piece.type === 'code') {
+        return (
+          <code
+            key={index}
+            className="rounded-[3px] bg-[var(--vscode-list-hover)] px-1 font-mono text-[11px]"
+          >
+            {piece.text}
+          </code>
+        );
+      }
+      return <React.Fragment key={index}>{piece.text}</React.Fragment>;
+    })}
+  </>
+);
+
+/**
+ * Agent 答复的 Markdown 渲染（轻量子集，见 lib/lightMarkdown.js）。
+ * 无结构时退回纯文本，保持原有观感与零风险。
+ */
+const MarkdownText = ({ text }) => {
+  const source = String(text ?? '');
+  if (!hasMarkdownStructure(source)) {
+    return <span className="whitespace-pre-wrap break-words">{source}</span>;
+  }
+  return (
+    <div className="space-y-2">
+      {parseMarkdownBlocks(source).map((block, index) => {
+        if (block.type === 'rule') {
+          return <hr key={index} className="border-[var(--vscode-sidebar-border)]" />;
+        }
+        if (block.type === 'heading') {
+          return (
+            <div key={index} className={`${HEADING_CLASS[block.level] || 'text-xs font-bold'} text-[var(--vscode-fg)]`}>
+              <Inline text={block.text} />
+            </div>
+          );
+        }
+        if (block.type === 'list') {
+          const ListTag = block.ordered ? 'ol' : 'ul';
+          return (
+            <ListTag
+              key={index}
+              className={block.ordered ? 'list-decimal space-y-0.5 pl-5' : 'list-disc space-y-0.5 pl-5'}
+            >
+              {block.items.map((item, itemIndex) => (
+                <li key={itemIndex} className="break-words">
+                  <Inline text={item} />
+                </li>
+              ))}
+            </ListTag>
+          );
+        }
+        return (
+          <p key={index} className="whitespace-pre-wrap break-words">
+            <Inline text={block.text} />
+          </p>
+        );
+      })}
+    </div>
+  );
+};
 
 const CopyButton = ({ text }) => {
   const { t } = useLocale();
@@ -52,8 +125,8 @@ export const NarrationPart = ({ part }) => {
 };
 
 export const AnswerPart = ({ part }) => (
-  <div className="group relative text-xs leading-relaxed text-[var(--vscode-fg)] whitespace-pre-wrap break-words pr-5">
-    {part?.text}
+  <div className="group relative text-xs leading-relaxed text-[var(--vscode-fg)] break-words pr-5">
+    <MarkdownText text={part?.text} />
     <span className="absolute top-0 right-0">
       <CopyButton text={part?.text} />
     </span>
@@ -69,10 +142,10 @@ export const MetaPart = ({ part }) => {
   return (
     <div
       className={[
-        'text-[11px] px-2 py-1 rounded-[6px] border',
+        'text-[11px] py-0.5 leading-relaxed',
         isError
-          ? 'bg-red-50 text-red-700 border-red-200'
-          : 'bg-[var(--vscode-input-bg)] text-[var(--vscode-fg-subtle)] border-[var(--vscode-sidebar-border)] font-mono',
+          ? 'text-red-700'
+          : 'text-[var(--vscode-fg-subtle)]',
       ].join(' ')}
     >
       {label && !isError ? <span className="mr-1.5 opacity-70">{label}</span> : null}

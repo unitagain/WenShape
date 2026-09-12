@@ -32,7 +32,7 @@ async def main() -> int:
     _ensure_sys_path()
     args = _parse_args()
 
-    from app.eval.golden_replay import run_golden_replay_suite
+    from evaluation.golden_replay import run_golden_replay_suite
 
     result = await run_golden_replay_suite()
     payload = json.dumps(result, ensure_ascii=False, indent=2)

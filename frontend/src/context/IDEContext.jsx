@@ -10,7 +10,7 @@
  *   管理面板布局、编辑状态、连接状态等。
  */
 
-import React, { createContext, useContext, useReducer, useMemo, useEffect } from 'react';
+import React, { createContext, useCallback, useContext, useReducer, useMemo, useEffect, useRef, useState } from 'react';
 
 import { closeTab, documentOf, renameTab, tabKeyOf, upsertTab } from '../lib/editorTabs';
 
@@ -34,6 +34,9 @@ export function clampEditorFontSize(value) {
  *
  * 包含面板控制、编辑器状态、连接状态等多个维度的 UI 状态。
  */
+// 左侧面板最小宽度：低于此值面板标题会被省略号截断（U9 负责人反馈）。
+export const SIDE_PANEL_MIN_WIDTH = 220;
+
 const initialState = {
   // ========================================================================
   // 面板控制 / Panel Control
@@ -107,8 +110,15 @@ function ideReducer(state, action) {
     case 'TOGGLE_RIGHT_PANEL':
       return { ...state, rightPanelVisible: !state.rightPanelVisible };
 
-    case 'SET_PANEL_WIDTH':
-      return { ...state, [action.panel === 'left' ? 'sidePanelWidth' : 'rightPanelWidth']: action.width };
+    case 'SET_PANEL_WIDTH': {
+      // U9：左侧栏设下限，避免拖窄后面板标题被省略号截断。
+      // 在 reducer 单点钳制（而非只在渲染处 minWidth），持久化值同样受约束。
+      const width =
+        action.panel === 'left'
+          ? Math.max(SIDE_PANEL_MIN_WIDTH, Math.min(420, Number(action.width) || SIDE_PANEL_MIN_WIDTH))
+          : action.width;
+      return { ...state, [action.panel === 'left' ? 'sidePanelWidth' : 'rightPanelWidth']: width };
+    }
 
     // 文档和项目状态 / Document and Project State
     case 'SET_ACTIVE_DOCUMENT': {
@@ -239,6 +249,19 @@ export function IDEProvider({ children, projectId }) {
     ...readPersistedPanelLayout(),
     activeProjectId: projectId,
   });
+  const saveTargetsRef = useRef(new Map());
+  const [, setSaveTargetsVersion] = useState(0);
+
+  const registerSaveTarget = useCallback((key, target) => {
+    const registration = Symbol(key);
+    saveTargetsRef.current.set(key, { ...target, key, registration });
+    setSaveTargetsVersion((value) => value + 1);
+    return () => {
+      if (saveTargetsRef.current.get(key)?.registration !== registration) return;
+      saveTargetsRef.current.delete(key);
+      setSaveTargetsVersion((value) => value + 1);
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -264,7 +287,11 @@ export function IDEProvider({ children, projectId }) {
   ]);
 
   // 使用 useMemo 优化性能，避免不必要的上下文更新
-  const value = useMemo(() => ({ state, dispatch }), [state]);
+  const saveTargets = Array.from(saveTargetsRef.current.values());
+  const value = useMemo(
+    () => ({ state, dispatch, registerSaveTarget, saveTargets }),
+    [registerSaveTarget, saveTargets, state],
+  );
 
   return <IDEContext.Provider value={value}>{children}</IDEContext.Provider>;
 }
@@ -274,7 +301,10 @@ function readPersistedPanelLayout() {
   try {
     const value = JSON.parse(localStorage.getItem(PANEL_LAYOUT_KEY) || '{}');
     return {
-      sidePanelWidth: Math.max(180, Math.min(420, Number(value.sidePanelWidth) || initialState.sidePanelWidth)),
+      sidePanelWidth: Math.max(
+        SIDE_PANEL_MIN_WIDTH,
+        Math.min(420, Number(value.sidePanelWidth) || initialState.sidePanelWidth),
+      ),
       rightPanelWidth: Math.max(280, Math.min(620, Number(value.rightPanelWidth) || initialState.rightPanelWidth)),
       sidePanelVisible: value.sidePanelVisible !== false,
       rightPanelVisible: value.rightPanelVisible !== false,

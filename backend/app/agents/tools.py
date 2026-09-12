@@ -141,6 +141,28 @@ def writer_tool_schemas() -> List[Dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "query_memory",
+                "description": (
+                    "按查询召回创作记忆——既往会话提炼的作者偏好、创作决定、约束与进度"
+                    "（仅返回已激活且可信的条目）。动笔前查询可确保延续既定文风偏好、"
+                    "不违反作者已确认的创作约束。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "要查询的内容，如『文风偏好』『本书的叙事约束』『主角设定上的既定决定』",
+                        },
+                        "top_k": {"type": "integer", "description": "返回条数，默认 5"},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "read_outline",
                 "description": (
                     "读取全文规划大纲（作者对整部作品的结构/走向/伏笔/卷章安排）。"
@@ -200,6 +222,8 @@ class WriterToolset:
         current_chapter: str = "",
         total_chapters: int = 0,
         outline_enabled: bool = True,
+        defer_writes: bool = False,
+        memory_storage=None,
     ):
         self.project_id = project_id
         self.adapter = storage_adapter
@@ -207,6 +231,17 @@ class WriterToolset:
         self.current_chapter = current_chapter
         self.total_chapters = total_chapters
         self.outline_enabled = bool(outline_enabled)
+        # Agent turns use an overlay so every asset can be reviewed as a diff.
+        # Standalone callers retain the historical immediate-write behavior.
+        self.defer_writes = bool(defer_writes)
+        # 创作记忆存储（CreativeMemoryStorage）。None = 记忆库不可用，query_memory
+        # 降级为提示文本（能力降级，不阻断其余工具）。recall() 内部已强制
+        # recall_block_reasons eligible 过滤：needs_review/rejected/superseded/
+        # conflict/untrusted 永不出现在工具输出。
+        self.memory_storage = memory_storage
+        self._outline_original = ""
+        self._outline_revision = 0
+        self._outline_working: str | None = None
 
     def schemas(self) -> List[Dict[str, Any]]:
         schemas = writer_tool_schemas()
@@ -217,7 +252,7 @@ class WriterToolset:
 
     @staticmethod
     def is_result_recoverable(name: str) -> bool:
-        return name in {"lookup_card", "query_canon", "query_relations", "read_chapter", "search_prose", "read_outline"}
+        return name in {"lookup_card", "query_canon", "query_relations", "read_chapter", "search_prose", "read_outline", "query_memory"}
 
     async def execute(self, name: str, arguments: Any) -> str:
         """根据工具名分发执行；任何异常都转为可读的工具结果文本，避免中断 agentic 循环。"""
@@ -234,6 +269,10 @@ class WriterToolset:
             elif name == "query_relations":
                 result = await self._query_relations(
                     str(args.get("entity") or "").strip(), str(args.get("other") or "").strip()
+                )
+            elif name == "query_memory":
+                result = await self._query_memory(
+                    str(args.get("query") or "").strip(), self._as_int(args.get("top_k"), 5)
                 )
             elif name == "read_chapter":
                 result = await self._read_chapter(str(args.get("chapter_id") or "").strip())
@@ -278,6 +317,7 @@ class WriterToolset:
             "lookup_card": "cards",
             "query_canon": "canon",
             "query_relations": "relations",
+            "query_memory": "memory",
             "read_chapter": "prose",
             "search_prose": "prose",
             "read_outline": "outline",
@@ -312,11 +352,14 @@ class WriterToolset:
     async def _lookup_card(self, name: str) -> str:
         if not name:
             return "[lookup_card 需要 name 参数]"
-        # 章节标题不是设定卡名称；阻止模型把“第一章/章节设定”等工作对象误路由到卡片检索。
+        # 章节标题不是设定卡名称；阻止模型把"第一章/章节设定"等工作对象误路由到卡片检索。
+        # 括号显式化：`and` 优先级高于 `or`，原写法依赖该规则、review 时易被误读为缺陷。
         normalized = name.replace(" ", "").replace("　", "")
-        if ("章节" in normalized or normalized.startswith("第") and "章" in normalized) and not await self.adapter.get_character_card(self.project_id, name):
-            return f"『{name}』看起来是章节或写作任务，不是设定卡名称；请改用 read_chapter 或 query_canon 查询。"
+        looks_like_chapter = "章节" in normalized or (normalized.startswith("第") and "章" in normalized)
+        # 先取一次角色卡，供「是否误路由」判断与后续查找复用（原先此处查两遍）。
         card = await self.adapter.get_character_card(self.project_id, name)
+        if looks_like_chapter and not card:
+            return f"『{name}』看起来是章节或写作任务，不是设定卡名称；请改用 read_chapter 或 query_canon 查询。"
         kind = "角色"
         if not card:
             card = await self.adapter.get_world_card(self.project_id, name)
@@ -385,6 +428,39 @@ class WriterToolset:
         edges = await get_edges(self.project_id) or []
         return [relation_cls.from_card_edge(edge) for edge in edges if isinstance(edge, dict)]
 
+    async def _query_memory(self, query: str, top_k: int) -> str:
+        """召回符合条件的创作记忆（偏好/决定/约束/进度）。
+
+        recall() 是唯一入口：eligible 过滤（active+trusted+无冲突+未过期+有出处）
+        在存储层强制执行，本工具不做二次筛选也不放宽。记忆是弱约束软知识，
+        不与 canon 事实混同。
+        """
+        if not query:
+            return "[query_memory 需要 query 参数]"
+        if self.memory_storage is None:
+            return "（创作记忆库当前不可用。）"
+        top_k = max(1, min(top_k, 10))
+        try:
+            records = await self.memory_storage.recall(self.project_id, query, top_k) or []
+        except Exception as exc:
+            logger.warning("query_memory recall failed: %s", safe_error_code(exc))
+            return f"[memory_error code={safe_error_code(exc)}]"
+        if not records:
+            return f"未检索到与『{query}』相关的已激活创作记忆。"
+        lines = [f"【与『{query}』相关的创作记忆（作者偏好/决定/约束，按相关度）】"]
+        for record in records:
+            name = str(record.get("name") or record.get("slug") or "")
+            kind = f"{record.get('type') or 'preference'}/{record.get('scope') or 'project'}"
+            description = str(record.get("description") or "").strip()
+            body = str(record.get("body") or record.get("content") or "").strip()
+            line = f"- [{kind}] {name}"
+            if description:
+                line += f"：{description}"
+            if body and body != description:
+                line += f"\n  {body}"
+            lines.append(line)
+        return _truncate("\n".join(lines))
+
     async def _read_outline(self) -> str:
         if not self.outline_enabled:
             return "大纲功能当前已禁用。"
@@ -396,7 +472,10 @@ class WriterToolset:
         except Exception as exc:
             logger.warning("read_outline load failed: %s", exc)
             return f"[outline_error code={safe_error_code(exc)}]"
-        content = str(data.get("content") or "").strip()
+        if self._outline_working is not None:
+            content = self._outline_working.strip()
+        else:
+            content = str(data.get("content") or "").strip()
         if not content:
             return "大纲暂为空白。可在资源管理器顶部的「大纲」中规划全文结构、走向与伏笔。"
         return _truncate(f"【全文规划大纲】\n{content}", 6000)
@@ -421,8 +500,8 @@ class WriterToolset:
             return f"[edit_outline 的 mode 无效：{mode}（可选 edit / append / replace）]"
 
         data = await outline.get_outline(self.project_id)
-        current = str(data.get("content") or "")
-        revision = int(data.get("revision") or 0)
+        current = self._outline_working if self._outline_working is not None else str(data.get("content") or "")
+        revision = self._outline_revision if self._outline_working is not None else int(data.get("revision") or 0)
 
         if mode == "edit":
             old_text = str(args.get("old_text") or "")
@@ -452,7 +531,7 @@ class WriterToolset:
         if updated == current:
             return "大纲内容未发生变化，未写入。"
 
-        # 副作用在执行点消费权限决策：策略若被收紧为 ask/deny，这里直接拒绝而不是静默写入。
+        # 权限在 proposal 生成阶段同样必须校验，不能因为延迟提交而绕过策略。
         decision = decide_permission(
             "edit_outline",
             resource_scope={"project_id": self.project_id, "asset": "outline"},
@@ -460,6 +539,17 @@ class WriterToolset:
         )
         if decision.level is not PermissionLevel.ALLOW:
             return f"[permission_{decision.level.value}] 大纲写入未获许可，本次未修改。"
+
+        # Agent turn 中先写入 overlay，交由统一 Change Set 采纳；独立工具调用仍可保留旧行为。
+        if self.defer_writes:
+            if not self._outline_original and self._outline_working is None:
+                self._outline_original = current
+                self._outline_revision = revision
+            self._outline_working = updated
+            return (
+                f"已生成大纲修改提议（mode={mode}，{len(updated)} 字，基线 revision={revision}）。"
+                "尚未写入磁盘，请在本轮结束后审阅 diff。"
+            )
 
         try:
             saved = await outline.save_outline(self.project_id, updated, expected_revision=revision)
@@ -469,6 +559,20 @@ class WriterToolset:
             f"已更新大纲（mode={mode}，当前 {int(saved.get('word_count') or 0)} 字，"
             f"revision={int(saved.get('revision') or 0)}）。"
         )
+
+    def change_proposals(self) -> List[Dict[str, Any]]:
+        """Return deferred outline changes as a normalized asset proposal."""
+        if self._outline_working is None or self._outline_working == self._outline_original:
+            return []
+        return [
+            {
+                "asset_type": "outline",
+                "asset_id": "outline",
+                "original": self._outline_original,
+                "revised": self._outline_working,
+                "base_revision": self._outline_revision,
+            }
+        ]
 
     async def _read_chapter(self, chapter_id: str) -> str:
         if not chapter_id:
@@ -496,6 +600,31 @@ class WriterToolset:
         else:
             body = text[:1600].rstrip() + "\n…(中略)…\n" + text[-1600:].lstrip()
         return f"【章节 {chapter_id} 正文（首尾片段）】\n" + body
+
+    async def load_chapter_content(self, chapter_id: str) -> tuple[str, int]:
+        """Load the complete chapter and its optimistic-concurrency revision for edit tools."""
+        target = str(chapter_id or "").strip()
+        draft = getattr(self.adapter, "draft", None)
+        if draft is None:
+            return "", 0
+        content = None
+        try:
+            content = await draft.get_final_draft(self.project_id, target)
+        except Exception:
+            content = None
+        if content is None:
+            try:
+                latest = await draft.get_latest_draft(self.project_id, target)
+                content = getattr(latest, "content", None) if latest else None
+            except Exception:
+                content = None
+        revision = 0
+        try:
+            data = draft.get_draft_revision(self.project_id, target)
+            revision = int((data or {}).get("revision") or 0) if isinstance(data, dict) else int(data or 0)
+        except Exception as exc:
+            logger.debug("chapter revision lookup degraded: %s", safe_error_code(exc))
+        return str(content or ""), revision
 
     async def _search_prose(self, query: str, top_k: int) -> str:
         if not query:

@@ -11,13 +11,16 @@ License: PolyForm Noncommercial License 1.0.0
 """
 
 import asyncio
+import hashlib
 import json
 import time
+import uuid
 from contextlib import nullcontext
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from app.llm_gateway import get_gateway
-from app.error_contract import error_envelope, safe_error_code
+from app.error_contract import error_envelope, record_degradation, safe_error_code
 from app.storage import (
     CardStorage,
     CanonStorage,
@@ -41,6 +44,7 @@ from app.orchestrator.architecture import route_contract
 from app.orchestrator.context_planning_service import ContextPlanningService
 from app.orchestrator.context_assembly_service import ContextAssemblyService
 from app.orchestrator.writing_service import WritingService
+from app.services.consistency_annotation_service import ConsistencyAnnotationService
 from app.orchestrator.turn_runtime import TurnState
 from app.orchestrator.chat_turn_service import ChatTurnService
 from app.orchestrator.post_turn_service import PostTurnService
@@ -165,7 +169,9 @@ class Orchestrator(AnalysisMixin):
             context_assembly=self.context_assembly_service,
             progress_callback=self.progress_callback,
             detect_proposals=self._detect_proposals,
-            is_cancelled=lambda: self._cancelled,
+            is_cancelled=self._is_cancelled,
+            memory_storage=self.creative_memory_storage,
+            consistency_service=ConsistencyAnnotationService(self.storage_adapter),
         )
         self.chat_turn_service = ChatTurnService(self)
         self.post_turn_service = PostTurnService(
@@ -185,10 +191,9 @@ class Orchestrator(AnalysisMixin):
             worker_service=self.worker_task_service,
             emit_progress=self._emit_progress,
             translate=self._p,
-            is_cancelled=lambda: self._cancelled,
-            write_step=self._plan_write_step,
-            edit_step=self._plan_edit_step,
-            analyze_step=self._plan_analyze_step,
+            is_cancelled=self._is_cancelled,
+            writing_service=self.writing_service,
+            analyze_chapter=self.analyze_chapter,
         )
         self.volume_summary_service = VolumeSummaryService(
             draft_storage=self.draft_storage,
@@ -218,8 +223,173 @@ class Orchestrator(AnalysisMixin):
         self.progress_callback = callback
         self.writing_service.progress_callback = callback
 
+    async def apply_change_set(self, project_id: str, changes: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Preflight and apply a multi-asset Agent proposal.
+
+        All revisions are checked before the first write. This prevents a stale
+        proposal from partially overwriting newer user edits; writes themselves
+        use the storage optimistic-concurrency contracts.
+        """
+        from app.control_plane.store import RevisionConflict
+
+        normalized = [item for item in (changes or []) if isinstance(item, dict)]
+        if not normalized:
+            return {"success": True, "applied": [], "count": 0}
+        identities = [(str(item.get("asset_type") or ""), str(item.get("asset_id") or "")) for item in normalized]
+        if len(set(identities)) != len(identities):
+            return {"success": False, "reason": "duplicate_change_set_asset"}
+        outline = getattr(self.storage_adapter, "outline", None)
+        checks: List[Dict[str, Any]] = []
+        for item in normalized:
+            asset_type = str(item.get("asset_type") or "").strip()
+            asset_id = str(item.get("asset_id") or "").strip()
+            original = str(item.get("original") or "")
+            revised = str(item.get("revised") or "")
+            base_revision = int(item.get("base_revision") or 0)
+            if asset_type == "outline":
+                if outline is None:
+                    return {"success": False, "reason": "outline_unavailable"}
+                current = await outline.get_outline(project_id)
+                if int(current.get("revision") or 0) != base_revision or str(current.get("content") or "") != original:
+                    return {"success": False, "reason": "revision_conflict", "asset": "outline"}
+            elif asset_type == "chapter" and asset_id:
+                current, _ = await self.draft_storage.get_working_text(project_id, asset_id)
+                revision = self.draft_storage.get_draft_revision(project_id, asset_id)
+                if int((revision or {}).get("revision") or 0) != base_revision or str(current or "") != original:
+                    return {"success": False, "reason": "revision_conflict", "asset": asset_id}
+            else:
+                return {"success": False, "reason": "invalid_change_set_asset"}
+            checks.append({"asset_type": asset_type, "asset_id": asset_id, "original": original, "revised": revised, "base_revision": base_revision, "chapter_target": item.get("chapter_target")})
+
+        applied: List[Dict[str, Any]] = []
+        # 写入意图日志（评估 P7）：preflight 原子、写入不是——第二个资产写失败时
+        # 第一个已落盘。journal 先记录全部意图，逐资产标记终态，使部分应用可查询、
+        # 可审计。记录失败只降级不阻断（观测设施不得破坏写入主路径）。
+        journal_id = ""
+        store = self._control_store_for_change_set()
+        if store is not None:
+            journal_id = uuid.uuid4().hex
+            try:
+                scope = current_turn_scope()
+                store.record_write_intent(
+                    journal_id,
+                    project_id,
+                    scope.turn_id if scope is not None else "",
+                    [
+                        {
+                            "asset_type": item["asset_type"],
+                            "asset_id": item["asset_id"],
+                            "base_revision": item["base_revision"],
+                            "content_sha256": hashlib.sha256(str(item["revised"] or "").encode("utf-8")).hexdigest(),
+                        }
+                        for item in checks
+                    ],
+                )
+            except Exception as exc:
+                record_degradation("change_set_write_journal", exc)
+                journal_id = ""
+        try:
+            for item in checks:
+                if item["asset_type"] == "outline":
+                    saved = await outline.save_outline(project_id, item["revised"], expected_revision=item["base_revision"])
+                    applied.append({"asset_type": "outline", "asset_id": "outline", "revision": int(saved.get("revision") or 0)})
+                else:
+                    chapter = item["asset_id"]
+                    await self.draft_storage.save_current_draft(
+                        project_id=project_id,
+                        chapter=chapter,
+                        content=item["revised"],
+                        word_count=len(item["revised"]),
+                        create_prev_backup=True,
+                        expected_revision=item["base_revision"],
+                    )
+                    target = item.get("chapter_target") or {}
+                    summary = await self.draft_storage.get_chapter_summary(project_id, chapter)
+                    title = str(target.get("title") or chapter) if isinstance(target, dict) else chapter
+                    if summary is None:
+                        from app.schemas.draft import ChapterSummary
+                        from app.utils.chapter_id import ChapterIDValidator
+                        summary = ChapterSummary(
+                            chapter=chapter,
+                            volume_id=ChapterIDValidator.extract_volume_id(chapter) or "V1",
+                            title=title,
+                            word_count=len(item["revised"]),
+                        )
+                    else:
+                        if isinstance(target, dict) and target.get("title"):
+                            summary.title = title
+                        summary.word_count = len(item["revised"])
+                    await self.draft_storage.save_chapter_summary(project_id, summary)
+                    revision = self.draft_storage.get_draft_revision(project_id, chapter)
+                    applied.append({"asset_type": "chapter", "asset_id": chapter, "revision": int((revision or {}).get("revision") or 0)})
+                if journal_id:
+                    try:
+                        store.mark_write_applied(journal_id, item["asset_type"], item["asset_id"])
+                    except Exception as exc:
+                        record_degradation("change_set_write_journal", exc)
+        except RevisionConflict:
+            self._journal_remaining_failed(store, journal_id, checks, applied, "revision_conflict")
+            return {"success": False, "reason": "revision_conflict", "applied": applied, "journal_id": journal_id}
+        except Exception as exc:
+            logger.warning("change set apply failed: %s", safe_error_code(exc), exc_info=True)
+            self._journal_remaining_failed(store, journal_id, checks, applied, safe_error_code(exc))
+            return {"success": False, "reason": safe_error_code(exc), "applied": applied, "journal_id": journal_id}
+        return {"success": True, "applied": applied, "count": len(applied), "journal_id": journal_id}
+
+    def _control_store_for_change_set(self):
+        """Change set journal 的控制平面 store；不可用时降级为 None（journal 关闭）。
+
+        路径沿用全仓惯例 ``<data_dir>/_system/control.sqlite3``（与
+        ``control_plane/runtime.control_database_path``、``source_snapshot._control_store``
+        同一落点），但以 **本 Orchestrator 实例的 data_dir** 为根——而不是全局单例的
+        settings.data_dir——保证测试中 ``Orchestrator(tmp_path)`` 的 journal 写入
+        落在临时目录，不污染真实数据目录。生产环境两者是同一路径；多连接并发
+        由 SQLite WAL + busy_timeout 承担（control_plane 原生支持）。
+        """
+        cached = getattr(self, "_change_set_journal_store", None)
+        if cached is not None:
+            return cached or None
+        try:
+            from app.control_plane.store import SQLiteControlStore
+
+            data_dir = str(getattr(self.draft_storage, "data_dir", "") or "").strip()
+            if not data_dir:
+                self._change_set_journal_store = False
+                return None
+            path = Path(data_dir) / "_system" / "control.sqlite3"
+            store = SQLiteControlStore(path)
+            self._change_set_journal_store = store
+            return store
+        except Exception as exc:
+            record_degradation("change_set_write_journal", exc)
+            self._change_set_journal_store = False
+            return None
+
+    def _journal_remaining_failed(self, store, journal_id: str, checks: List[Dict[str, Any]], applied: List[Dict[str, Any]], error: str) -> None:
+        """把未写完的资产在 journal 中标记为 failed（标记失败本身也只降级）。"""
+        if not journal_id or store is None:
+            return
+        done = {(str(row.get("asset_type") or ""), str(row.get("asset_id") or "")) for row in applied}
+        for item in checks:
+            key = (str(item["asset_type"] or ""), str(item["asset_id"] or ""))
+            if key in done:
+                continue
+            try:
+                store.mark_write_failed(journal_id, key[0], key[1], error)
+            except Exception as exc:
+                record_degradation("change_set_write_journal", exc)
+                return
+
     def _p(self, zh: str, en: str) -> str:
         return en if self.language == "en" else zh
+
+    def _is_cancelled(self) -> bool:
+        """Resolve cancellation from the current turn before the legacy session flag."""
+
+        scope = current_turn_scope()
+        if scope is not None:
+            return bool(scope.cancelled or scope.runtime.cancelled)
+        return self._cancelled
 
     async def _update_status(self, status: SessionStatus, message: str) -> None:
         """Update session status and notify callback."""
@@ -314,41 +484,6 @@ class Orchestrator(AnalysisMixin):
         if emit and self.progress_callback:
             await self.progress_callback({"type": "intent", "project_id": project_id, "chapter": chapter, **decision})
         return decision
-
-    async def _plan_write_step(self, project_id: str, step: Dict[str, Any]) -> str:
-        chapter = str(step.get("chapter") or "").strip()
-        description = str(step.get("description") or "").strip()
-        return await self._execute_plan_writing_step(project_id, chapter, description, "write")
-
-    async def _plan_edit_step(self, project_id: str, step: Dict[str, Any]) -> str:
-        chapter = str(step.get("chapter") or "").strip()
-        description = str(step.get("description") or "").strip()
-        return await self._execute_plan_writing_step(project_id, chapter, description, "edit")
-
-    async def _execute_plan_writing_step(
-        self,
-        project_id: str,
-        chapter: str,
-        description: str,
-        action: str,
-    ) -> str:
-        """Execute an approved plan step through the single Writer path and persist it."""
-        if not chapter:
-            return f"{action}: missing_chapter"
-        result = await self.writing_service.run(project_id, chapter, description)
-        if not result.get("success") or not result.get("changed"):
-            state = result.get("terminal_state") or result.get("reason") or "incomplete"
-            return f"{action} {chapter}: {state}"
-        await self.draft_storage.save_current_draft(project_id, chapter, str(result.get("content") or ""))
-        turn_effect = result.get("turn_effect")
-        if isinstance(turn_effect, dict):
-            await self.apply_turn_effect(project_id, chapter, turn_effect)
-        return f"{action} {chapter}: completed"
-
-    async def _plan_analyze_step(self, project_id: str, step: Dict[str, Any]) -> str:
-        chapter = str(step.get("chapter") or "").strip()
-        res = await self.analyze_chapter(project_id, chapter)
-        return f"analyze {chapter}: {res.get('success')}"
 
     # ---------------------------------------------------------------- 对话记忆层 --
     # 持久化对话历史（Git-Native）+ compact 长对话压缩 + 顺带提炼作者偏好 → creative_memory。
@@ -475,6 +610,7 @@ class Orchestrator(AnalysisMixin):
         chapter: str,
         message: str,
         *,
+        conversation_id: str = "",
         has_selection: bool = False,
         has_draft: bool = False,
         target_word_count: int = 3000,
@@ -489,6 +625,7 @@ class Orchestrator(AnalysisMixin):
             project_id,
             chapter,
             message,
+            conversation_id=conversation_id,
             has_selection=has_selection,
             has_draft=has_draft,
             target_word_count=target_word_count,

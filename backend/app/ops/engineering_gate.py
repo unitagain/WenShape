@@ -12,7 +12,8 @@ def engineering_checks(repo_root: Path) -> list[EngineeringCheck]:
     repo = Path(repo_root).resolve()
     backend = repo / "backend"
     return [
-        ("ruff", ["python", "-m", "ruff", "check", "app", "tests", "scripts"], backend),
+        # evaluation/ 是诊断资产（V3），不属于生产运行时；仍须 lint，但与 app/ 的生产基线区分开。
+        ("ruff", ["python", "-m", "ruff", "check", "app", "evaluation", "tests", "scripts"], backend),
         ("type_contract", ["python", "scripts/type_contract_check.py"], backend),
         ("pytest", ["python", "-m", "pytest"], backend),
         ("pip_check", ["python", "-m", "pip", "check"], backend),

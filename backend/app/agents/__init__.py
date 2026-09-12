@@ -1,4 +1,4 @@
-﻿"""
+"""
 Multi-Agent System / 多智能体系统
 Agents for novel writing: Archivist, Writer, Editor
 小说写作智能体：档案员、主笔、编辑

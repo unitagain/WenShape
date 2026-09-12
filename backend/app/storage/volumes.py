@@ -1,4 +1,4 @@
-﻿"""
+"""
 中文说明：分卷存储服务，基于文件系统管理分卷元数据与摘要。
 
 Volume Storage
@@ -113,11 +113,11 @@ class VolumeStorage(BaseStorage):
 
     def _get_volume_file_path(self, project_id: str, volume_id: str) -> Path:
         """Get volume metadata file path."""
-        return self.get_project_path(project_id) / "volumes" / f"{volume_id}.yaml"
+        return self.asset_path(project_id, "volumes", f"{volume_id}.yaml", field="volume_id")
 
     def _get_volume_summary_file_path(self, project_id: str, volume_id: str) -> Path:
         """Get volume summary file path."""
-        return self.get_project_path(project_id) / "volumes" / f"{volume_id}_summary.yaml"
+        return self.asset_path(project_id, "volumes", f"{volume_id}_summary.yaml", field="volume_id")
 
     async def _save_volume(self, project_id: str, volume: Volume) -> None:
         """Persist volume metadata."""

@@ -119,6 +119,28 @@ def test_edit_outline_append_and_replace(tmp_path: Path):
     assert document["content"] == "全新大纲。" and document["revision"] == 3  # 每次写入都 bump revision
 
 
+def test_edit_outline_deferred_mode_returns_proposal_without_writing(tmp_path: Path):
+    storage = OutlineStorage(str(tmp_path))
+    asyncio.run(storage.save_outline("p", "原大纲。"))
+    from app.agents.tools import WriterToolset
+
+    toolset = WriterToolset("p", _OutlineAdapter(storage), None, defer_writes=True)
+    result = asyncio.run(toolset.execute("edit_outline", {"mode": "replace", "content": "新大纲。"}))
+    asyncio.run(toolset.execute("edit_outline", {"mode": "append", "content": "第二卷。"}))
+
+    assert "修改提议" in result
+    assert asyncio.run(storage.get_outline("p"))["content"] == "原大纲。"
+    assert toolset.change_proposals() == [
+        {
+            "asset_type": "outline",
+            "asset_id": "outline",
+            "original": "原大纲。",
+            "revised": "新大纲。\n\n第二卷。",
+            "base_revision": 1,
+        }
+    ]
+
+
 def test_edit_outline_precise_replacement_requires_unique_match(tmp_path: Path):
     storage = OutlineStorage(str(tmp_path))
     asyncio.run(storage.save_outline("p", "第一卷：伏笔 A。\n第二卷：伏笔 A。"))

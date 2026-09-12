@@ -1,4 +1,4 @@
-﻿export const buildLineDiff = (originalText = '', revisedText = '', options = {}) => {
+export const buildLineDiff = (originalText = '', revisedText = '', options = {}) => {
   const contextLines = options.contextLines ?? 2;
   const normalize = (text) => (text || '').replace(/\r\n/g, '\n');
 
@@ -178,4 +178,28 @@ const buildHunksFromOps = (ops, contextLines) => {
   flushPending();
 
   return { hunks, stats };
+};
+
+/**
+ * 按资产合并两个 change set（后者优先），用于计划多步执行时累积待批准文件。
+ *
+ * plan 每一步的 stream_end 各带自己的 change_set，而 diffReview 是整体替换；
+ * 不合并的话先完成的章节会从待批准列表里消失（作者只能看到最后一个，
+ * 或采纳当前项后才看到下一个）。以 `asset_type:asset_id` 去重并保持原有顺序，
+ * 同一资产保留较新的一份——后一步基于前一步的 working 副本继续改。
+ */
+export const mergeChangeSets = (previous = [], next = []) => {
+  const merged = [];
+  const indexByKey = new Map();
+  for (const item of [...(previous || []), ...(next || [])]) {
+    if (!item || typeof item !== 'object') continue;
+    const key = `${item.asset_type || ''}:${item.asset_id || ''}`;
+    if (indexByKey.has(key)) {
+      merged[indexByKey.get(key)] = item;
+      continue;
+    }
+    indexByKey.set(key, merged.length);
+    merged.push(item);
+  }
+  return merged;
 };

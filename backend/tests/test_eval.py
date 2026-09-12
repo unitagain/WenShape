@@ -7,7 +7,7 @@ Phase 6 验收：检索召回评测（确定性、无 LLM、无网络）。
 import asyncio
 
 from app.context_engine.select_engine import ContextSelectEngine
-from app.eval.retrieval_eval import evaluate_retrieval_recall
+from evaluation.retrieval_eval import evaluate_retrieval_recall
 from app.schemas.canon import Fact
 
 

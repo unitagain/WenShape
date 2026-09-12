@@ -10,12 +10,12 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from app.eval.campaign_models import CampaignUsage, EvalCampaign, campaign_job_id, stable_fingerprint
-from app.eval.campaign_store import CampaignStore
-from app.eval.longform_artifacts import read_json, read_jsonl
-from app.eval.longform_benchmark import LongformBenchmarkHarness
-from app.eval.p12_context_eval import p12_pair_fingerprint
-from app.eval.writing_judge import POINTWISE_PAIR_JUDGE_PROMPT_VERSION
+from evaluation.campaign_models import CampaignUsage, EvalCampaign, campaign_job_id, stable_fingerprint
+from evaluation.campaign_store import CampaignStore
+from evaluation.longform_artifacts import read_json, read_jsonl
+from evaluation.longform_benchmark import LongformBenchmarkHarness
+from evaluation.p12_context_eval import p12_pair_fingerprint
+from evaluation.writing_judge import POINTWISE_PAIR_JUDGE_PROMPT_VERSION
 from app.storage.file_lock import get_file_lock
 from app.security.egress_context import EgressPolicy, bind_egress_policy
 from app.services.llm_config_service import llm_config_service

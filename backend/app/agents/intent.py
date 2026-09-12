@@ -31,16 +31,102 @@ logger = get_logger(__name__)
 
 _VALID_ACTIONS = {"write", "edit"}
 _VALID_SCOPES = {"document", "selection"}
+_VALID_SCALES = {"expand", "condense", "polish", "rewrite"}
+
+_SCALE_HINTS = {
+    "expand": ("大幅扩写", "大幅扩展", "深度扩写", "详细扩写", "丰富细节", "增加细节", "扩充篇幅", "写得更长"),
+    "condense": ("精简", "压缩", "缩写", "删减", "缩短", "更简洁", "去掉冗余"),
+    "rewrite": ("重写", "改写整章", "推倒重写", "重新写", "整体改写"),
+    "polish": ("润色", "优化文笔", "改善表达", "调整措辞", "校对", "修辞"),
+}
+
+
+def detect_writing_scale(message: str) -> Optional[str]:
+    """确定性识别作者要求的编辑幅度；未命中时保持 None，不猜测。"""
+
+    text = str(message or "").strip().lower()
+    for scale in ("expand", "condense", "rewrite", "polish"):
+        if any(hint in text for hint in _SCALE_HINTS[scale]):
+            return scale
+    return None
 
 # Phase 11：plan 意图启发式——明显的多步/多章复杂指令 → 走 Plan 编排引擎（串行，红线 1）。
 _PLAN_HINTS = ("逐章", "逐节", "依次写", "分别写", "先写", "再写", "规划一下", "计划安排", "几章", "多章一起")
-_MULTI_CHAPTER_RE = re.compile(r"\d+\s*[-—~到至]\s*\d+\s*章")
+_OUTLINE_EDIT_HINTS = ("规划", "修改", "更新", "完善", "补充", "续写", "扩写", "调整", "添加", "写入")
+
+# U9：多目标章节识别。旧实现只认 ASCII 数字 + 范围连接符（`3-4章`），
+# 「第一,二章」「第三章和第四章」这类最自然的说法全漏 → plan 路由对多章指令基本不可达，
+# 多目标退化为单轮 agentic，隐式写工具落到陈旧活动章节（U9 Context 的错章根因）。
+#
+# 只解析「章节序号」，**不合成章节 ID**：跨卷项目里「第九章」未必是 V1C9；
+# 目标 ID 仍由 planner 依据既有章节列表判定（generate_plan 已收到 chapters）。
+_CN_DIGIT_MAP = {"零": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+# 「两/俩/几/数/多」是数量词而非序数（汉语无「第两章」）；不纳入字符类即自然排除「后面两章」。
+_CHAPTER_REF_RE = re.compile(r"([0-9一二三四五六七八九十零第,，、和与及\-—~～到至\s]{1,20})章")
+_RANGE_SPLIT_RE = re.compile(r"[\-—~～到至]")
+_ENUM_SPLIT_RE = re.compile(r"[,，、和与及\s]+")
+
+
+def _cn_to_int(token: str) -> Optional[int]:
+    """把阿拉伯数字或 1-99 的中文数字转成 int；无法解析返回 None。"""
+
+    text = str(token or "").strip()
+    if not text:
+        return None
+    if text.isdigit():
+        value = int(text)
+        return value if 1 <= value <= 999 else None
+    if "十" in text:
+        left, _, right = text.partition("十")
+        tens = _CN_DIGIT_MAP.get(left, 1) if left else 1
+        ones = _CN_DIGIT_MAP.get(right, 0) if right else 0
+        value = tens * 10 + ones
+        return value if 1 <= value <= 99 else None
+    value = _CN_DIGIT_MAP.get(text)
+    return value if value else None
+
+
+def detect_target_chapter_numbers(message: str) -> list[int]:
+    """抽取指令中显式点名的章节序号（去重保序）。
+
+    仅用于判断「本轮是否多目标」，不产出章节 ID。支持中文数字、逗号/顿号/「和」枚举
+    与范围式：``第一,二章`` → ``[1, 2]``；``第8到10章`` → ``[8, 9, 10]``。
+    """
+
+    found: list[int] = []
+    for raw in _CHAPTER_REF_RE.findall(str(message or "")):
+        run = raw.replace("第", "")
+        if not any(char.isdigit() or char in _CN_DIGIT_MAP or char == "十" for char in run):
+            continue
+        for part in _ENUM_SPLIT_RE.split(run):
+            bounds = [item for item in (piece.strip() for piece in _RANGE_SPLIT_RE.split(part)) if item]
+            if len(bounds) == 2:
+                start, end = _cn_to_int(bounds[0]), _cn_to_int(bounds[1])
+                # 上界防御：避免「1-999章」把整轮撑成巨型 plan。
+                if start and end and start <= end and end - start < 50:
+                    found.extend(range(start, end + 1))
+                continue
+            value = _cn_to_int(part.strip())
+            if value:
+                found.append(value)
+    ordered: list[int] = []
+    for value in found:
+        if value not in ordered:
+            ordered.append(value)
+    return ordered
+
+
+def _requests_outline_edit(message: str) -> bool:
+    """大纲是 Writer 可编辑资产；修改大纲不等于执行多章写作计划。"""
+
+    text = str(message or "")
+    return "大纲" in text and any(hint in text for hint in _OUTLINE_EDIT_HINTS)
 
 
 def _detect_plan(message: str) -> bool:
-    """明显的多步/多章复杂指令 → plan（保守：要求多章范围或明确多步关键词）。"""
+    """明显的多步/多章复杂指令 → plan（保守：≥2 个显式章节目标，或明确多步关键词）。"""
     m = str(message or "")
-    if _MULTI_CHAPTER_RE.search(m):
+    if len(detect_target_chapter_numbers(m)) >= 2:
         return True
     return any(hint in m for hint in _PLAN_HINTS)
 
@@ -133,22 +219,31 @@ async def classify_writing_intent(
     决策树：选中正文 → edit/selection；无草稿 → write；已有草稿且无选中 → LLM 判定，
     失败/无网关则安全降级为 edit/document（已有草稿时默认按修改处理最稳）。
     """
-    if not has_selection and _detect_plan(message):
-        return {"action": "plan", "scope": None, "reason": "复杂多步/多章指令", "via": "heuristic"}
+    scale = detect_writing_scale(message)
+    if not has_selection and not _requests_outline_edit(message) and _detect_plan(message):
+        return {"action": "plan", "scope": None, "scale": scale, "reason": "复杂多步/多章指令", "via": "heuristic"}
 
     if has_draft and not has_selection and _detect_continue(message):
-        return {"action": "continue", "scope": "document", "reason": "续写指令", "via": "heuristic"}
+        return {"action": "continue", "scope": "document", "scale": scale, "reason": "续写指令", "via": "heuristic"}
 
     fast = _heuristic(has_selection, has_draft)
     if fast is not None:
+        fast["scale"] = scale
         return fast
 
     if gateway is not None and provider:
         try:
             decision = await _llm_classify(gateway, provider, message)
             if decision is not None:
+                decision["scale"] = scale
                 return decision
         except Exception as exc:
             logger.warning("Intent LLM classification failed; using heuristic fallback: %s", exc)
 
-    return {"action": "edit", "scope": "document", "reason": "已有草稿，默认按修改处理", "via": "heuristic"}
+    return {
+        "action": "edit",
+        "scope": "document",
+        "scale": scale,
+        "reason": "已有草稿，默认按修改处理",
+        "via": "heuristic",
+    }

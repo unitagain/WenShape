@@ -77,13 +77,19 @@ async def generate_plan(
         "你是小说写作任务规划器。把作者的复杂指令拆成**可串行执行**的最小步骤"
         "（正文主线单线程、不并行）。每步动作是 research(查证设定/伏笔)、write(写某章)、"
         "edit(改某章)、analyze(定稿分析) 之一，按执行顺序排列。"
+        "同一章节最多一个写作步骤：不要把同一章拆成多个 write/edit 步骤，"
+        "该章的全部要求写进这一步的 description。"
+        "每步必须给一个 ≤12 字的简短 title 作为任务列表标题，细节写进 description。"
+        "write/edit/analyze 每步只能对应**一个**已存在章节，禁止产出跨多章的步骤；"
+        "analyze 只在作者明确要求定稿分析时才使用，不要自行追加收尾分析步骤。"
     )
     user = (
         f"指令：{goal}\n"
         f"上下文：{context_hint or '（无）'}\n"
         f"{chapters_line}\n"
         '只输出 JSON：{"steps":[{"action":"research|write|edit|analyze","description":"该步具体做什么",'
-        '"chapter":"章节ID（edit/analyze 必须用已存在章节；write 新章留空）","title":"可选标题"}]}，不要其它文字。'
+        '"chapter":"章节ID（edit/analyze 必须用已存在章节；write 新章留空）",'
+        '"title":"该步的简短标题，≤12字，用作任务列表的一行（如「优化第一章感官描写」）"}]}，不要其它文字。'
     )
     try:
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
@@ -125,4 +131,89 @@ async def generate_plan(
                 "status": "pending",
             }
         )
+    return _merge_same_chapter_steps(_drop_untargeted_steps(_fill_missing_chapters(steps, existing)))
+
+
+def _drop_untargeted_steps(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """丢弃没有可执行目标的 edit/analyze 步骤（`chapter` 为空且无法回填）。
+
+    U9：模型常额外追加「分析这几章定稿」这类跨章步骤，`chapter` 必然为空——
+    执行期会被 `run_plan_step` 判为 `*_step_missing_chapter` 而让整个计划中断在最后一步。
+    这类步骤没有可执行目标，产出即注定失败，故在生成阶段就不放进计划。
+    这不是静默吞掉：作者看到的计划里从来没有这一步。
+
+    **`write` 不在此列**：新建章节时 chapter 本就应为空（见 system 提示「write 新章留空」），
+    由 Writer 在该步内调用 `create_chapter` 定目标。research 同样无需 chapter。
+    """
+
+    kept = [
+        step
+        for step in steps
+        if step.get("action") not in {"edit", "analyze"} or str(step.get("chapter") or "").strip()
+    ]
+    for index, step in enumerate(kept, start=1):
+        step["id"] = index
+    return kept
+
+
+def _fill_missing_chapters(steps: List[Dict[str, Any]], chapters: List[str]) -> List[Dict[str, Any]]:
+    """description 点名了章节但 `chapter` 字段留空时，按序号回填既有章节 ID。
+
+    U9：写作步骤缺 chapter 会被 `run_plan_step` 判为 `*_step_missing_chapter` 而失败。
+    模型常把「第一章」只写进 description，此处做确定性兜底，避免整轮计划白跑。
+
+    只在**唯一匹配**时回填：某序号在既有章节中恰好对应一个 ID 才填，0 个或多个（跨卷同号）
+    一律留空，交由上游显式失败——宁可报错也不写错章。
+    """
+
+    from app.agents.intent import detect_target_chapter_numbers
+    from app.utils.chapter_id import parse_chapter_number
+
+    by_number: Dict[int, List[str]] = {}
+    for chapter in chapters:
+        number = parse_chapter_number(chapter)
+        if number is not None:
+            by_number.setdefault(int(number), []).append(chapter)
+
+    for step in steps:
+        if step.get("action") not in {"write", "edit", "analyze"} or str(step.get("chapter") or "").strip():
+            continue
+        numbers = detect_target_chapter_numbers(str(step.get("description") or ""))
+        if len(numbers) != 1:
+            continue
+        candidates = by_number.get(numbers[0]) or []
+        if len(candidates) == 1:
+            step["chapter"] = candidates[0]
     return steps
+
+
+def _merge_same_chapter_steps(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """把同一章节的多个写作步骤合并为一步（描述拼接），并重排 id。
+
+    U9：plan 步骤只产出提案、不落盘（见 PlanExecutionService._run_writing_step），
+    因此同一章的第二个写作步骤会基于磁盘上的旧正文重新起算，把前一步的提案覆盖掉。
+    确定性合并即可规避，无需引入 plan 内 overlay（KISS：不为假想需求造复杂度）。
+    research/analyze 步骤不参与合并。
+    """
+
+    merged: List[Dict[str, Any]] = []
+    position_by_chapter: Dict[str, int] = {}
+    for step in steps:
+        chapter = str(step.get("chapter") or "").strip()
+        if step.get("action") not in {"write", "edit"} or not chapter:
+            merged.append(step)
+            continue
+        position = position_by_chapter.get(chapter)
+        if position is None:
+            position_by_chapter[chapter] = len(merged)
+            merged.append(step)
+            continue
+        target = merged[position]
+        extra = str(step.get("description") or "").strip()
+        if extra and extra not in str(target.get("description") or ""):
+            target["description"] = f"{target.get('description') or ''}；{extra}".strip("；")
+        if not str(target.get("title") or "").strip():
+            target["title"] = str(step.get("title") or "")
+    for index, step in enumerate(merged, start=1):
+        step["id"] = index
+    return merged

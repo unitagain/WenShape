@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class RevisionConflict(RuntimeError):
@@ -125,6 +125,24 @@ class SQLiteControlStore:
                     active_writers INTEGER NOT NULL DEFAULT 0,
                     updated_at REAL NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS asset_write_journal (
+                    journal_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    turn_id TEXT NOT NULL DEFAULT '',
+                    asset_type TEXT NOT NULL,
+                    asset_id TEXT NOT NULL,
+                    base_revision INTEGER NOT NULL DEFAULT 0,
+                    content_sha256 TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    error TEXT NOT NULL DEFAULT '',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY(journal_id, asset_type, asset_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_journal_status
+                    ON asset_write_journal(project_id, status);
                 """
             )
             connection.execute(
@@ -281,6 +299,83 @@ class SQLiteControlStore:
             raise
         finally:
             connection.close()
+
+    # ------------------------------------------------------------------
+    # Asset write journal（多资产 change set 写入意图日志）
+    #
+    # apply_change_set 的 preflight 是原子的、顺序写入不是：第二个资产写失败时
+    # 第一个已落盘且无任何恢复记录。journal 在写入前记录全部意图（pending），
+    # 逐资产标记 applied/failed——部分应用从此可查询、可审计。不实现自动回滚
+    # 或续做（文件真相源可经 Git 恢复；完整恢复流程属独立设计）。
+    # ------------------------------------------------------------------
+
+    def record_write_intent(
+        self,
+        journal_id: str,
+        project_id: str,
+        turn_id: str,
+        items: list[Dict[str, Any]],
+    ) -> None:
+        """Record one pending row per asset before the sequential write loop."""
+        now = time.time()
+        with self.transaction() as connection:
+            for item in items or []:
+                connection.execute(
+                    """
+                    INSERT OR REPLACE INTO asset_write_journal(
+                        journal_id, project_id, turn_id, asset_type, asset_id,
+                        base_revision, content_sha256, status, error, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', '', ?, ?)
+                    """,
+                    (
+                        str(journal_id),
+                        str(project_id),
+                        str(turn_id or ""),
+                        str(item.get("asset_type") or ""),
+                        str(item.get("asset_id") or ""),
+                        int(item.get("base_revision") or 0),
+                        str(item.get("content_sha256") or ""),
+                        now,
+                        now,
+                    ),
+                )
+
+    def mark_write_applied(self, journal_id: str, asset_type: str, asset_id: str) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                UPDATE asset_write_journal
+                SET status = 'applied', error = '', updated_at = ?
+                WHERE journal_id = ? AND asset_type = ? AND asset_id = ?
+                """,
+                (time.time(), str(journal_id), str(asset_type), str(asset_id)),
+            )
+
+    def mark_write_failed(self, journal_id: str, asset_type: str, asset_id: str, error: str) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                UPDATE asset_write_journal
+                SET status = 'failed', error = ?, updated_at = ?
+                WHERE journal_id = ? AND asset_type = ? AND asset_id = ?
+                """,
+                (str(error or "")[:500], time.time(), str(journal_id), str(asset_type), str(asset_id)),
+            )
+
+    def pending_writes(self, project_id: str) -> list[Dict[str, Any]]:
+        """Unfinished write intents for a project (pending or failed rows)."""
+        with self.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT project_id, journal_id, turn_id, asset_type, asset_id, base_revision,
+                       content_sha256, status, error, created_at, updated_at
+                FROM asset_write_journal
+                WHERE project_id = ? AND status != 'applied'
+                ORDER BY created_at, journal_id
+                """,
+                (str(project_id),),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def migration_completed(self, name: str) -> bool:
         with self.connection() as connection:

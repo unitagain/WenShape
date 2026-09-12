@@ -21,9 +21,21 @@ def test_archivist_facade_exports_system_prompt() -> None:
 
 
 def test_archivist_facade_exports_style_prompt() -> None:
+    """U9：文风提炼产出「可直接注入的写作指令」，不再是 A-H 八节文学分析报告。
+
+    冻结点：样本进 user、约束进 system、显式限长（文风卡每轮进 Writer 稳定前缀，
+    长度直接换算为固定 token 成本），且要求覆盖视角/描写/癖好三类可辨识偏好。
+    """
+
     prompt = archivist_style_profile_prompt("示例文本", language="zh")
-    assert "A." in prompt.user
-    assert "写作教练" in prompt.system
+    assert "示例文本" in prompt.user
+    assert "文风提示词" in prompt.system
+    assert "500 字" in prompt.system  # 显式限长
+    assert "叙事视角" in prompt.system and "描写偏好" in prompt.system and "癖好" in prompt.system
+
+    english = archivist_style_profile_prompt("sample", language="en")
+    assert "sample" in english.user
+    assert "STYLE PROMPT" in english.system
 
 
 def test_archivist_facade_exports_fanfiction_prompts() -> None:

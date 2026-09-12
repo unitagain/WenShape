@@ -515,6 +515,7 @@ def test_retrieval_policy_overrides_are_explicit_and_validated():
         "reranker_backend": None,
         "rerank_top_k": 7,
         "semantic_top_n": 8,
+        "semantic_top_n_ratio": 0.1,
     }
 
     try:

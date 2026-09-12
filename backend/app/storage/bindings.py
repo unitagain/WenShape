@@ -15,7 +15,8 @@ from typing import Any, Dict, Optional
 from pathlib import Path
 
 from app.storage.base import BaseStorage
-from app.utils.chapter_id import normalize_chapter_id
+from app.utils.chapter_id import ChapterIDValidator, normalize_chapter_id
+from app.utils.path_safety import UnsafeIdentifierError
 
 
 class ChapterBindingStorage(BaseStorage):
@@ -35,9 +36,19 @@ class ChapterBindingStorage(BaseStorage):
 
         Returns:
             Path to bindings file.
+
+        Raises:
+            UnsafeIdentifierError: 章节ID无法规范化为合法格式（拒绝，不回退原始串，A1）
+                / If the chapter id cannot be canonicalized.
         """
-        canonical = normalize_chapter_id(chapter) or str(chapter).strip()
-        return self.get_project_path(project_id) / "index" / "chapters" / canonical / "bindings.yaml"
+        canonical = normalize_chapter_id(chapter)
+        if not (canonical and ChapterIDValidator.validate(canonical)):
+            raise UnsafeIdentifierError(
+                "unsafe_chapter_id:invalid",
+                code="unsafe_chapter_id",
+                metadata={"reason": "invalid_or_empty"},
+            )
+        return self.asset_path(project_id, "index", "chapters", canonical, "bindings.yaml", field="chapter_id")
 
     async def read_bindings(self, project_id: str, chapter: str) -> Optional[Dict[str, Any]]:
         """Read bindings for a chapter.

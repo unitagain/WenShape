@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from app.eval.longform_benchmark import (
+from evaluation.longform_benchmark import (
     LongformBenchmarkHarness,
     RetrievalStrategySpec,
     _api_safety_block_reason,
@@ -457,10 +457,10 @@ def test_strategy_ab_truncated_writer_attempts_are_billed_and_classified_as_data
                 "usage": {"prompt_tokens": 10, "completion_tokens": 90, "total_tokens": 100},
             }
 
-    monkeypatch.setattr("app.eval.longform_benchmark.get_gateway", lambda: TruncatedGateway())
+    monkeypatch.setattr("evaluation.longform_benchmark.get_gateway", lambda: TruncatedGateway())
     monkeypatch.setattr(harness, "_select_writer_strategy_context", distinct_selection)
     monkeypatch.setattr(
-        "app.eval.longform_benchmark.judge_extra_body",
+        "evaluation.longform_benchmark.judge_extra_body",
         lambda _profile_id: {"thinking": {"type": "disabled"}},
     )
     result = asyncio.run(
@@ -524,7 +524,7 @@ def test_strategy_ab_repairs_semantically_incomplete_candidates_once(tmp_path, m
                 },
             }
 
-    monkeypatch.setattr("app.eval.longform_benchmark.get_gateway", lambda: RepairingGateway())
+    monkeypatch.setattr("evaluation.longform_benchmark.get_gateway", lambda: RepairingGateway())
     monkeypatch.setattr(harness, "_select_writer_strategy_context", distinct_selection)
     result = asyncio.run(
         harness.generate_strategy_ab(
@@ -585,7 +585,7 @@ def test_strategy_pair_ids_are_scoped_by_writer_profile(tmp_path, monkeypatch):
                 "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
             }
 
-    monkeypatch.setattr("app.eval.longform_benchmark.get_gateway", lambda: SuccessfulGateway())
+    monkeypatch.setattr("evaluation.longform_benchmark.get_gateway", lambda: SuccessfulGateway())
     monkeypatch.setattr(harness, "_select_writer_strategy_context", distinct_selection)
     first = asyncio.run(
         harness.generate_strategy_ab(
@@ -1034,7 +1034,7 @@ def test_normalize_strategy_ab_candidates_updates_artifact_fingerprint(tmp_path)
 
 
 def test_strategy_judge_skips_semantically_incomplete_candidate_pairs(tmp_path, monkeypatch):
-    import app.eval.longform_benchmark as benchmark_module
+    import evaluation.longform_benchmark as benchmark_module
 
     harness = LongformBenchmarkHarness(tmp_path / "benchmarks")
     paths = harness.paths("incomplete-pair")
@@ -1840,7 +1840,7 @@ def test_pairwise_attempt_selection_uses_first_position_consistent_result():
 
 
 def test_pairwise_result_persists_selected_judge_identity(monkeypatch, tmp_path):
-    import app.eval.longform_benchmark as benchmark_module
+    import evaluation.longform_benchmark as benchmark_module
 
     async def _judge(*args, **kwargs):
         return {
@@ -1968,9 +1968,9 @@ def test_generate_writing_calibration_filters_scene_ids_and_appends(tmp_path, mo
                 "usage": {"total_tokens": 42},
             }
 
-    monkeypatch.setattr("app.eval.longform_benchmark.get_gateway", lambda: FakeGateway())
+    monkeypatch.setattr("evaluation.longform_benchmark.get_gateway", lambda: FakeGateway())
     monkeypatch.setattr(
-        "app.eval.longform_benchmark.judge_extra_body",
+        "evaluation.longform_benchmark.judge_extra_body",
         lambda _profile_id: {"thinking": {"type": "disabled"}},
     )
 

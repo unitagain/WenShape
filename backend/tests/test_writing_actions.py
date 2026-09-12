@@ -78,10 +78,151 @@ def test_ask_clarification_is_rejected_after_prose_change():
     asyncio.run(tools.execute("write_content", {"content": "新正文"}))
     result = asyncio.run(tools.execute("ask_clarification", {"questions": [{"text": "还要改吗？"}]}))
     assert "clarification_must_precede_writing" in result
+
+
+def test_always_clarification_gate_requires_question_before_progress():
+    tools = WritingActionToolset("旧正文", clarification_required=True)
+    first = asyncio.run(tools.execute("write_content", {"content": "新正文"}))
+    assert "clarification_required" in first
+    second = asyncio.run(tools.execute("write_content", {"content": "新正文"}))
+    assert "clarification_required" in second
+    asked = asyncio.run(tools.execute("ask_clarification", {"questions": [{"text": "本章冲突如何收束？"}]}))
+    assert "已提出" in asked
+    paused = asyncio.run(tools.execute("write_content", {"content": "新正文"}))
+    assert "clarification_pending" in paused
+    assert tools.working_text == "旧正文"
+
+
+def test_expand_output_contract_blocks_finish_once_then_marks_degraded():
+    original = "原文" * 200
+    tools = WritingActionToolset(original, writing_scale="expand", target_word_count=1000)
+    asyncio.run(tools.execute("write_content", {"content": original + "略增"}))
+    payload = {
+        "change_type": "plot_edit",
+        "fact_operation": "none",
+        "chapter_summary": "",
+        "fact_candidates": [],
+        "message": "完成",
+    }
+    first = asyncio.run(tools.execute("finish_turn", payload))
+    assert "output_contract_unmet" in first
+    second = asyncio.run(tools.execute("finish_turn", payload))
+    assert "本轮已收尾" in second
+    assert tools.output_contract_degraded is True
     assert tools.input_required is False
 
 
-def test_ask_clarification_is_rejected_after_chapter_targeting():
+def test_fresh_chapter_output_contract_blocks_short_finish_once():
+    """新建章节整章撰写：装配层已把 target 声明为最低完成基线，此处执行同一合同。
+
+    真实故障：反问恢复轮 create_chapter 后仅写 388 字（目标 3000）即 finish 通过。
+    warn-once-then-degrade：一次警告给模型续写机会，坚持短章则放行并标记降级。
+    """
+
+    tools = WritingActionToolset(
+        "",
+        existing_chapters=[],
+        require_chapter_target=True,
+        target_word_count=1000,
+    )
+    asyncio.run(tools.execute("create_chapter", {"title": "哈佛草坪的悸动"}))
+    asyncio.run(tools.execute("write_content", {"content": "短开头。" * 10, "chapter_id": tools.target_chapter}))
+
+    payload = {
+        "change_type": "chapter_write",
+        "fact_operation": "none",
+        "chapter_summary": "",
+        "fact_candidates": [],
+        "message": "完成",
+    }
+    first = asyncio.run(tools.execute("finish_turn", payload))
+    assert "output_contract_unmet" in first
+    assert "1000" in first
+
+    # 续写到达标 → finish 通过
+    asyncio.run(
+        tools.execute("write_content", {"content": "充分展开的场景与对白。" * 100, "mode": "append", "chapter_id": tools.target_chapter})
+    )
+    second = asyncio.run(tools.execute("finish_turn", payload))
+    assert "本轮已收尾" in second
+    assert tools.output_contract_degraded is False
+
+    # 另一路径：拒绝续写、坚持短章 → 第二次 finish 放行并降级（不阻断）
+    stubborn = WritingActionToolset("", existing_chapters=[], require_chapter_target=True, target_word_count=1000)
+    asyncio.run(stubborn.execute("create_chapter", {"title": "短章"}))
+    asyncio.run(stubborn.execute("write_content", {"content": "短章正文。", "chapter_id": stubborn.target_chapter}))
+    blocked = asyncio.run(stubborn.execute("finish_turn", payload))
+    assert "output_contract_unmet" in blocked
+    allowed = asyncio.run(stubborn.execute("finish_turn", payload))
+    assert "本轮已收尾" in allowed
+    assert stubborn.output_contract_degraded is True
+
+
+def test_fresh_chapter_contract_not_applied_without_chapter_creation():
+    """未建章的普通写入不触发新章下限合同——合同范围收窄到 create_chapter 声明的整章场景，
+    避免误伤普通短写作与既有测试语义。"""
+
+    tools = WritingActionToolset("", target_word_count=3000)
+    asyncio.run(tools.execute("write_content", {"content": "短正文。"}))
+    result = asyncio.run(
+        tools.execute(
+            "finish_turn",
+            {
+                "change_type": "chapter_write",
+                "fact_operation": "none",
+                "chapter_summary": "",
+                "fact_candidates": [],
+                "message": "完成",
+            },
+        )
+    )
+    assert "output_contract_unmet" not in result
+    assert "本轮已收尾" in result
+
+
+def test_schemas_annotate_gated_tools_while_clarification_pending():
+    """积极确认模式下，「先反问」要求前置到门控工具的 schema 描述。
+
+    模型选工具时看的是 schema；要求只存在于系统提示与被拦后的错误消息里时，
+    模型会先生成一整段正文再被拒（实测浪费一次完整生成）。反问后/未启用模式不加注。
+    """
+
+    gated = WritingActionToolset("", clarification_required=True)
+    descriptions = {
+        item["function"]["name"]: item["function"].get("description") or ""
+        for item in gated.schemas()
+    }
+    for name in ("write_content", "edit_lines", "finish_turn"):
+        assert "ask_clarification" in descriptions[name], f"{name} 描述应前置反问要求"
+    # 不受门控的工具不加注
+    assert "ask_clarification" not in descriptions["create_chapter"]
+    assert "注意" not in descriptions["ask_clarification"]
+
+    # 反问提出后（本轮随即暂停）不再加注
+    asyncio.run(gated.execute("ask_clarification", {"questions": [{"text": "视角？"}]}))
+    after_ask = {
+        item["function"]["name"]: item["function"].get("description") or ""
+        for item in gated.schemas()
+    }
+    assert "注意" not in after_ask["write_content"]
+
+    # 未启用积极确认：描述与静态 schema 逐字一致
+    plain = WritingActionToolset("")
+    plain_descriptions = {
+        item["function"]["name"]: item["function"].get("description") or ""
+        for item in plain.schemas()
+    }
+    static_descriptions = {
+        item["function"]["name"]: item["function"].get("description") or ""
+        for item in writing_action_schemas()
+    }
+    assert plain_descriptions == static_descriptions
+
+
+def test_ask_clarification_is_allowed_after_chapter_targeting():
+    """create_chapter 只声明目标章节、不落正文；积极确认模式下若反问被它封禁，
+    write_content 又被 clarification_required 门控，会形成「写不进、问不了」死锁。"""
+
     tools = WritingActionToolset(
         "",
         existing_chapters=["V1C1"],
@@ -91,8 +232,31 @@ def test_ask_clarification_is_rejected_after_chapter_targeting():
 
     result = asyncio.run(tools.execute("ask_clarification", {"questions": [{"text": "本章要用谁的视角？"}]}))
 
-    assert "clarification_must_precede_writing" in result
-    assert tools.input_required is False
+    assert "已提出" in result
+    assert tools.input_required is True
+
+
+def test_always_clarification_create_chapter_then_write_does_not_deadlock():
+    """死锁回归（积极确认 + 新建章节）：建章 → write 被门控 → 必须能反问。"""
+
+    tools = WritingActionToolset(
+        "",
+        existing_chapters=[],
+        require_chapter_target=True,
+        clarification_required=True,
+    )
+    created = asyncio.run(tools.execute("create_chapter", {"title": "哈佛草坪的悸动"}))
+    assert "已建立新章节目标" in created
+
+    blocked = asyncio.run(
+        tools.execute("write_content", {"content": "千羽站在哈佛的草坪上。", "chapter_id": tools.target_chapter})
+    )
+    assert "clarification_required" in blocked
+    assert tools.working_text == ""
+
+    asked = asyncio.run(tools.execute("ask_clarification", {"questions": [{"text": "开篇用谁的视角？"}]}))
+    assert "已提出" in asked
+    assert tools.input_required is True
 
 
 def test_finish_turn_normalizes_terminal_payload():
@@ -229,6 +393,9 @@ class _FakeRetrieval:
     async def execute(self, name, arguments):
         return f"[检索结果:{name}]"
 
+    async def load_chapter_content(self, chapter):
+        return {"V1C1": "第一章原文。", "V1C2": "第二章原文。"}.get(chapter, ""), 3
+
 
 def test_schemas_merge_retrieval_then_writing():
     ts = WritingActionToolset("", retrieval_toolset=_FakeRetrieval())
@@ -247,6 +414,26 @@ def test_execute_delegates_unknown_to_retrieval():
     ts = WritingActionToolset("", retrieval_toolset=_FakeRetrieval())
     out = asyncio.run(ts.execute("query_canon", {"query": "x"}))
     assert "检索结果" in out
+
+
+def test_multi_asset_tools_keep_independent_chapter_buffers():
+    tools = WritingActionToolset(
+        "当前章。",
+        retrieval_toolset=_FakeRetrieval(),
+        active_chapter="V1C3",
+        existing_chapters=["V1C1", "V1C2", "V1C3"],
+        multi_asset=True,
+    )
+    names = {item["function"]["name"] for item in tools.schemas()}
+    assert {"edit_chapter", "write_chapter"}.issubset(names)
+
+    asyncio.run(tools.execute("edit_chapter", {"chapter_id": "V1C1", "old_text": "原文", "new_text": "优化正文"}))
+    asyncio.run(tools.execute("write_chapter", {"chapter_id": "V1C2", "content": "重写第二章。", "mode": "replace"}))
+
+    proposals = {item["asset_id"]: item for item in tools.change_proposals()}
+    assert proposals["V1C1"]["revised"] == "第一章优化正文。"
+    assert proposals["V1C2"]["revised"] == "重写第二章。"
+    assert proposals["V1C1"]["base_revision"] == 3
 
 
 def test_unknown_tool_graceful_without_retrieval():

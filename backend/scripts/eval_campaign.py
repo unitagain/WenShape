@@ -12,10 +12,10 @@ backend_dir = Path(__file__).resolve().parents[1]
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from app.eval.campaign_models import EvalCampaign
-from app.eval.campaign_privacy import export_p12_cases_from_traces
-from app.eval.campaign_runner import CampaignRunner
-from app.eval.campaign_store import CampaignStore
+from evaluation.campaign_models import EvalCampaign
+from evaluation.campaign_privacy import export_p12_cases_from_traces
+from evaluation.campaign_runner import CampaignRunner
+from evaluation.campaign_store import CampaignStore
 
 
 def parser() -> argparse.ArgumentParser:

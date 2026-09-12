@@ -84,12 +84,12 @@ archivist:
 
 # Writer Configuration / 撰稿人配置
 writer:
-  # 默认目标字数 / Default target word count
-  default_target_word_count: 3000
+  # 默认目标字数 / Default target word count（建议 4000-5000 以鼓励充分展开）
+  default_target_word_count: 4500
   # Writer 规范化反问工具策略：auto=模型按需判断；always=主动检查关键缺口；off=不主动触发。
   # 无论策略如何，ask_clarification 始终是同一个 Writer 工具；单次由模型自主提出 1-3 个问题。
   clarification:
-    auto_trigger: auto
+    auto_trigger: off
   # 上下文截断上限 / Context truncation limits
   context_limits:
     fact_summary_items: 2       # 事实摘要最多条数 / Max fact summary items
@@ -118,11 +118,19 @@ gateway:
 # Retrieval Configuration / 检索配置
 retrieval:
   rerank_top_k: 16
-  # 语义降噪窗口：允许「仅凭语义」（词法零分）入选的候选数上限；词法命中项不受此限。
+  # 语义降噪窗口：允许「仅凭语义」（词法零分）入选的候选数下限（floor）；词法命中项不受此限。
   # 用名次截断而非分数阈值——嵌入空间各向异性，任意中文文本对的 cosine 都落在狭窄正区间，
   # 固定阈值要么全不命中、要么误杀真实相关项。0=关闭纯语义召回；≥候选数=不过滤。
   # 默认 8 与主路径消费量同量级；取 30/20/12 实测与不过滤无差别（等于没过滤）。
   semantic_top_n: 8
+  # 量纲修正：纯语义窗口随候选池等比增长（floor 保底，取 max(floor, ceil(ratio×候选数))）。
+  # 候选上限随章节数涨到 800–1000，常量 8 在长篇下占比 <1%、渐近退化为纯 BM25；
+  # ratio=0.1 时 400 候选 → 40、1000 → 100，小语料（≤80 候选）仍由 floor 8 主导、行为不变。
+  # 0=不按比例缩放（退回纯 floor 语义）。默认值在真实长篇语料重测前保持保守。
+  semantic_top_n_ratio: 0.1
+  # 创作记忆目录推送：推入 writer 稳定前缀的记忆条数上限（只列 name/description，正文走 query_memory JIT）。
+  # 与 card_inventory_max_items 同构（目录有界、内容按需）。超出部分显式标注剩余条数，不静默截断。
+  memory_inventory_max_items: 40
   # 二阶段重排只允许使用真实 cross-encoder。旧“按 embedding cosine 重排”已被 benchmark 证明会损伤 recall，已移除。
   # 默认关闭：BAAI/bge-reranker-base 约 1.04GB；启用前必须通过跨语料质量/延迟 A/B。
   reranker:
@@ -133,10 +141,12 @@ retrieval:
   # Writer 用工具按需取设定（agentic 即时检索）是默认主路径（能力降级：provider 不支持工具时回退到装配上下文）。
   # agentic 工具循环的最大轮数。
   # Writer agentic 工具循环的实质轮次预算（装配处 +2 后作为 max_iterations 下发）。
-  # 5：edit_lines 分层 fallback 后单次编辑的失败重试显著减少，协议性催促又已不计预算，
-  # 故只小幅上调给「读章 → 改 → 复核 → 收尾」这类正常链路留一格余量。
+  # U9：由 5 上调为 12（实际 14 轮）。5 轮对「深度优化某章」这类指令必然截断——实测链路为
+  # 「读大纲/读章/查 canon（1-3）+ 多次 edit_lines（5-8）+ finish_turn」≈ 12-15 轮，
+  # 现场记录中该类指令反复以 max_iterations 终止并只交付半成品。plan 按章分解救不了单章任务，
+  # 故此处放宽。失控风险由既有护栏兜住：turn deadline（agentic.active_timeout）与 token 预算仍然生效。
   # 提高本值会线性抬高单轮 provider 调用次数上限与 token 成本上限。
-  agentic_max_iterations: 5
+  agentic_max_iterations: 12
   # 支柱 7 · 自适应预算：canon 规模 ≤ 阈值时整体注入全部卡片+事实（免检索/免 agentic 导航），超过才走检索。
   full_canon_max_facts: 80
   full_canon_max_cards: 30

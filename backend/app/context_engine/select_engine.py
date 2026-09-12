@@ -106,6 +106,11 @@ class ContextSelectEngine:
         # 取 8 才真正生效：噪声语料下 recall 0.400 → 0.800，且在有区分度的嵌入下召回不变。
         # 设为 0 可关闭纯语义召回；大于等于候选数时等价于不过滤。
         self._semantic_top_n: int = max(0, int(retrieval_cfg.get("semantic_top_n", 8)))
+        # 量纲修正（2026-08 评估 P3）：纯语义配额若为绝对常量，候选池随章节数涨到
+        # 800–1000 时占比 <1%，长篇项目渐近退化为纯 BM25。ratio 让窗口随候选规模
+        # 等比增长；floor 保底（小语料行为不变），取二者较大值。词法命中一律保留、
+        # 名次截断不分数阈值、衰减延后施加——§7 决策 5/6 的量纲不变量全部保留。
+        self._semantic_top_n_ratio: float = max(0.0, float(retrieval_cfg.get("semantic_top_n_ratio", 0.1)))
         # 内容寻址的语义向量缓存（embed-once）：每个项目一个 VectorStore，按文本 sha1 存向量，
         # 落 canon/embeddings_cache.jsonl 跨查询复用，避免每次检索重嵌入全部候选。
         # Content-addressed embedding cache (embed-once), one VectorStore per project,
@@ -156,6 +161,7 @@ class ContextSelectEngine:
             "reranker_backend": type(self.reranker).__name__ if self.reranker is not None else None,
             "rerank_top_k": self._rerank_top_k,
             "semantic_top_n": self._semantic_top_n,
+            "semantic_top_n_ratio": self._semantic_top_n_ratio,
         }
 
     # ========================================================================
@@ -660,7 +666,7 @@ class ContextSelectEngine:
             # _fuse_scores 按「原始候选下标」返回融合分；过滤后需重排为与新候选序等长的列表，
             # 两者类型不同（Dict[int, float] vs List[float]），用不同变量名保持契约清晰。
             fused_by_index = self._fuse_scores(candidates, sem_scores)
-            # 语义降噪：只保留语义名次前 N 的「词法零分」候选。
+            # 语义降噪：只保留语义名次前 limit 的「词法零分」候选。
             #
             # 这里用「名次截断」而非「分数阈值」：嵌入空间是各向异性的，任意两段中文文本的
             # cosine 相似度都稳定落在一个狭窄正区间内，绝对分数既不会为负、也缺乏区分度，
@@ -671,6 +677,10 @@ class ContextSelectEngine:
             # anisotropic, so absolute cosine values sit in a narrow positive band and make
             # any fixed threshold either a no-op or a source of false negatives.
             semantic_keep = self._semantic_rank_cutoff(sem_scores, candidates)
+            if filter_trace is not None:
+                # 生效窗口写进 trace（floor 与 ratio 合成后的实际值）：
+                # floor≤0 → 0（关闭）；limit≥n → n（不过滤）；否则恰为 limit。
+                filter_trace["semantic_denoise_limit"] = len(semantic_keep)
             filtered_candidates = []
             filtered_scores = []
             for idx, item in enumerate(candidates):
@@ -806,16 +816,23 @@ class ContextSelectEngine:
 
     def _semantic_rank_cutoff(self, sem_scores: List[float], candidates: List[ContextItem]) -> set:
         """
-        返回允许「仅凭语义」入选的候选下标集合（语义名次前 N）。
+        返回允许「仅凭语义」入选的候选下标集合（语义名次前 limit 个）。
 
-        Return indices allowed in on semantic evidence alone (top-N by semantic rank).
+        Return indices allowed in on semantic evidence alone (top-limit by semantic rank).
 
-        N=0 表示关闭纯语义召回（只保留词法命中项）；N 大于等于候选数时等价于不过滤。
+        ``limit = max(semantic_top_n, ceil(ratio × 候选数))``：floor 是绝对下限
+        （小语料行为与 V1-3 完全一致），ratio 让窗口随候选池等比增长，纠正
+        「常量 8 对 800–1000 候选形同虚设」的量纲问题。floor ≤ 0 仍表示完全
+        关闭纯语义召回（沿用既有语义，不因 ratio 而复活）。
+        N 大于等于候选数时等价于不过滤。
         取名次而非分数的理由见 ``_fuse_and_rank`` 中的说明。
         """
-        limit = self._semantic_top_n
-        if limit <= 0:
+        floor = self._semantic_top_n
+        if floor <= 0:
             return set()
+        limit = floor
+        if self._semantic_top_n_ratio > 0 and sem_scores:
+            limit = max(limit, math.ceil(self._semantic_top_n_ratio * len(sem_scores)))
         if limit >= len(sem_scores):
             return set(range(len(sem_scores)))
         order = sorted(range(len(sem_scores)), key=lambda index: float(sem_scores[index] or 0.0), reverse=True)
