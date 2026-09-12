@@ -34,6 +34,7 @@ class PostTurnService:
         trigger_at: int = 120,
         trigger_tokens: int = 24000,
         recent_token_budget: int = 8000,
+        conversation_id: str = "",
     ) -> Dict[str, Any]:
         extracted: List[str] = []
         pending_memories: List[Dict[str, Any]] = []
@@ -67,6 +68,7 @@ class PostTurnService:
         result = await self.session_history.compact(
             project_id,
             summarizer,
+            conversation_id=conversation_id,
             keep_recent=keep_recent,
             trigger_at=trigger_at,
             trigger_tokens=trigger_tokens,

@@ -83,8 +83,8 @@ class SessionHistoryStorage(BaseStorage):
             return self.get_project_path(project_id) / "sessions" / "conversation.events.jsonl"
         return self.get_project_path(project_id) / "sessions" / "conversations" / cid / "conversation.events.jsonl"
 
-    def _compact_dir(self, project_id: str) -> Path:
-        cid = self.active_conversation_id(project_id)
+    def _compact_dir(self, project_id: str, conversation_id: str = "") -> Path:
+        cid = self._conversation_id(project_id, conversation_id)
         if cid == "legacy":
             return self.get_project_path(project_id) / "sessions" / "compact"
         return self.get_project_path(project_id) / "sessions" / "conversations" / cid / "compact"
@@ -181,8 +181,8 @@ class SessionHistoryStorage(BaseStorage):
             "restored_input": restored_input,
         }
 
-    def _compact_state_path(self, project_id: str) -> Path:
-        return self._compact_dir(project_id) / "state.json"
+    def _compact_state_path(self, project_id: str, conversation_id: str = "") -> Path:
+        return self._compact_dir(project_id, conversation_id) / "state.json"
 
     @staticmethod
     def _normalize(message: Dict[str, Any]) -> Dict[str, Any]:
@@ -231,7 +231,7 @@ class SessionHistoryStorage(BaseStorage):
     async def load(self, project_id: str, *, limit: int = 0, conversation_id: str = "") -> List[Dict[str, Any]]:
         """读取对话历史；limit>0 时只返回最近 limit 条。"""
         path = self._path(project_id, conversation_id)
-        await self._repair_projection_from_archive(project_id)
+        await self._repair_projection_from_archive(project_id, conversation_id=conversation_id)
         items = await self.read_jsonl(path)
         if limit and limit > 0:
             return items[-limit:]
@@ -252,6 +252,7 @@ class SessionHistoryStorage(BaseStorage):
         project_id: str,
         summarizer: Callable[[List[Dict[str, Any]]], Awaitable[str]],
         *,
+        conversation_id: str = "",
         keep_recent: int = 40,
         trigger_at: int = 120,
         trigger_tokens: int = 24000,
@@ -263,9 +264,15 @@ class SessionHistoryStorage(BaseStorage):
             Callable[[CompactArtifactV2, List[Dict[str, Any]]], Awaitable[Dict[str, Any]]]
         ] = None,
     ) -> Dict[str, Any]:
-        """Compact complete turns while preserving a count- and token-bounded raw tail."""
+        """Compact complete turns while preserving a count- and token-bounded raw tail.
 
-        path = self._path(project_id)
+        会话身份在入口一次解析并固定（A2，F05）：``conversation_id`` 缺省取当前 active
+        会话，但只在方法开始时解析一次；此后摘要生成、语义校验等 await 边界期间活动
+        会话切换，不再影响历史加载、artifact/state 写入与恢复的归属。
+        """
+
+        cid = self._conversation_id(project_id, conversation_id)
+        path = self._path(project_id, cid)
         items = await self.read_jsonl(path)
         materialized = [self._with_recovery_id(item, index) for index, item in enumerate(items)]
         previous_compact = [item for item in materialized if item.get("type") == "summary"]
@@ -305,7 +312,7 @@ class SessionHistoryStorage(BaseStorage):
                 },
             }
 
-        await self._ensure_event_archive(project_id, raw_messages)
+        await self._ensure_event_archive(project_id, raw_messages, conversation_id=cid)
         summary_inputs = [*previous_compact, *source_messages]
 
         try:
@@ -345,7 +352,7 @@ class SessionHistoryStorage(BaseStorage):
                 },
             }
 
-        state = await self._read_compact_state(project_id)
+        state = await self._read_compact_state(project_id, conversation_id=cid)
         parent_epoch = int(state.get("epoch") or 0) or None
         epoch = int(parent_epoch or 0) + 1
         artifact_id = f"compact_epoch_{epoch:06d}"
@@ -353,7 +360,11 @@ class SessionHistoryStorage(BaseStorage):
         selected_turn_ids = [str(turn["turn_id"]) for turn in older_turns]
         preserved_tail_id = str(recent_turns[0]["turn_id"]) if recent_turns else ""
         parent_artifact_id = str(state.get("artifact_id") or "")
-        parent_artifact = await self.read_compact_artifact(project_id, parent_artifact_id) if parent_artifact_id else None
+        parent_artifact = (
+            await self.read_compact_artifact(project_id, parent_artifact_id, conversation_id=cid)
+            if parent_artifact_id
+            else None
+        )
         artifact = CompactArtifactV2.from_summary(
             artifact_id=artifact_id,
             epoch=epoch,
@@ -376,7 +387,7 @@ class SessionHistoryStorage(BaseStorage):
                 "error": "compact_verification_failed",
                 "verification": verification,
             }
-        lineage_verification = await self._verify_compact_lineage(project_id, artifact)
+        lineage_verification = await self._verify_compact_lineage(project_id, artifact, conversation_id=cid)
         if lineage_verification.get("valid") is not True:
             return {
                 "compacted": False,
@@ -437,16 +448,17 @@ class SessionHistoryStorage(BaseStorage):
                 appended = current[len(items) :]
                 new_items = [summary_msg] + recent + appended
                 await self._atomic_write(
-                    self._compact_dir(project_id) / f"{artifact.id}.json",
+                    self._compact_dir(project_id, cid) / f"{artifact.id}.json",
                     json.dumps(artifact.to_dict(), ensure_ascii=False, indent=2) + "\n",
                 )
                 await self._atomic_write(
-                    self._compact_state_path(project_id),
+                    self._compact_state_path(project_id, cid),
                     json.dumps({"epoch": epoch, "artifact_id": artifact.id}, ensure_ascii=False, indent=2) + "\n",
                 )
                 await self._write_jsonl_unlocked(path, new_items)
         return {
             "compacted": True,
+            "conversation_id": cid,
             "before": len(current),
             "after": len(new_items),
             "summarized": len(source_messages),
@@ -477,8 +489,10 @@ class SessionHistoryStorage(BaseStorage):
             },
         }
 
-    async def read_compact_artifact(self, project_id: str, artifact_id: str) -> Optional[Dict[str, Any]]:
-        path = self._compact_dir(project_id) / f"{artifact_id}.json"
+    async def read_compact_artifact(
+        self, project_id: str, artifact_id: str, *, conversation_id: str = ""
+    ) -> Optional[Dict[str, Any]]:
+        path = self._compact_dir(project_id, conversation_id) / f"{artifact_id}.json"
         if not path.exists():
             return None
         try:
@@ -486,19 +500,21 @@ class SessionHistoryStorage(BaseStorage):
         except (OSError, ValueError, json.JSONDecodeError):
             return None
 
-    async def recover_compact_sources(self, project_id: str, artifact_id: str) -> List[Dict[str, Any]]:
-        artifact = await self.read_compact_artifact(project_id, artifact_id)
+    async def recover_compact_sources(
+        self, project_id: str, artifact_id: str, *, conversation_id: str = ""
+    ) -> List[Dict[str, Any]]:
+        artifact = await self.read_compact_artifact(project_id, artifact_id, conversation_id=conversation_id)
         if not artifact:
             return []
         refs = {str(item) for item in artifact.get("recovery_refs") or []}
-        events = await self.read_jsonl(self._event_path(project_id))
+        events = await self.read_jsonl(self._event_path(project_id, conversation_id))
         return [item for item in events if str(item.get("event_id") or "") in refs]
 
-    async def current_context_epoch(self, project_id: str) -> int:
-        return int((await self._read_compact_state(project_id)).get("epoch") or 0)
+    async def current_context_epoch(self, project_id: str, *, conversation_id: str = "") -> int:
+        return int((await self._read_compact_state(project_id, conversation_id=conversation_id)).get("epoch") or 0)
 
-    async def _read_compact_state(self, project_id: str) -> Dict[str, Any]:
-        path = self._compact_state_path(project_id)
+    async def _read_compact_state(self, project_id: str, *, conversation_id: str = "") -> Dict[str, Any]:
+        path = self._compact_state_path(project_id, conversation_id)
         if not path.exists():
             return {}
         try:
@@ -557,6 +573,8 @@ class SessionHistoryStorage(BaseStorage):
         self,
         project_id: str,
         artifact: CompactArtifactV2,
+        *,
+        conversation_id: str = "",
     ) -> Dict[str, Any]:
         """Verify parent availability, acyclic epochs, and archived source hashes."""
 
@@ -564,7 +582,7 @@ class SessionHistoryStorage(BaseStorage):
         seen = {artifact.id}
         parent_id = str(artifact.parent_artifact_id or "")
         expected_epoch = int(artifact.parent_epoch or 0)
-        events = await self.read_jsonl(self._event_path(project_id))
+        events = await self.read_jsonl(self._event_path(project_id, conversation_id))
         events_by_id = {str(item.get("event_id") or ""): item for item in events if item.get("event_id")}
         depth = 0
         while parent_id:
@@ -573,7 +591,7 @@ class SessionHistoryStorage(BaseStorage):
                 errors.append("lineage_cycle")
                 break
             seen.add(parent_id)
-            parent = await self.read_compact_artifact(project_id, parent_id)
+            parent = await self.read_compact_artifact(project_id, parent_id, conversation_id=conversation_id)
             if not parent:
                 errors.append("parent_artifact_missing")
                 break
@@ -593,8 +611,10 @@ class SessionHistoryStorage(BaseStorage):
             expected_epoch = int(parent.get("parent_epoch") or 0)
         return {"valid": not errors, "errors": errors, "depth": depth, "artifacts": sorted(seen)}
 
-    async def _ensure_event_archive(self, project_id: str, active_items: List[Dict[str, Any]]) -> None:
-        path = self._event_path(project_id)
+    async def _ensure_event_archive(
+        self, project_id: str, active_items: List[Dict[str, Any]], *, conversation_id: str = ""
+    ) -> None:
+        path = self._event_path(project_id, conversation_id)
         archived = await self.read_jsonl(path)
         known = {str(item.get("event_id") or "") for item in archived}
         additions = [
@@ -605,16 +625,17 @@ class SessionHistoryStorage(BaseStorage):
         for item in additions:
             await self.append_jsonl(path, item)
 
-    async def _repair_projection_from_archive(self, project_id: str) -> None:
-        active_path = self._path(project_id)
-        event_path = self._event_path(project_id)
+    async def _repair_projection_from_archive(self, project_id: str, *, conversation_id: str = "") -> None:
+        """把归档事件补回投影（会话身份显式传递，A2）。"""
+        active_path = self._path(project_id, conversation_id)
+        event_path = self._event_path(project_id, conversation_id)
         if not event_path.exists():
             return
         active = await self.read_jsonl(active_path)
         archived = await self.read_jsonl(event_path)
         active_ids = {str(item.get("event_id") or "") for item in active if item.get("event_id")}
         compacted_ids = set()
-        directory = self._compact_dir(project_id)
+        directory = self._compact_dir(project_id, conversation_id)
         if directory.exists():
             for artifact_path in directory.glob("compact_epoch_*.json"):
                 try:

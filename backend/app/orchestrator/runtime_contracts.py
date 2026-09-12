@@ -118,7 +118,7 @@ class ContextPlanPort(Protocol):
 
 
 class SessionHistoryPort(Protocol):
-    async def current_context_epoch(self, project_id: str) -> int: ...
+    async def current_context_epoch(self, project_id: str, *, conversation_id: str = "") -> int: ...
 
     async def load(
         self,

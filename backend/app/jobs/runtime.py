@@ -24,11 +24,22 @@ def get_task_queue() -> DurableTaskQueue:
     return _queue
 
 
-async def enqueue_session_compact(project_id: str, *, history_count: int) -> Dict[str, Any]:
+async def enqueue_session_compact(
+    project_id: str, *, history_count: int, conversation_id: str = ""
+) -> Dict[str, Any]:
+    """入队后台压缩任务；会话身份在入队时解析并写入 payload 与幂等 key（A2，F05）。
+
+    幂等 key 含 conversation_id：同一项目不同会话各自计数触发互不抵消；
+    worker 执行期间活动会话切换也不改变压缩目标。
+    """
     return await get_task_queue().enqueue(
         "session_compact",
-        {"project_id": project_id, "history_count": int(history_count)},
-        idempotency_key=f"session_compact:{project_id}:{history_count}",
+        {
+            "project_id": project_id,
+            "history_count": int(history_count),
+            "conversation_id": str(conversation_id or ""),
+        },
+        idempotency_key=f"session_compact:{project_id}:{conversation_id or 'legacy'}:{history_count}",
         max_attempts=3,
     )
 
@@ -55,6 +66,8 @@ async def _handle_session_compact(payload: Dict[str, Any]) -> Dict[str, Any]:
     project_id = str(payload.get("project_id") or "")
     if not project_id:
         raise ValueError("missing_project_id")
+    # 会话身份以入队时的 payload 为准，不重新解析当前 active（A2）。
+    conversation_id = str(payload.get("conversation_id") or "")
     orchestrator = get_orchestrator(project_id)
     return await orchestrator.application.commands.run(
         project_id=project_id,
@@ -62,5 +75,8 @@ async def _handle_session_compact(payload: Dict[str, Any]) -> Dict[str, Any]:
         intent="compact",
         route_path="compress",
         target_word_count=512,
-        operation=lambda: orchestrator.application.conversation.compact(project_id),
+        conversation_id=conversation_id,
+        operation=lambda: orchestrator.application.conversation.compact(
+            project_id, conversation_id=conversation_id
+        ),
     )

@@ -44,11 +44,14 @@ class ConversationPort:
     async def load(self, project_id: str, *, limit: int = 0) -> List[Dict[str, Any]]:
         return await self.session_history.load(project_id, limit=limit)
 
-    async def compact(self, project_id: str, *, keep_recent: int = 40, trigger_at: int = 120) -> Dict[str, Any]:
+    async def compact(
+        self, project_id: str, *, keep_recent: int = 40, trigger_at: int = 120, conversation_id: str = ""
+    ) -> Dict[str, Any]:
         return await self.post_turn_service.compact_conversation(
             project_id,
             keep_recent=keep_recent,
             trigger_at=trigger_at,
+            conversation_id=conversation_id,
         )
 
 

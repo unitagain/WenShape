@@ -662,6 +662,7 @@ class Orchestrator(AnalysisMixin):
         route_path: str,
         operation: Callable[[], Any],
         target_word_count: int = 3000,
+        conversation_id: str = "",
     ) -> Any:
         """Execute an explicit application operation under the shared turn control plane."""
 
@@ -669,7 +670,10 @@ class Orchestrator(AnalysisMixin):
         owns_scope = existing is None
         scope = existing or new_turn_scope(project_id=project_id, chapter_id=chapter)
         if owns_scope:
-            scope.context_epoch = await self.session_history.current_context_epoch(project_id)
+            # 会话身份显式传递：不因执行期间活动会话切换而读到其他会话的 epoch（A2）。
+            scope.context_epoch = await self.session_history.current_context_epoch(
+                project_id, conversation_id=conversation_id
+            )
         if owns_scope:
             self._active_turn_scopes[scope.turn_id] = scope
         try:

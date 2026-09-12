@@ -165,15 +165,21 @@ _HISTORY_COMPACT_TRIGGER = 120
 _HISTORY_KEEP_RECENT = 40
 
 
-async def _compact_with_plan(orchestrator: Orchestrator, project_id: str) -> dict:
+async def _compact_with_plan(orchestrator: Orchestrator, project_id: str, conversation_id: str = "") -> dict:
+    """显式触发压缩：conversation_id 缺省由入口解析一次 active，此后不再读动态 active（A2）。"""
+    resolved = conversation_id or orchestrator.session_history.active_conversation_id(project_id)
     return await orchestrator.application.commands.run(
         project_id=project_id,
         chapter="",
         intent="compact",
         route_path="compress",
         target_word_count=512,
+        conversation_id=resolved,
         operation=lambda: orchestrator.application.conversation.compact(
-            project_id, keep_recent=_HISTORY_KEEP_RECENT, trigger_at=_HISTORY_COMPACT_TRIGGER
+            project_id,
+            keep_recent=_HISTORY_KEEP_RECENT,
+            trigger_at=_HISTORY_COMPACT_TRIGGER,
+            conversation_id=resolved,
         ),
     )
 
@@ -306,18 +312,25 @@ async def get_session_history(project_id: str, limit: int = 0, conversation_id: 
 
 @router.post("/projects/{project_id}/session/history")
 async def append_session_history(project_id: str, request: AppendMessageRequest):
-    """追加一条对话消息到持久历史；过长时后台 compact（压缩早期轮次 + 提炼作者偏好）。"""
+    """追加一条对话消息到持久历史；过长时后台 compact（压缩早期轮次 + 提炼作者偏好）。
+
+    会话身份在入口解析一次并贯穿 append/count/入队（A2）：后台任务执行期间活动
+    会话切换不影响压缩目标归属。
+    """
     orchestrator = get_orchestrator(project_id)
+    conversation_id = request.conversation_id or orchestrator.session_history.active_conversation_id(project_id)
     item = await orchestrator.application.conversation.append(
         project_id,
         {"role": request.role, "content": request.content, "type": request.type, "ts": request.ts},
-        conversation_id=request.conversation_id or "",
+        conversation_id=conversation_id,
     )
-    count = await orchestrator.session_history.count(project_id, conversation_id=request.conversation_id or "")
+    count = await orchestrator.session_history.count(project_id, conversation_id=conversation_id)
     should_compact = count > _HISTORY_COMPACT_TRIGGER
     queued_job = None
     if should_compact:
-        queued_job = await enqueue_session_compact(project_id, history_count=count)
+        queued_job = await enqueue_session_compact(
+            project_id, history_count=count, conversation_id=conversation_id
+        )
     return {
         "success": True,
         "item": item,
@@ -370,10 +383,13 @@ async def rollback_session_conversation(project_id: str, conversation_id: str):
 
 
 @router.post("/projects/{project_id}/session/history/compact")
-async def compact_session_history(project_id: str):
-    """显式触发对话压缩 + 偏好提炼（前端可在一轮结束后调用）。"""
+async def compact_session_history(project_id: str, conversation_id: str = ""):
+    """显式触发对话压缩 + 偏好提炼（前端可在一轮结束后调用）。
+
+    conversation_id 缺省压当前 active 会话（入口解析一次，A2）。
+    """
     orchestrator = get_orchestrator(project_id)
-    result = await _compact_with_plan(orchestrator, project_id)
+    result = await _compact_with_plan(orchestrator, project_id, conversation_id)
     return {"success": True, **result}
 
 
@@ -393,29 +409,46 @@ async def review_consistency(project_id: str, request: ReviewRequest):
 
 
 @router.get("/projects/{project_id}/session/history/compact/state")
-async def compact_session_state(project_id: str):
+async def compact_session_state(project_id: str, conversation_id: str = ""):
     """Return the active context epoch without exposing conversation text."""
     orchestrator = get_orchestrator(project_id)
-    return {"success": True, "context_epoch": await orchestrator.session_history.current_context_epoch(project_id)}
+    resolved = conversation_id or orchestrator.session_history.active_conversation_id(project_id)
+    return {
+        "success": True,
+        "conversation_id": resolved,
+        "context_epoch": await orchestrator.session_history.current_context_epoch(
+            project_id, conversation_id=resolved
+        ),
+    }
 
 
 @router.get("/projects/{project_id}/session/history/compact/{artifact_id}")
-async def get_compact_artifact(project_id: str, artifact_id: str):
+async def get_compact_artifact(project_id: str, artifact_id: str, conversation_id: str = ""):
     orchestrator = get_orchestrator(project_id)
-    artifact = await orchestrator.session_history.read_compact_artifact(project_id, artifact_id)
+    artifact = await orchestrator.session_history.read_compact_artifact(
+        project_id, artifact_id, conversation_id=conversation_id
+    )
     if artifact is None:
         raise HTTPException(status_code=404, detail="Compact artifact not found")
     return {"success": True, "artifact": artifact}
 
 
 @router.get("/projects/{project_id}/session/history/compact/{artifact_id}/recover")
-async def recover_compact_sources(project_id: str, artifact_id: str):
-    """Recover source events referenced by one compact artifact."""
+async def recover_compact_sources(project_id: str, artifact_id: str, conversation_id: str = ""):
+    """Recover source events referenced by one compact artifact.
+
+    artifact 归属其压缩时会话；显式 conversation_id 可跨会话恢复指定 artifact，
+    缺省读当前 active 会话目录。
+    """
     orchestrator = get_orchestrator(project_id)
-    artifact = await orchestrator.session_history.read_compact_artifact(project_id, artifact_id)
+    artifact = await orchestrator.session_history.read_compact_artifact(
+        project_id, artifact_id, conversation_id=conversation_id
+    )
     if artifact is None:
         raise HTTPException(status_code=404, detail="Compact artifact not found")
-    items = await orchestrator.session_history.recover_compact_sources(project_id, artifact_id)
+    items = await orchestrator.session_history.recover_compact_sources(
+        project_id, artifact_id, conversation_id=conversation_id
+    )
     return {"success": True, "items": items, "count": len(items)}
 
 

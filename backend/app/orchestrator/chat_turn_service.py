@@ -36,7 +36,10 @@ class ChatTurnService:
     ) -> ChatTurnResult:
         started_at = time.monotonic()
         scope = new_turn_scope(project_id=project_id, chapter_id=chapter)
-        scope.context_epoch = await self.owner.session_history.current_context_epoch(project_id)
+        # 会话身份入口解析一次：epoch 取请求指定会话（缺省 active），此后不读动态 active（A2）。
+        scope.context_epoch = await self.owner.session_history.current_context_epoch(
+            project_id, conversation_id=conversation_id
+        )
         self.owner._active_turn_scopes[scope.turn_id] = scope
         try:
             with bind_turn_scope(scope):
