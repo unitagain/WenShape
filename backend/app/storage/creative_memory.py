@@ -41,6 +41,7 @@ from app.context_engine.memory_record import (
     parse_string_list,
     parse_version_refs,
 )
+from app.utils.chapter_id import ChapterIDValidator
 from app.utils.logger import get_logger
 from app.utils.trust import is_untrusted_source, trust_metadata
 
@@ -53,6 +54,20 @@ MEMORY_STATUSES = MEMORY_STATUSES_V2
 
 _INDEX_NAME = "MEMORY.md"
 _SLUG_RE = re.compile(r'[\\/:*?"<>|\s]+')
+
+
+def _chapter_valid_from_blocks(valid_from: str, as_of: str) -> bool:
+    """结构化章节时点比较：valid_from 叙事上晚于 as_of → 该记忆尚不可见（A3，F04）。
+
+    不能用普通字符串排序：``"C10" < "V1C2"`` 字符串为真（'C'<'V'），但第 10 章
+    的记忆对第 2 章写作是未来信息。两侧均能解析为章节 ID 时用结构化比较，
+    否则回退字符串比较（兼容非章节格式的旧数据）。
+    """
+    left = ChapterIDValidator.parse(valid_from)
+    right = ChapterIDValidator.parse(as_of)
+    if left and right:
+        return ChapterIDValidator.compare(valid_from, as_of) == 1
+    return str(valid_from) > str(as_of)
 
 
 def _safe_slug(slug: str) -> str:
@@ -474,6 +489,49 @@ class CreativeMemoryStorage(BaseStorage):
             )
         return out
 
+    async def eligible_headers(
+        self,
+        project_id: str,
+        *,
+        scopes: Optional[List[str]] = None,
+        as_of: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """共享准入选择：目录推送与正文召回的唯一 eligibility 规则集（A3，F04）。
+
+        目录（name/description）同样进入 system prompt、会影响生成，不能视为治理
+        之外的无害元数据——目录与 ``recall()`` 必须执行同一准入，仅在投影形式上
+        不同。谓词不复制到 Writer 层形成第二套规则。
+
+        规则（与 ``MemoryRecordV2.recall_block_reasons`` 一致）：status=active、
+        未过期、已到 valid_from、trusted、有出处、无未决冲突、未被取代、关系合法；
+        另加 scope 过滤与章节时点（as_of）结构化比较。
+        """
+        headers = await self.list_headers(project_id, statuses=["*"])
+        if not headers:
+            return []
+        graph = build_memory_graph(headers)
+        allowed_scopes = set(scopes or MEMORY_SCOPES)
+        out: List[Dict[str, Any]] = []
+        for header in headers:
+            record = MemoryRecordV2.from_mapping(header)
+            if record.scope not in allowed_scopes:
+                continue
+            if (
+                as_of
+                and record.scope == "chapter"
+                and record.valid_from
+                and _chapter_valid_from_blocks(str(record.valid_from), str(as_of))
+            ):
+                continue
+            if record.recall_block_reasons(
+                graph.conflict_participants,
+                superseded_ids=graph.superseded_ids,
+                invalid_ids=graph.invalid_ids,
+            ):
+                continue
+            out.append(header)
+        return out
+
     async def list_review_items(self, project_id: str) -> List[Dict[str, Any]]:
         """列出待作者确认的候选记忆（含 body，供治理 UI/API 展示）。"""
         headers = await self.list_headers(project_id, statuses=["needs_review"])
@@ -495,7 +553,8 @@ class CreativeMemoryStorage(BaseStorage):
     ) -> List[Dict[str, Any]]:
         """Recall valid, trusted and conflict-free memories with explainable ranking."""
         top_k = max(1, int(top_k or 1))
-        headers = await self.list_headers(project_id, statuses=["*"])
+        # 共享准入（A3）：与目录推送走同一 eligible_headers 规则集，不另立第二套。
+        headers = await self.eligible_headers(project_id, scopes=scopes, as_of=as_of)
         if not headers:
             try:
                 from app.observability.usage_diagnostics import record_memory_recall
@@ -504,25 +563,12 @@ class CreativeMemoryStorage(BaseStorage):
             except Exception as exc:
                 logger.warning("Memory recall diagnostics failed: %s", type(exc).__name__)
             return []
-        graph = build_memory_graph(headers)
-        allowed_scopes = set(scopes or MEMORY_SCOPES)
         scored = []
         for header in headers:
-            record = MemoryRecordV2.from_mapping(header)
-            if record.scope not in allowed_scopes:
-                continue
-            if as_of and record.scope == "chapter" and record.valid_from and str(record.valid_from) > str(as_of):
-                continue
-            if record.recall_block_reasons(
-                graph.conflict_participants,
-                superseded_ids=graph.superseded_ids,
-                invalid_ids=graph.invalid_ids,
-            ):
-                continue
             lexical = _recall_score(query, header["name"], header["description"])
             if lexical <= 0:
                 continue
-            score = float(lexical) + 2.0 * record.confidence
+            score = float(lexical) + 2.0 * float(header.get("confidence") or 0.0)
             scored.append((score, lexical, header))
         scored.sort(key=lambda item: (item[0], str(item[2].get("updated_at") or "")), reverse=True)
         out: List[Dict[str, Any]] = []

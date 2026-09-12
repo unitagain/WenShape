@@ -137,7 +137,7 @@ class WritingService:
         relations_push = await self._resolve_relations_push(project_id)
         style_push = await self._resolve_style_push(project_id)
         card_inventory_push = await self._resolve_card_inventory_push(project_id)
-        memory_inventory_push = await self._resolve_memory_inventory_push(project_id)
+        memory_inventory_push = await self._resolve_memory_inventory_push(project_id, chapter)
         clarification_settings = await self._resolve_clarification_settings(project_id)
         clarification_resumed = "作者回答：" in str(message or "") or "作者暂不补充以下问题" in str(message or "")
         clarification_policy = self._clarification_policy_text(clarification_settings, resumed=clarification_resumed)
@@ -720,20 +720,26 @@ class WritingService:
             lines.append(f"（另有 {remaining} 张卡片未列出；需要时用 lookup_card 按名称查询，不得视为不存在。）")
         return "\n".join(lines)
 
-    async def _resolve_memory_inventory_push(self, project_id: str) -> str:
+    async def _resolve_memory_inventory_push(self, project_id: str, chapter: str = "") -> str:
         """Push a bounded creative-memory index so the Writer knows prior author decisions.
 
         与卡片目录（B1）同构：目录（name + description）有界、进稳定前缀；
-        记忆正文走 query_memory JIT。只列 active 状态——needs_review/rejected/
-        supersed/conflict 的记忆本来就不允许进入召回，目录同样不列。
-        超出条数上限时显式标注剩余条数并指向 query_memory，不静默截断。
+        记忆正文走 query_memory JIT。准入走 ``eligible_headers`` 共享规则集
+        （A3，F04）——目录与正文召回同一 eligibility：过期/冲突/取代/不可信/
+        未审核的记忆既不进目录也不进召回；章节时点（as_of）同样贯穿目录，
+        未来章节的记忆不向早期章节泄漏。超出条数上限时显式标注剩余条数并指向
+        query_memory，不静默截断。
         """
 
         if self.memory_storage is None:
             return ""
         limit = max(1, int(config.get("retrieval", {}).get("memory_inventory_max_items", 40)))
         try:
-            headers = list(await self.memory_storage.list_headers(project_id) or [])
+            eligible = getattr(self.memory_storage, "eligible_headers", None)
+            if eligible is not None:
+                headers = list(await eligible(project_id, as_of=chapter or None) or [])
+            else:
+                headers = list(await self.memory_storage.list_headers(project_id) or [])
         except Exception as exc:
             record_degradation("writer_memory_inventory_push", exc)
             return ""

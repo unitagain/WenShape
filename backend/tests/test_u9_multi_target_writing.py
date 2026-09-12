@@ -334,7 +334,8 @@ def test_plan_writing_step_stages_proposals_without_writing_disk(tmp_path):
     assert step["change_set"][0]["asset_id"] == "V1C1"
     assert step["iterations"] == 4
     assert step["terminal_state"] == "completed"
-    assert "staged" in result
+    # A4：run_plan_step 返回共享终态契约（dict），不再返回裸字符串。
+    assert result["terminal_state"] == "completed" and "staged" in result["summary"]
 
 
 def test_plan_writing_step_records_incomplete_terminal_state(tmp_path):
@@ -361,4 +362,5 @@ def test_plan_writing_step_records_incomplete_terminal_state(tmp_path):
 
     assert step["terminal_state"] == "incomplete"
     assert step["iterations"] == 12
-    assert "incomplete" in result
+    # A4：incomplete 终态原样穿透共享契约，不再伪装完成。
+    assert result["terminal_state"] == "incomplete" and result["success"] is False

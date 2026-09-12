@@ -441,7 +441,14 @@ class WriterToolset:
             return "（创作记忆库当前不可用。）"
         top_k = max(1, min(top_k, 10))
         try:
-            records = await self.memory_storage.recall(self.project_id, query, top_k) or []
+            # 章节时点贯穿（A3，F04）：未来章节的记忆不向早期章节泄漏；
+            # 其余 eligibility（过期/冲突/取代/不可信）由 recall() 的共享规则集把关。
+            records = (
+                await self.memory_storage.recall(
+                    self.project_id, query, top_k, as_of=self.current_chapter or None
+                )
+                or []
+            )
         except Exception as exc:
             logger.warning("query_memory recall failed: %s", safe_error_code(exc))
             return f"[memory_error code={safe_error_code(exc)}]"

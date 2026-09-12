@@ -20,7 +20,7 @@ import ConsistencyNotes from './ConsistencyNotes';
  *  running      执行中
  *  failed       任一步 failed
  *  pending      尚未开始
- *  interrupted  已开始但未跑完（取消/中断）
+ *  interrupted  已开始但未跑完（取消/中断/incomplete——A4 后步骤可携带 incomplete/cancelled 终态）
  *  done         全部完成
  */
 export const planOutcome = (steps = [], { executing = false } = {}) => {
@@ -75,7 +75,6 @@ export const unassignedAssets = (changeSet = [], steps = []) => {
 };
 
 const STEP_ICONS = { done: Check, failed: X, running: Loader2, pending: CircleDashed };
-
 const assetLabel = (item) => (String(item?.asset_type || '') === 'outline' ? '大纲' : String(item?.asset_id || ''));
 
 /** 任务行标题：优先用 planner 给的简短 title，回退为截断的 description（列表要一行读完）。 */
@@ -86,17 +85,27 @@ export const stepLabel = (step, limit = 18) => {
   return description.length > limit ? `${description.slice(0, limit)}…` : description;
 };
 
+// 非完成终态（A4）：incomplete/cancelled 步骤复用中断图标，不显示为 done/绿色。
+const STEP_FALLBACK_ICON = CircleSlash;
+
 const StepRow = ({ step, isCurrent }) => {
   const status = isCurrent ? 'running' : step?.status || 'pending';
-  const Icon = STEP_ICONS[status] || CircleDashed;
+  const Icon = STEP_ICONS[status] || STEP_FALLBACK_ICON;
   const done = status === 'done';
+  const notDoneTerminal = ['failed', 'incomplete', 'cancelled'].includes(status);
   return (
     <div className="flex items-center gap-2 rounded-[4px] px-1 py-0.5 text-[11px]" title={step?.description || ''}>
       <Icon
         size={12}
         className={[
           'shrink-0',
-          status === 'failed' ? 'text-red-600' : done ? 'text-green-600' : 'text-[var(--vscode-fg-subtle)]',
+          status === 'failed'
+            ? 'text-red-600'
+            : done
+              ? 'text-green-600'
+              : notDoneTerminal
+                ? 'text-amber-600'
+                : 'text-[var(--vscode-fg-subtle)]',
           status === 'running' ? 'animate-spin' : '',
         ].join(' ')}
       />
@@ -111,8 +120,10 @@ const StepRow = ({ step, isCurrent }) => {
       {step?.chapter ? (
         <span className="shrink-0 font-mono text-[10px] text-[var(--vscode-fg-subtle)]">{step.chapter}</span>
       ) : null}
-      {status === 'failed' && step?.error ? (
-        <span className="shrink-0 text-[10px] text-red-600">{step.error}</span>
+      {notDoneTerminal && (step?.terminal_state || step?.error) ? (
+        <span className="shrink-0 text-[10px] text-amber-700">
+          {step?.error || step?.terminal_state}
+        </span>
       ) : null}
     </div>
   );

@@ -19,8 +19,21 @@ logger = get_logger(__name__)
 ProgressCallback = Callable[..., Awaitable[None]]
 TextCallback = Callable[[str, str], str]
 CancelledCallback = Callable[[], bool]
-StepRunner = Callable[[str, Dict[str, Any]], Awaitable[str]]
+# 步骤返回结构化结果：terminal_state 复用 AgentRunResult 四态（completed/incomplete/
+# cancelled/failed），success 仅表示「步骤目标达成」。返回裸 str 视为 completed，
+# 仅为兼容既有注入式 runner 测试——生产 runner（run_plan_step）一律返回 dict（A4，F06）。
+StepRunner = Callable[[str, Dict[str, Any]], Awaitable[object]]
 ChapterAnalyzer = Callable[[str, str], Awaitable[Dict[str, Any]]]
+
+_TERMINAL_STATES = {"completed", "incomplete", "cancelled", "failed"}
+
+
+def _step_result(terminal_state: str, summary: str) -> Dict[str, Any]:
+    """Normalize a step outcome into the shared terminal contract."""
+    state = str(terminal_state or "").strip().lower()
+    if state not in _TERMINAL_STATES:
+        state = "failed" if state else "incomplete"
+    return {"summary": str(summary or ""), "terminal_state": state, "success": state == "completed"}
 
 
 class PlanExecutionService:
@@ -101,6 +114,9 @@ class PlanExecutionService:
         await self.plan_store.write_plan(project_id, plan)
 
         completed = True
+        # 步骤终态逐个记录；非 completed 终态让后续步骤保持 pending 并停止依赖它们
+        # （A4，F06：incomplete/cancelled/failed 不得被「没抛异常」吞成 done）。
+        outcome_states: list[str] = []
         for step in steps:
             if self.is_cancelled():
                 completed = False
@@ -125,14 +141,34 @@ class PlanExecutionService:
             )
             try:
                 result = await runner(project_id, step)
-                step["status"] = "done"
-                if result:
-                    step["result"] = str(result)[:500]
             except Exception as exc:
                 step["status"] = "failed"
+                step["terminal_state"] = "failed"
                 step["error"] = safe_error_code(exc)
                 logger.warning("Plan step %s failed: %s", step.get("id"), exc)
                 completed = False
+                outcome_states.append("failed")
+                await self.plan_store.write_plan(project_id, plan)
+                await self._emit_step_done(step, total=len(steps), project_id=project_id)
+                break
+            if isinstance(result, dict):
+                # 结构化结果：按 AgentRunResult 四态映射 step.status。
+                terminal_state = str(result.get("terminal_state") or "")
+                if terminal_state in _TERMINAL_STATES:
+                    step["terminal_state"] = terminal_state
+                    step["status"] = "done" if terminal_state == "completed" else terminal_state
+                else:
+                    step["status"] = "done"
+            else:
+                # 裸字符串返回值：仅为兼容注入式 runner，视为 completed。
+                step["status"] = "done"
+            if isinstance(result, dict) and result.get("summary"):
+                step["result"] = str(result["summary"])[:500]
+            elif result:
+                step["result"] = str(result)[:500]
+            if step["status"] != "done":
+                completed = False
+                outcome_states.append(step["status"])
                 await self.plan_store.write_plan(project_id, plan)
                 await self._emit_step_done(step, total=len(steps), project_id=project_id)
                 break
@@ -143,8 +179,13 @@ class PlanExecutionService:
             plan["status"] = "interrupted"
         elif completed:
             plan["status"] = "done"
-        else:
+        elif "failed" in outcome_states:
             plan["status"] = "failed"
+        elif "incomplete" in outcome_states:
+            plan["status"] = "incomplete"
+        else:
+            # cancelled 步骤对用户呈现为中断（保留既有词汇），不再伪装完成。
+            plan["status"] = "interrupted"
         await self.plan_store.write_plan(project_id, plan)
         return {"success": completed, "plan": plan}
 
@@ -181,15 +222,19 @@ class PlanExecutionService:
             assets=assets or None,
         )
 
-    async def run_plan_step(self, project_id: str, step: Dict[str, Any]) -> str:
-        """Dispatch one plan step to the single Writer path."""
+    async def run_plan_step(self, project_id: str, step: Dict[str, Any]) -> Dict[str, Any]:
+        """Dispatch one plan step to the single Writer path.
+
+        返回共享终态契约（``{"summary", "terminal_state", "success"}``）；
+        terminal_state 复用 AgentRunResult 四态，execute_plan 据此聚合（A4，F06）。
+        """
 
         action = str(step.get("action") or "").strip()
         chapter = str(step.get("chapter") or "").strip()
         description = str(step.get("description") or "").strip()
 
         if action == "research":
-            return f"research: {await self.research_note(project_id, description)}"
+            return _step_result("completed", f"research: {await self.research_note(project_id, description)}")
 
         if action in ("edit", "analyze") and chapter:
             try:
@@ -206,13 +251,18 @@ class PlanExecutionService:
             return await self._run_writing_step(project_id, step, chapter, description, action)
         if action == "analyze" and chapter:
             result = await self.analyze_chapter(project_id, chapter)
-            return f"analyze {chapter}: {result.get('success')}"
+            # F06 附带审查项：analyze 的 success=False 不得被字符串拼接吞掉后标 done。
+            ok = bool(result.get("success"))
+            return _step_result(
+                "completed" if ok else "failed",
+                f"analyze {chapter}: {ok}",
+            )
         if action in ("edit", "analyze"):
             # U9：edit/analyze 缺 chapter 时必须显式失败。此前会落到下方兜底 return，
             # 步骤被标记 done 却什么都没写——正是「未正常工作、后端无报错」这一类静默失败
             # （对齐 §4「incomplete 不伪装 completed」「不静默吞关键异常」）。
             raise ValueError(f"{action}_step_missing_chapter")
-        return f"{action}: {description[:80]}"
+        return _step_result("completed", f"{action}: {description[:80]}")
 
     async def _run_writing_step(
         self,
@@ -221,7 +271,7 @@ class PlanExecutionService:
         chapter: str,
         description: str,
         action: str,
-    ) -> str:
+    ) -> Dict[str, Any]:
         """Execute one writing step through the Writer path and stage its proposals.
 
         U9：不再直接 `save_current_draft`。U8 已确立「所有写入先形成 proposal/diff、
@@ -232,6 +282,10 @@ class PlanExecutionService:
 
         turn_effect 同样不在此应用：不能从作者尚未采纳的正文里抽取 canon 事实。
         每步记录 iterations 与终态，供任务卡展示与截断诊断。
+
+        A4（F06）：返回结构化结果而非字符串——Writer 的 incomplete/failed/cancelled
+        终态原样穿透到 step.terminal_state/step.status，不得被「没抛异常」吞成 done。
+        步骤产出的提案仍保留在 step.change_set，供作者审阅采纳（提案存在 ≠ 步骤完成）。
         """
 
         result = await self.writing_service.run(project_id, chapter, description)
@@ -240,13 +294,29 @@ class PlanExecutionService:
             step["iterations"] = int(agent_run.get("iterations") or 0)
         change_set = result.get("change_set") or result.get("proposals") or []
         step["change_set"] = [item for item in change_set if isinstance(item, dict)]
-        terminal_state = str(result.get("terminal_state") or "").strip()
-        if not result.get("success") or not result.get("changed"):
-            state = terminal_state or str(result.get("reason") or "") or "incomplete"
-            step["terminal_state"] = state
-            return f"{action} {chapter}: {state}"
-        step["terminal_state"] = terminal_state or "completed"
-        return f"{action} {chapter}: staged {len(step['change_set'])} proposal(s)"
+        terminal_state = str(result.get("terminal_state") or "").strip().lower()
+
+        if result.get("cancelled"):
+            terminal_state = terminal_state or "cancelled"
+        # 非 completed 四态优先于 success 标志：success=True 但截断（incomplete）/
+        # 取消的结果必须保持原终态（U9 语义），不得因「没失败」标成 completed。
+        if terminal_state in {"incomplete", "cancelled", "failed"}:
+            step["terminal_state"] = terminal_state
+            reason = str(result.get("reason") or terminal_state)
+            return _step_result(terminal_state, f"{action} {chapter}: {reason}")
+        if not result.get("success"):
+            # Writer 未成功且无标准终态：缺省 incomplete。
+            reason = str(result.get("reason") or "incomplete")
+            step["terminal_state"] = "incomplete"
+            return _step_result("incomplete", f"{action} {chapter}: {reason}")
+        if terminal_state and terminal_state not in _TERMINAL_STATES:
+            # Writer 成功但报告了非标准终态词汇（如 requires_input）：不是 completed。
+            step["terminal_state"] = "incomplete"
+            return _step_result("incomplete", f"{action} {chapter}: {terminal_state}")
+        step["terminal_state"] = "completed"
+        return _step_result(
+            "completed", f"{action} {chapter}: staged {len(step['change_set'])} proposal(s)"
+        )
 
     async def research_note(self, project_id: str, query: str) -> str:
         """Run plan research through retrieval + isolated retrieve worker."""
