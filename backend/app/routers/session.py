@@ -163,6 +163,8 @@ class CreateConversationRequest(BaseModel):
 # 对话历史 compact 触发阈值（消息数）：超过则后台压缩早期轮次 + 提炼作者偏好 → creative_memory。
 _HISTORY_COMPACT_TRIGGER = 120
 _HISTORY_KEEP_RECENT = 40
+# token 压力触发（B3，F08）：少量超长消息即使条数不多也需压缩。
+_HISTORY_COMPACT_TRIGGER_CHARS = 120_000
 
 
 async def _compact_with_plan(orchestrator: Orchestrator, project_id: str, conversation_id: str = "") -> dict:
@@ -325,7 +327,11 @@ async def append_session_history(project_id: str, request: AppendMessageRequest)
         conversation_id=conversation_id,
     )
     count = await orchestrator.session_history.count(project_id, conversation_id=conversation_id)
-    should_compact = count > _HISTORY_COMPACT_TRIGGER
+    # B3（F08）：消息数与 token 压力双触发——少量超长消息（约束长文、粘贴资料）
+    # 不因条数少而逃过压缩，近期 tail 的 token 预算在 compact 内部执行。
+    history_items = await orchestrator.session_history.load(project_id, conversation_id=conversation_id)
+    total_chars = sum(len(str(item.get("content") or "")) for item in history_items)
+    should_compact = count > _HISTORY_COMPACT_TRIGGER or total_chars > _HISTORY_COMPACT_TRIGGER_CHARS
     queued_job = None
     if should_compact:
         queued_job = await enqueue_session_compact(

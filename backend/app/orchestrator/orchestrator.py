@@ -489,48 +489,95 @@ class Orchestrator(AnalysisMixin):
     # 持久化对话历史（Git-Native）+ compact 长对话压缩 + 顺带提炼作者偏好 → creative_memory。
     # 取代脆弱的前端 localStorage 单点：刷新/重启/清缓存/换机均不丢，且可 Git 追踪。
 
+    # 摘要分块：单块上限与块数上限（B3，F08——旧实现 text[:6000] 静默丢弃尾部，
+    # artifact 的来源 hash 却覆盖完整 source，验证输入与摘要输入覆盖不一致）。
+    _COMPACT_SUMMARY_CHUNK_CHARS = 6000
+    _COMPACT_SUMMARY_MAX_CHUNKS = 10
+
     async def _summarize_conversation(self, text: str) -> Dict[str, Any]:
-        """Build CompactArtifactV2 sections; safely degrade to a recoverable summary."""
+        """Build CompactArtifactV2 sections; safely degrade to a recoverable summary.
+
+        输入覆盖完整性（B3）：超出单块上限的对话分块提炼、逐块输出合并——
+        任何部分都不会在摘要输入处静默丢失。
+        """
         text = str(text or "").strip()
         if not text:
             return {}
+        chunks: List[str] = []
+        limit = self._COMPACT_SUMMARY_CHUNK_CHARS
+        for start in range(0, len(text), limit):
+            chunks.append(text[start : start + limit])
+            if len(chunks) >= self._COMPACT_SUMMARY_MAX_CHUNKS:
+                # 块数封顶：保留头部块 + 最后一块（尾部约束/未决事项最关键），中间显式标注省略。
+                if start + limit < len(text):
+                    chunks.append(text[-limit:])
+                    chunks.insert(-1, f"…（中段 {len(text) - start - 2 * limit} 字符分块已达上限，未参与提炼）…")
+                break
+        merged: Dict[str, Any] = {}
         try:
             provider = self.gateway.get_provider_for_agent(self.archivist.get_agent_name())
-            system = self._p(
-                "你是创作会话状态压缩器。只输出 JSON 对象，字段固定为 decisions、constraints、entity_state、"
-                "open_loops（字符串数组）和 recent_summary（字符串）。只保留输入明确支持的内容；不推断新事实，"
-                "不把助手建议当作作者决定，不遗漏仍生效的硬约束和未决事项。recent_summary 不超过 300 字。",
-                "You compress writing-session state. Return one JSON object with decisions, constraints, entity_state, "
-                "open_loops (string arrays), and recent_summary (string). Include only source-supported claims; do not "
-                "turn assistant suggestions into user decisions. Preserve active constraints and unresolved work.",
-            )
-            messages = [{"role": "system", "content": system}, {"role": "user", "content": text[:6000]}]
-            scope = current_turn_scope()
-            if scope is not None and scope.source_closure_required:
-                scope.register_provider_payload(
-                    messages,
-                    source_prefix="orchestrator.compact_summary",
-                    selection_reason="conversation_compact_assembly",
-                    artifact_ref="Orchestrator._summarize_conversation",
+            for index, chunk in enumerate(chunks):
+                section_note = (
+                    f"（第 {index + 1}/{len(chunks)} 块）"
+                    if len(chunks) > 1
+                    else ""
                 )
-            resp = await self.gateway.chat(
-                messages,
-                provider=provider,
-                temperature=0.3,
-                response_format={"type": "json_object"},
-            )
-            out = str(resp.get("content") or "").strip()
-            if out:
+                system = self._p(
+                    "你是创作会话状态压缩器。只输出 JSON 对象，字段固定为 decisions、constraints、entity_state、"
+                    "open_loops（字符串数组）和 recent_summary（字符串）。只保留输入明确支持的内容；不推断新事实，"
+                    "不把助手建议当作作者决定，不遗漏仍生效的硬约束和未决事项。recent_summary 不超过 300 字。",
+                    "You compress writing-session state. Return one JSON object with decisions, constraints, entity_state, "
+                    "open_loops (string arrays), and recent_summary (string). Include only source-supported claims; do not "
+                    "turn assistant suggestions into user decisions. Preserve active constraints and unresolved work.",
+                )
+                user_content = f"{section_note}\n{chunk}" if section_note else chunk
+                messages = [{"role": "system", "content": system}, {"role": "user", "content": user_content}]
+                scope = current_turn_scope()
+                if scope is not None and scope.source_closure_required:
+                    scope.register_provider_payload(
+                        messages,
+                        source_prefix=f"orchestrator.compact_summary.chunk{index}",
+                        selection_reason="conversation_compact_assembly",
+                        artifact_ref="Orchestrator._summarize_conversation",
+                    )
+                resp = await self.gateway.chat(
+                    messages,
+                    provider=provider,
+                    temperature=0.3,
+                    response_format={"type": "json_object"},
+                )
+                out = str(resp.get("content") or "").strip()
+                if not out:
+                    continue
                 from app.utils.llm_output import parse_json_payload
 
                 parsed, error = parse_json_payload(out, expected_type=dict)
-                if parsed and not error:
-                    parsed["_provenance"] = {
+                if not parsed or error:
+                    continue
+                parsed.pop("_provenance", None)
+                if index == 0:
+                    merged = parsed
+                    merged["_provenance"] = {
                         "provider": str(resp.get("provider") or provider or ""),
                         "model": str(resp.get("model") or ""),
                         "prompt_fingerprint": str(resp.get("request_fingerprint") or ""),
+                        "chunked_input": len(chunks) > 1,
+                        "chunks_processed": 1,
                     }
-                    return parsed
+                else:
+                    for key in ("decisions", "constraints", "entity_state", "open_loops"):
+                        values = parsed.get(key)
+                        if isinstance(values, list) and values:
+                            merged.setdefault(key, [])
+                            merged[key] = list(merged[key]) + [v for v in values if v not in merged[key]]
+                    summary_part = str(parsed.get("recent_summary") or "").strip()
+                    if summary_part:
+                        merged["recent_summary"] = (
+                            str(merged.get("recent_summary") or "").strip() + f"\n（续）{summary_part}"
+                        ).strip()
+                    merged["_provenance"]["chunks_processed"] = index + 1
+            if merged:
+                return merged
         except Exception as exc:
             logger.warning("conversation summary via LLM failed; falling back to rule-based: %s", exc)
         try:
@@ -541,8 +588,16 @@ class Orchestrator(AnalysisMixin):
         except Exception:
             return {"recent_summary": text[:600]}
 
+    _COMPACT_VERIFY_CHUNK_CHARS = 60000
+    _COMPACT_VERIFY_MAX_CHUNKS = 8
+
     async def _verify_compact_artifact(self, artifact: Any, source_messages: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Use an independent reviewer profile to reject lossy or unsupported compact state."""
+        """Use an independent reviewer profile to reject lossy or unsupported compact state.
+
+        验证覆盖完整性（B3，F08）：超出单块上限的来源分块独立验证，全部块通过才算
+        通过——不再用 ``source[:60000]`` 让尾部内容逃过验证（artifact 的来源 hash
+        却覆盖完整 source）。
+        """
         from app.utils.llm_output import parse_json_payload
 
         provider = self.gateway.get_provider_for_agent(self.writer.get_agent_name())
@@ -551,57 +606,80 @@ class Orchestrator(AnalysisMixin):
             for item in source_messages
             if str(item.get("content") or "").strip()
         )
-        payload = {
-            "source_conversation": source[:60000],
-            "compact_artifact": artifact.to_dict(),
-            "criteria": {
-                "unsupported_claims": "artifact claims absent from source",
-                "severe_omissions": "missing active hard constraints, decisions, entity state, or open loops",
-                "contradictions": "artifact conflicts with source",
-            },
-        }
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "你是独立的会话压缩审计器。只输出 JSON：unsupported_claims、severe_omissions、"
-                    "contradictions（字符串数组）及 valid（布尔值）。只有三个数组均为空时 valid 才为 true。"
-                    "不要评价文风，不要补充来源中不存在的信息。"
-                ),
-            },
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-        ]
-        scope = current_turn_scope()
-        if scope is not None and scope.source_closure_required:
-            scope.register_provider_payload(
+        chunk_limit = self._COMPACT_VERIFY_CHUNK_CHARS
+        if len(source) <= chunk_limit:
+            chunks = [source]
+        else:
+            step = max(chunk_limit, -(-len(source) // self._COMPACT_VERIFY_MAX_CHUNKS))
+            chunks = [source[i : i + step] for i in range(0, len(source), step)]
+
+        all_unsupported: List[str] = []
+        all_omissions: List[str] = []
+        all_contradictions: List[str] = []
+        last_meta: Dict[str, Any] = {}
+        for index, chunk in enumerate(chunks):
+            payload = {
+                "source_chunk": f"{index + 1}/{len(chunks)}",
+                "source_conversation": chunk,
+                "compact_artifact": artifact.to_dict(),
+                "criteria": {
+                    "unsupported_claims": "artifact claims absent from source",
+                    "severe_omissions": "missing active hard constraints, decisions, entity state, or open loops",
+                    "contradictions": "artifact conflicts with source",
+                },
+            }
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是独立的会话压缩审计器。只输出 JSON：unsupported_claims、severe_omissions、"
+                        "contradictions（字符串数组）及 valid（布尔值）。只有三个数组均为空时 valid 才为 true。"
+                        "不要评价文风，不要补充来源中不存在的信息。"
+                    ),
+                },
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ]
+            scope = current_turn_scope()
+            if scope is not None and scope.source_closure_required:
+                scope.register_provider_payload(
+                    messages,
+                    source_prefix=f"orchestrator.compact_verify.chunk{index}",
+                    selection_reason="compact_verifier_assembly",
+                    artifact_ref="Orchestrator._verify_compact_artifact",
+                )
+            response = await self.gateway.chat(
                 messages,
-                source_prefix="orchestrator.compact_verify",
-                selection_reason="compact_verifier_assembly",
-                artifact_ref="Orchestrator._verify_compact_artifact",
+                provider=provider,
+                temperature=0.0,
+                max_tokens=800,
+                response_format={"type": "json_object"},
             )
-        response = await self.gateway.chat(
-            messages,
-            provider=provider,
-            temperature=0.0,
-            max_tokens=800,
-            response_format={"type": "json_object"},
-        )
-        parsed, error = parse_json_payload(str(response.get("content") or ""), expected_type=dict)
-        if error or not parsed:
-            return {"available": True, "valid": False, "reason": "invalid_verifier_response", "error": error}
-        unsupported = [str(item) for item in parsed.get("unsupported_claims") or [] if str(item).strip()]
-        omissions = [str(item) for item in parsed.get("severe_omissions") or [] if str(item).strip()]
-        contradictions = [str(item) for item in parsed.get("contradictions") or [] if str(item).strip()]
-        valid = not unsupported and not omissions and not contradictions and parsed.get("valid") is True
+            parsed, error = parse_json_payload(str(response.get("content") or ""), expected_type=dict)
+            if error or not parsed:
+                return {"available": True, "valid": False, "reason": "invalid_verifier_response", "error": error}
+            unsupported = [str(item) for item in parsed.get("unsupported_claims") or [] if str(item).strip()]
+            omissions = [str(item) for item in parsed.get("severe_omissions") or [] if str(item).strip()]
+            contradictions = [str(item) for item in parsed.get("contradictions") or [] if str(item).strip()]
+            all_unsupported.extend(unsupported)
+            all_omissions.extend(omissions)
+            all_contradictions.extend(contradictions)
+            last_meta = {
+                "provider": response.get("provider") or provider,
+                "model": response.get("model"),
+                "request_fingerprint": response.get("request_fingerprint"),
+            }
+            # 任一块出现严重遗漏/矛盾即提前失败——后续块无需再验。
+            if omissions or contradictions:
+                break
+        valid = not all_unsupported and not all_omissions and not all_contradictions
         return {
             "available": True,
             "valid": valid,
-            "unsupported_claims": unsupported,
-            "severe_omissions": omissions,
-            "contradictions": contradictions,
-            "provider": response.get("provider") or provider,
-            "model": response.get("model"),
-            "request_fingerprint": response.get("request_fingerprint"),
+            "unsupported_claims": all_unsupported,
+            "severe_omissions": all_omissions,
+            "contradictions": all_contradictions,
+            "chunks_verified": len(chunks),
+            **last_meta,
         }
 
     async def run_chat_turn(

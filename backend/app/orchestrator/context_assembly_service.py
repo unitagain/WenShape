@@ -401,30 +401,50 @@ class ContextAssemblyService:
         ):
             normalized.pop()
 
+        # 按完整 turn 选择（B3，F08）：user 消息与其后的 assistant 回复为一个不可分单元。
+        # 旧实现按单条消息逆序装填，较长的 user 消息可被跳过而其 assistant 回复与更旧
+        # 消息仍留下——产生「没有问题的孤立回答」并丢失该轮作者约束。
+        turns: List[List[Dict[str, str]]] = []
+        for item in normalized:
+            if item["role"] == "user":
+                turns.append([item])
+            elif turns:
+                turns[-1].append(item)
+            else:
+                # 历史以 assistant 开头（罕见）：归为独立单元，不与后续 user 混合。
+                turns.append([item])
+
         selected: List[Dict[str, str]] = []
         projected_count = 0
-        for item in reversed(normalized):
-            candidate = dict(item)
-            per_message_budget = max(256, min(3_000, budget_tokens))
-            projected_content, projected = cls._project_history_text(
-                candidate["content"],
-                budget_tokens=per_message_budget,
-            )
-            candidate["content"] = projected_content
-            projected_count += int(projected)
-            proposed = [candidate, *selected]
+        for turn in reversed(turns):
+            projected_turn: List[Dict[str, str]] = []
+            turn_projected = 0
+            for item in turn:
+                candidate = dict(item)
+                per_message_budget = max(256, min(3_000, budget_tokens))
+                projected_content, projected = cls._project_history_text(
+                    candidate["content"],
+                    budget_tokens=per_message_budget,
+                )
+                candidate["content"] = projected_content
+                turn_projected += int(projected)
+                projected_turn.append(candidate)
+            proposed = [*projected_turn, *selected]
             if count_provider_payload(proposed).upper_bound_tokens <= budget_tokens:
                 selected = proposed
-            elif not selected:
-                # Keep a compact tail even when serialization overhead consumes
-                # part of a very small caller-provided budget.
-                low, high = 1, max(1, len(candidate["content"]) // 2)
+                projected_count += turn_projected
+                continue
+            if not selected:
+                # 预算极小：保留最近一个 turn 的压缩尾部（不再整 turn 丢弃）。
+                # 该路径同样是一种投影（内容被进一步压缩），计入 projected_count。
+                low, high = 1, max(1, sum(len(i["content"]) for i in projected_turn) // 2)
                 best = ""
                 marker = "\n…（较早对话内容按 token 预算省略）…\n"
-                prefix = candidate["content"].split(marker, 1)[0]
+                joined = "\n".join(i["content"] for i in projected_turn)
+                prefix = joined.split(marker, 1)[0]
                 while low <= high:
                     half = (low + high) // 2
-                    trial = dict(candidate)
+                    trial = dict(projected_turn[0])
                     trial["content"] = prefix[:half] + marker
                     if count_provider_payload([trial]).upper_bound_tokens <= budget_tokens:
                         best = trial["content"]
@@ -432,13 +452,19 @@ class ContextAssemblyService:
                     else:
                         high = half - 1
                 if best:
+                    candidate = dict(projected_turn[0])
                     candidate["content"] = best
                     selected = [candidate]
+                    projected_count += max(turn_projected, 1)
                 else:
-                    marker_candidate = dict(candidate)
+                    marker_candidate = dict(projected_turn[0])
                     marker_candidate["content"] = marker
                     if count_provider_payload([marker_candidate]).upper_bound_tokens <= budget_tokens:
                         selected = [marker_candidate]
+                        projected_count += max(turn_projected, 1)
+            # 当前提下装不下的完整 turn：停止（不再尝试更旧 turn——
+            # 逆序装填已保证留下的是最近的）。
+            break
 
         return selected, {
             "selected_count": len(selected),

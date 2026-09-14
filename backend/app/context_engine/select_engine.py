@@ -456,16 +456,24 @@ class ContextSelectEngine:
 
         # Canon facts / 事实（已在上方预加载到 fact_list）
         if "fact" in item_types:
-            # 按 introduced_in 倒序排列，截断时保留最新事实而非最旧的
-            # Sort by introduced_in descending so truncation keeps newest facts.
-            sorted_facts = sorted(
-                fact_list,
-                key=lambda f: (
-                    ChapterIDValidator.calculate_weight(str(getattr(f, "introduced_in", "") or "")),
-                    str(getattr(f, "introduced_in", "") or ""),
-                ),
-                reverse=True,
-            )
+            # 截断前的排序：查询相关性优先、recency 次之（B4，F07）。
+            # 旧序先按 introduced_in 倒序再截断，唯一精确命中查询词的早期事实
+            # 会在进入相关性计算前就被 recency 截断丢弃——「先裁剪后排序」无从补救。
+            # 轻量词法分（overlap）只用于排序，不打分、不改变后续融合语义。
+            def _fact_truncation_key(f: Any) -> tuple:
+                statement = str(getattr(f, "statement", "") or "")
+                try:
+                    overlap = calculate_overlap_score(query, statement)
+                except Exception:
+                    overlap = 0.0
+                introduced = str(getattr(f, "introduced_in", "") or "")
+                return (
+                    -float(overlap),
+                    -ChapterIDValidator.calculate_weight(introduced),
+                    introduced,
+                )
+
+            sorted_facts = sorted(fact_list, key=_fact_truncation_key)
             eligible_facts = []
             for fact in sorted_facts:
                 introduced_in = str(getattr(fact, "introduced_in", "") or "").strip()
@@ -816,9 +824,10 @@ class ContextSelectEngine:
 
     def _semantic_rank_cutoff(self, sem_scores: List[float], candidates: List[ContextItem]) -> set:
         """
-        返回允许「仅凭语义」入选的候选下标集合（语义名次前 limit 个）。
+        返回允许「仅凭语义」入选的候选下标集合（词法零分候选中语义名次前 limit 个）。
 
-        Return indices allowed in on semantic evidence alone (top-limit by semantic rank).
+        Return indices allowed in on semantic evidence alone (top-limit by semantic
+        rank among zero-lexical candidates).
 
         ``limit = max(semantic_top_n, ceil(ratio × 候选数))``：floor 是绝对下限
         （小语料行为与 V1-3 完全一致），ratio 让窗口随候选池等比增长，纠正
@@ -826,6 +835,11 @@ class ContextSelectEngine:
         关闭纯语义召回（沿用既有语义，不因 ratio 而复活）。
         N 大于等于候选数时等价于不过滤。
         取名次而非分数的理由见 ``_fuse_and_rank`` 中的说明。
+
+        名次只在**词法零分**候选中计算（B4）：词法命中的候选本就无条件保留，
+        让它们参与语义名次会把名额浪费在不需要救济的候选上——候选顺序变化
+        （如截断排序调整）即可让并列语义分的词法命中者挤掉真正需要语义名额
+        的零词法候选。限定排序集合后行为与候选顺序无关。
         """
         floor = self._semantic_top_n
         if floor <= 0:
@@ -835,7 +849,14 @@ class ContextSelectEngine:
             limit = max(limit, math.ceil(self._semantic_top_n_ratio * len(sem_scores)))
         if limit >= len(sem_scores):
             return set(range(len(sem_scores)))
-        order = sorted(range(len(sem_scores)), key=lambda index: float(sem_scores[index] or 0.0), reverse=True)
+        zero_lexical = [
+            index
+            for index, item in enumerate(candidates)
+            if float((item.metadata or {}).get("_lex") or 0.0) <= 0.0
+        ]
+        if not zero_lexical:
+            return set()
+        order = sorted(zero_lexical, key=lambda index: float(sem_scores[index] or 0.0), reverse=True)
         return set(order[:limit])
 
     @staticmethod

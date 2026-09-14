@@ -55,8 +55,8 @@ def _toolset():
 
 
 def test_schemas_cover_expected_tools():
-    # 启用大纲时含 read_outline / edit_outline（共 8 个工具，含 P1 接入的 query_memory）；
-    # schemas 现为实例方法（受 outline_enabled 影响）。
+    # 启用大纲时含 read_outline / edit_outline（共 9 个工具，含 P1 接入的 query_memory
+    # 与 B2 接入的 read_tool_artifact）；schemas 现为实例方法（受 outline_enabled 影响）。
     enabled = {s["function"]["name"] for s in _toolset().schemas()}
     assert enabled == {
         "lookup_card",
@@ -64,6 +64,7 @@ def test_schemas_cover_expected_tools():
         "query_relations",
         "query_memory",
         "read_chapter",
+        "read_tool_artifact",
         "search_prose",
         "read_outline",
         "edit_outline",
@@ -76,7 +77,15 @@ def test_schemas_omit_read_outline_when_disabled():
     names = {s["function"]["name"] for s in ts.schemas()}
     assert "read_outline" not in names
     assert "edit_outline" not in names
-    assert names == {"lookup_card", "query_canon", "query_relations", "query_memory", "read_chapter", "search_prose"}
+    assert names == {
+        "lookup_card",
+        "query_canon",
+        "query_relations",
+        "query_memory",
+        "read_chapter",
+        "read_tool_artifact",
+        "search_prose",
+    }
 
 
 def test_lookup_card_character_dict_args():

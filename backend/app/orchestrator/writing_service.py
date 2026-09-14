@@ -152,6 +152,9 @@ class WritingService:
             self.storage_adapter,
             self.select_engine,
             current_chapter=chapter,
+            # B4（F07）：章节数接线——缺省 0 会让候选上限退回每类型 50，
+            # 长篇早期事实在进入相关性计算前就被 recency 截断丢弃。
+            total_chapters=len(existing_chapters),
             outline_enabled=bool(outline_settings.get("enabled", True)),
             defer_writes=True,
             memory_storage=self.memory_storage,

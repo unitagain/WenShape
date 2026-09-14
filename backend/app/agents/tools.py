@@ -17,6 +17,7 @@ License: PolyForm Noncommercial License 1.0.0
 import asyncio
 import hashlib
 import json
+from pathlib import Path
 from typing import Any, Dict, List
 
 from app.utils.chapter_id import ChapterIDValidator
@@ -32,7 +33,7 @@ def _truncate(text: str, limit: int = _MAX_TOOL_RESULT_CHARS) -> str:
     text = str(text or "")
     if len(text) <= limit:
         return text
-    return text[:limit].rstrip() + "\n…(已截断)"
+    return text[:limit].rstrip() + "\n…(已截断；如需中段/尾部内容，用 read_chapter 的分页参数 offset/length 或 read_tool_artifact 恢复)"
 
 
 def _format_card(card: Any) -> str:
@@ -115,10 +116,19 @@ def writer_tool_schemas() -> List[Dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "read_chapter",
-                "description": "读取某一章节的正文（默认返回开头与结尾片段）。用于衔接上一章结尾、回看伏笔的具体写法。",
+                "description": (
+                    "读取某一章节的正文（默认返回开头与结尾片段）。用于衔接上一章结尾、"
+                    "回看伏笔的具体写法。需要被省略的中段/指定位置内容时，用 offset/length "
+                    "做范围读取（offset 为字符起点，length 为读取长度；配合首次返回的"
+                    "总字符数可精确定位）。"
+                ),
                 "parameters": {
                     "type": "object",
-                    "properties": {"chapter_id": {"type": "string", "description": "章节 ID，如 V1C010"}},
+                    "properties": {
+                        "chapter_id": {"type": "string", "description": "章节 ID，如 V1C010"},
+                        "offset": {"type": "integer", "description": "范围读取起点（字符，0 起）；缺省=默认首尾片段"},
+                        "length": {"type": "integer", "description": "范围读取长度（字符）；offset 存在而 length 缺省=读到末尾"},
+                    },
                     "required": ["chapter_id"],
                 },
             },
@@ -169,6 +179,29 @@ def writer_tool_schemas() -> List[Dict[str, Any]]:
                     "动笔前查阅可确保本章符合整体规划、不偏离主线、按计划铺垫或回收伏笔。"
                 ),
                 "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_tool_artifact",
+                "description": (
+                    "按引用读取此前工具调用的完整输出（当工具结果被折叠/截断且提示"
+                    "『完整工具结果已保存』时使用）。引用形如 toolartifact:xxxx；"
+                    "支持 offset/length 范围读取长输出。引用过期或不存在会明确报错。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "artifact_ref": {
+                            "type": "string",
+                            "description": "工具结果里标注的完整输出引用，如 toolartifact:1a2b…",
+                        },
+                        "offset": {"type": "integer", "description": "范围读取起点（字符，0 起）"},
+                        "length": {"type": "integer", "description": "范围读取长度（字符）"},
+                    },
+                    "required": ["artifact_ref"],
+                },
             },
         },
         {
@@ -252,7 +285,16 @@ class WriterToolset:
 
     @staticmethod
     def is_result_recoverable(name: str) -> bool:
-        return name in {"lookup_card", "query_canon", "query_relations", "read_chapter", "search_prose", "read_outline", "query_memory"}
+        return name in {
+            "lookup_card",
+            "query_canon",
+            "query_relations",
+            "read_chapter",
+            "search_prose",
+            "read_outline",
+            "query_memory",
+            "read_tool_artifact",
+        }
 
     async def execute(self, name: str, arguments: Any) -> str:
         """根据工具名分发执行；任何异常都转为可读的工具结果文本，避免中断 agentic 循环。"""
@@ -262,26 +304,67 @@ class WriterToolset:
         try:
             if name == "lookup_card":
                 result = await self._lookup_card(str(args.get("name") or "").strip())
+                self._register_jit_source_file(
+                    self._card_file_paths(str(args.get("name") or "").strip()),
+                    source_id_prefix="tool.lookup_card",
+                    asset_type="cards",
+                )
             elif name == "query_canon":
                 result = await self._query_canon(
                     str(args.get("query") or "").strip(), self._as_int(args.get("top_k"), 8)
+                )
+                self._register_jit_source_file(
+                    self._canon_facts_path(),
+                    source_id_prefix="tool.query_canon",
+                    asset_type="canon",
                 )
             elif name == "query_relations":
                 result = await self._query_relations(
                     str(args.get("entity") or "").strip(), str(args.get("other") or "").strip()
                 )
+                self._register_jit_source_files(
+                    self._relations_paths(),
+                    source_id_prefix="tool.query_relations",
+                    asset_type="relations",
+                )
             elif name == "query_memory":
                 result = await self._query_memory(
                     str(args.get("query") or "").strip(), self._as_int(args.get("top_k"), 5)
                 )
+                self._register_jit_source_file(
+                    self._memory_index_path(),
+                    source_id_prefix="tool.query_memory",
+                    asset_type="memory",
+                )
             elif name == "read_chapter":
-                result = await self._read_chapter(str(args.get("chapter_id") or "").strip())
+                chapter_id = str(args.get("chapter_id") or "").strip()
+                result = await self._read_chapter(
+                    chapter_id,
+                    offset=self._as_int(args.get("offset"), 0),
+                    length=self._as_int(args.get("length"), 0),
+                )
+                self._register_jit_source_files(
+                    self._chapter_file_paths(chapter_id),
+                    source_id_prefix="tool.read_chapter",
+                    asset_type="prose",
+                )
             elif name == "search_prose":
                 result = await self._search_prose(
                     str(args.get("query") or "").strip(), self._as_int(args.get("top_k"), 5)
                 )
             elif name == "read_outline":
                 result = await self._read_outline()
+                self._register_jit_source_file(
+                    self._outline_paths(),
+                    source_id_prefix="tool.read_outline",
+                    asset_type="outline",
+                )
+            elif name == "read_tool_artifact":
+                result = await self._read_tool_artifact(
+                    str(args.get("artifact_ref") or "").strip(),
+                    offset=self._as_int(args.get("offset"), 0),
+                    length=self._as_int(args.get("length"), 0),
+                )
             elif name == "edit_outline":
                 result = await self._edit_outline(args)
         except Exception as exc:
@@ -331,6 +414,131 @@ class WriterToolset:
             selection_reason=f"jit_tool:{name}",
             artifact_ref=f"writer_tool:{name}",
         )
+
+    # ------------------------------------------------- JIT 文件级源登记（B1/F03）----
+
+    def _register_jit_source_file(self, path, *, source_id_prefix: str, asset_type: str) -> None:
+        """登记单个（或列表形式的）磁盘资产为 mutable source（读取后源变化可检出）。"""
+        if not path:
+            return
+        items = path if isinstance(path, (list, tuple)) else [path]
+        self._register_jit_source_files(items, source_id_prefix=source_id_prefix, asset_type=asset_type)
+
+    def _register_jit_source_files(self, paths, *, source_id_prefix: str, asset_type: str) -> None:
+        """把 JIT 读取触达的磁盘资产登记为带路径/版本的 mutable source（B1，F03）。
+
+        只在真实读取成功后调用（调用点在工具主体执行之后）；路径解析失败或文件
+        缺失时静默跳过——源登记是可观测性增强，不阻断工具结果交付。scope 的
+        project_root 由 ContextPlan 激活时设置，未激活（无计划/独立调用）时不登记。
+        """
+        from app.context_engine.turn_scope import current_turn_scope
+
+        scope = current_turn_scope()
+        if scope is None or not scope.source_closure_required or scope.source_registry is None:
+            return
+        if scope.source_registry.project_root is None:
+            return
+        for path in paths or []:
+            try:
+                resolved = Path(str(path))
+                if not resolved.is_file():
+                    continue
+                scope.register_source_file(
+                    resolved,
+                    source_id=f"{source_id_prefix}.{resolved.name}",
+                    asset_type=asset_type,
+                    selection_reason=source_id_prefix.replace("tool.", "jit_tool:"),
+                )
+            except (OSError, ValueError, RuntimeError) as exc:
+                logger.debug("JIT source registration skipped (%s): %s", source_id_prefix, safe_error_code(exc))
+
+    def _card_file_paths(self, name: str) -> List[Path]:
+        """lookup_card 触达的卡片文件（角色卡命中则不再有世界卡）。"""
+        if not name:
+            return []
+        card_storage = getattr(self.adapter, "card", None)
+        if card_storage is None:
+            return []
+        try:
+            base = card_storage.asset_path(self.project_id, "cards", "characters", f"{name}.yaml", field="card_name")
+        except (OSError, ValueError) as exc:
+            logger.debug("lookup_card source path unresolved: %s", safe_error_code(exc))
+            return []
+        return [base]
+
+    def _canon_facts_path(self) -> Path:
+        canon_storage = getattr(self.adapter, "canon", None)
+        if canon_storage is None:
+            return None
+        try:
+            return canon_storage.asset_path(self.project_id, "canon", "facts.jsonl", field="asset")
+        except (OSError, ValueError) as exc:
+            logger.debug("query_canon source path unresolved: %s", safe_error_code(exc))
+            return None
+
+    def _relations_paths(self) -> List[Path]:
+        paths = []
+        get_path = getattr(self.adapter, "get_relations_path", None)
+        if get_path is not None:
+            try:
+                paths.append(Path(str(get_path(self.project_id))))
+            except (OSError, ValueError) as exc:
+                logger.debug("query_relations canon path unresolved: %s", safe_error_code(exc))
+        relations_storage = getattr(self.adapter, "character_relations", None)
+        if relations_storage is not None:
+            resolve = getattr(relations_storage, "_relations_path", None)
+            if resolve is not None:
+                try:
+                    paths.append(Path(str(resolve(self.project_id))))
+                except (OSError, ValueError) as exc:
+                    logger.debug("query_relations card path unresolved: %s", safe_error_code(exc))
+        return [p for p in paths if p]
+
+    def _chapter_file_paths(self, chapter_id: str) -> List[Path]:
+        """read_chapter 触达的章节文件（final.md 与回退用的 draft_*.md）。"""
+        if not chapter_id:
+            return []
+        draft = getattr(self.adapter, "draft", None)
+        if draft is None:
+            return []
+        try:
+            chapter_dir = draft.get_chapter_draft_dir(self.project_id, chapter_id)
+        except (AttributeError, OSError, ValueError) as exc:
+            logger.debug("read_chapter source path unresolved: %s", safe_error_code(exc))
+            return []
+        paths = [chapter_dir / "final.md"]
+        try:
+            latest = draft.get_latest_draft_file(self.project_id, chapter_id)
+            if latest is not None and latest.name != "final.md":
+                paths.append(latest)
+        except (AttributeError, OSError, ValueError) as exc:
+            logger.debug("read_chapter latest draft lookup degraded: %s", safe_error_code(exc))
+        return paths
+
+    def _outline_paths(self) -> Path:
+        outline = getattr(self.adapter, "outline", None)
+        if outline is None:
+            return None
+        resolve = getattr(outline, "_outline_path", None)
+        if resolve is None:
+            return None
+        try:
+            return Path(str(resolve(self.project_id)))
+        except (OSError, ValueError) as exc:
+            logger.debug("read_outline source path unresolved: %s", safe_error_code(exc))
+            return None
+
+    def _memory_index_path(self) -> Path:
+        memory = self.memory_storage
+        if memory is None:
+            return None
+        # memory 目录整体是记忆真相源；以索引文件为锚点登记（记忆文件粒度的
+        # 变化检测由 MEMORY.md 索引重建覆盖，目录 hash 足以检出内容变化）。
+        try:
+            return memory.asset_path(self.project_id, "memory", "MEMORY.md", field="asset")
+        except (OSError, ValueError) as exc:
+            logger.debug("query_memory source path unresolved: %s", safe_error_code(exc))
+            return None
 
     @staticmethod
     def _parse_args(arguments: Any) -> Dict[str, Any]:
@@ -468,6 +676,39 @@ class WriterToolset:
             lines.append(line)
         return _truncate("\n".join(lines))
 
+    async def _read_tool_artifact(self, artifact_ref: str, offset: int = 0, length: int = 0) -> str:
+        """读取此前工具调用的完整输出（B2/F02 的折叠结果恢复入口）。
+
+        artifact 由 agentic loop 在工具执行后持久化（完整未截断版本）；本工具
+        是模型侧唯一读取入口。过期/缺失/哈希不符由 store 显式报错，不静默返回空。
+        """
+        if not artifact_ref:
+            return "[read_tool_artifact 需要 artifact_ref 参数]"
+        from app.context_engine.tool_artifact import ToolArtifactStore
+
+        store = ToolArtifactStore()
+        try:
+            payload = await asyncio.to_thread(store.read, artifact_ref)
+        except FileNotFoundError:
+            return f"[artifact_expired] 引用 {artifact_ref} 已过期或不存在，无法恢复。"
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            return f"[artifact_error code={safe_error_code(exc)}] 引用 {artifact_ref} 无法读取。"
+        output = str(payload.get("output") or "")
+        tool_name = str(payload.get("tool_name") or "")
+        offset = max(0, int(offset or 0))
+        length = max(0, int(length or 0))
+        total = len(output)
+        if offset or length:
+            start = min(offset, total)
+            end = min(start + length, total) if length else total
+            if start >= total:
+                return f"该工具输出共 {total} 字符，offset={offset} 超出范围。"
+            body = output[start:end]
+            header = f"【工具 {tool_name} 完整输出（第 {start}–{end} 字符，共 {total} 字符）】\n"
+            return header + body
+        header = f"【工具 {tool_name} 完整输出（共 {total} 字符）】\n"
+        return header + _truncate(output, 4800)
+
     async def _read_outline(self) -> str:
         if not self.outline_enabled:
             return "大纲功能当前已禁用。"
@@ -581,7 +822,13 @@ class WriterToolset:
             }
         ]
 
-    async def _read_chapter(self, chapter_id: str) -> str:
+    async def _read_chapter(self, chapter_id: str, offset: int = 0, length: int = 0) -> str:
+        """读取章节正文；支持范围读取（B2/F02 的章节中部恢复入口）。
+
+        默认行为与旧版一致：短章返回全文，长章返回首尾片段。
+        offset/length 显式指定时按范围读取（负 offset 从末尾倒数），
+        使被首尾截断省略的中段可通过再次调用恢复。
+        """
         if not chapter_id:
             return "[read_chapter 需要 chapter_id 参数]"
         if self.current_chapter and ChapterIDValidator.is_after(chapter_id, self.current_chapter):
@@ -602,10 +849,29 @@ class WriterToolset:
         if not content:
             return f"章节『{chapter_id}』暂无正文。"
         text = str(content)
+        offset = max(0, int(offset or 0))
+        length = max(0, int(length or 0))
+        if offset or length:
+            # 范围读取：负偏移语义在调用方转成正偏移；此处 clamp 到文本边界。
+            total = len(text)
+            start = min(offset, total)
+            end = min(start + length, total) if length else total
+            if start >= total:
+                return (
+                    f"章节『{chapter_id}』正文共 {total} 字符，offset={offset} 超出范围；"
+                    "请使用 0 ≤ offset < 总长度。"
+                )
+            body = text[start:end]
+            scope_note = f"（第 {start}–{end} 字符，共 {total} 字符）"
+            return f"【章节 {chapter_id} 正文范围{scope_note}】\n" + _truncate(body, 4800)
         if len(text) <= 3200:
             body = text
         else:
-            body = text[:1600].rstrip() + "\n…(中略)…\n" + text[-1600:].lstrip()
+            body = (
+                text[:1600].rstrip()
+                + f"\n…(中略 {len(text) - 3200} 字符；中段可用 offset/length 范围读取恢复，全文共 {len(text)} 字符)…\n"
+                + text[-1600:].lstrip()
+            )
         return f"【章节 {chapter_id} 正文（首尾片段）】\n" + body
 
     async def load_chapter_content(self, chapter_id: str) -> tuple[str, int]:
