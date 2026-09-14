@@ -228,6 +228,28 @@ class SessionHistoryStorage(BaseStorage):
                 )
         return item
 
+    async def append_once(
+        self, project_id: str, message: Dict[str, Any], *, conversation_id: str = ""
+    ) -> Optional[Dict[str, Any]]:
+        """幂等追加（C2，报告 §6.3）：event_id 已存在则跳过，返回 None。
+
+        后端权威事件使用稳定 event_id（如按 turn_id 派生）：直接 API 调用、
+        前端重试、重复请求不会产生重复行。event_id 缺失时退化为普通 append。
+        """
+        item = self._normalize(message)
+        event_id = str(item.get("event_id") or "")
+        if not event_id:
+            return await self.append(project_id, message, conversation_id=conversation_id)
+        cid = self._conversation_id(project_id, conversation_id)
+        async with self.content_transaction(project_id):
+            for path in (self._event_path(project_id, cid), self._path(project_id, cid)):
+                existing = await self.read_jsonl(path)
+                if any(str(row.get("event_id") or "") == event_id for row in existing):
+                    return None
+            await self.append_jsonl(self._event_path(project_id, cid), item)
+            await self.append_jsonl(self._path(project_id, cid), item)
+        return item
+
     async def load(self, project_id: str, *, limit: int = 0, conversation_id: str = "") -> List[Dict[str, Any]]:
         """读取对话历史；limit>0 时只返回最近 limit 条。"""
         path = self._path(project_id, conversation_id)

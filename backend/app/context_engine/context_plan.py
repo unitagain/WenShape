@@ -121,6 +121,30 @@ class ContextPlanV2:
         if hard_ceiling > 0 and point_estimate > hard_ceiling:
             raise ValueError(f"context_budget_exceeded:{point_estimate}>{hard_ceiling}")
 
+        # 总窗口合同（C4，报告 §6.1）：输入 + 请求输出不得超出 Provider 总窗口。
+        # 只在「精确 token 计数可用」时硬校验总量——点估计仍可能有误差，但远小于
+        # 悲观上界的 1.35x；估算路径（exact=False）保持显式软目标降级，不用悲观
+        # 上界制造普遍误拦（小窗口模型的假性失败，见上方说明）。
+        total_window = int(self.budget.get("total_window_tokens") or 0)
+        requested_output = int(max_tokens or 0)
+        exact = bool(accounting.get("exact"))
+        if total_window > 0 and requested_output > 0:
+            total = point_estimate + requested_output
+            if exact and total > total_window:
+                raise ValueError(
+                    f"context_total_window_exceeded:{point_estimate}+{requested_output}>{total_window}"
+                )
+            if not exact and total > total_window:
+                # 估算路径：不拦截，但必须显式记录降级（不用静默携带可能超窗的请求）。
+                degradation_entry = {
+                    "type": "total_window_soft_overflow",
+                    "input_tokens": point_estimate,
+                    "requested_output_tokens": requested_output,
+                    "total_window_tokens": total_window,
+                    "token_count_exact": False,
+                }
+                degradation = [*(degradation or []), degradation_entry]
+
         requested_tools = _tool_names(tools)
         disallowed = sorted(set(requested_tools) - self.allowed_tool_names)
         if disallowed:
@@ -249,6 +273,12 @@ def build_context_plan_v2(
         "snapshot": snapshot,
         "budget": {
             "context_limit_tokens": context_limit,
+            # 总窗口（C4，报告 §6.1）：输入 + 请求输出的硬边界。当前以上下文窗口
+            # 近似（多数 Provider 输入输出共享窗口）；provider 能力表区分输入/输出
+            # 窗口时优先取其总和。
+            "total_window_tokens": int(
+                profile.get("total_window") or (int(profile.get("input_window") or 0) + int(profile.get("output_window") or 0)) or context_limit
+            ),
             "input_tokens": max(1024, context_limit - output_reserve),
             "output_reserve_tokens": output_reserve,
             "tool_schema_tokens": sum(int(item.get("context_cost") or 0) for item in loadout),

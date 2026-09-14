@@ -20,8 +20,44 @@ RRF_K = 60
 # 整卡/整事实单向量会把超窗的尾部字段直接截断、不参与打分。超过该保守字符数的索引文本
 # 按行/句边界分块，候选语义分取各块与 query 的最大 cosine（max-over-chunks）。
 _CHUNK_CHAR_LIMIT = 600
+# 分块器版本（C1/F10）：分块策略变化时缓存键失效重建。
+_CHUNKING_VERSION = 2
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？；!?;])")
+
+
+def _embedding_space_fingerprint(embeddings: Any) -> str:
+    """向量空间指纹（C1/F10）：backend 提供时取模型指纹，否则退化为通用标识。
+
+    同文本在不同模型空间下的向量不可复用——缓存键必须绑定向量空间身份。
+    """
+    getter = getattr(embeddings, "space_fingerprint", None)
+    if callable(getter):
+        try:
+            return str(getter() or "")
+        except Exception:
+            return ""
+    return "nospace"
+
+
+def _chunk_char_limit(embeddings: Any) -> int:
+    """按 backend 能力确定分块字符上限（C1/F09）。
+
+    真实 tokenizer 不可用时无法按 token 切块——把保守字符上限降到 480
+    （bge-small-zh 512-token 窗口对中英混合文本的保守估计，评估实测
+    600 汉字 ≈ 602 token 已越窗），并保持显式降级语义（近似，不宣称不越窗）。
+    """
+    limit_getter = getattr(embeddings, "max_input_tokens", None)
+    if callable(limit_getter):
+        try:
+            window = int(limit_getter())
+        except Exception:
+            window = 0
+        if window > 0:
+            # 留出 tokenizer 不可达时的安全余量：窗口的 ~94%（含特殊 token 与
+            # 拼接换行的余量）。窗口 512 → 480 字符。
+            return max(64, int(window * 0.94))
+    return 480
 
 
 def _split_long_line(line: str, limit: int) -> List[str]:
@@ -153,18 +189,30 @@ class VectorIndexAdapter:
         self._stores: Dict[str, VectorStore] = {}
         self._paths: Dict[str, Any] = {}
 
+    def _cache_key(self, content_hash: str, space: str) -> str:
+        """内容 hash 绑定向量空间与分块版本（C1/F10）。
+
+        同文本在不同模型空间下的向量不可复用；换模型/分块策略时键变化即失效重建。
+        """
+        return f"{space}|v{_CHUNKING_VERSION}|{content_hash}"
+
     async def scores(
         self, query: str, candidates: List[ContextItem], *, project_id: str = "", storage: Any = None
     ) -> List[float]:
+        space = _embedding_space_fingerprint(self.embeddings)
+        char_limit = _chunk_char_limit(self.embeddings)
         segment_lists: List[List[str]] = []
         for item in candidates:
             text = str(item.metadata.get("_index_text") or item.content or "")
-            if 0 < len(text) <= _CHUNK_CHAR_LIMIT:
+            if 0 < len(text) <= char_limit:
                 segments = [text]
             else:
-                segments = _chunk_text(text)
+                segments = _chunk_text(text, limit=char_limit)
             segment_lists.append(segments)
         store = self._get_store(project_id, storage)
+        # 旧版本缓存键（无空间指纹前缀）：与旧键全量混存会让换模型后的缓存膨胀，
+        # 在首个新键出现时一并清除（旧键对应的向量空间不可信，C1/F10）。
+        legacy_rows = [key for key in store.ids() if "|" not in key]
         segment_hashes: List[List[str]] = [
             [hashlib.sha1(segment.encode("utf-8")).hexdigest() for segment in segments]
             for segments in segment_lists
@@ -172,22 +220,25 @@ class VectorIndexAdapter:
         misses: Dict[str, str] = {}
         for segments, hashes in zip(segment_lists, segment_hashes):
             for segment, content_hash in zip(segments, hashes):
-                if segment and not store.has(content_hash):
-                    misses.setdefault(content_hash, segment)
+                cache_key = self._cache_key(content_hash, space)
+                if segment and not store.has(cache_key):
+                    misses.setdefault(cache_key, segment)
         miss_items = list(misses.items())
         vectors = await self.embeddings.embed([query] + [text for _, text in miss_items])
         if not vectors or len(vectors) != len(miss_items) + 1:
             raise ValueError("embeddings backend returned mismatched vector count")
         query_vector = vectors[0]
-        for (content_hash, _), vector in zip(miss_items, vectors[1:]):
-            store.upsert(content_hash, vector, text="")
-        if miss_items:
+        for (cache_key, _), vector in zip(miss_items, vectors[1:]):
+            store.upsert(cache_key, vector, text="")
+        if legacy_rows:
+            store.prune_ids(legacy_rows)
+        if miss_items or legacy_rows:
             self._persist(project_id)
         scores: List[float] = []
         for segments, hashes in zip(segment_lists, segment_hashes):
             best = 0.0
             for content_hash in hashes:
-                cached = store.get(content_hash)
+                cached = store.get(self._cache_key(content_hash, space))
                 if cached:
                     best = max(best, cosine_similarity(query_vector, cached["vector"]))
             scores.append(best)

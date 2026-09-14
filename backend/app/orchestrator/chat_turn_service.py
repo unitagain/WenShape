@@ -41,6 +41,14 @@ class ChatTurnService:
             project_id, conversation_id=conversation_id
         )
         self.owner._active_turn_scopes[scope.turn_id] = scope
+        # 后端权威会话事件（C2，报告 §6.3）：turn 入口/终态由后端持久化，
+        # 稳定 event_id（按 turn_id 派生）幂等去重——断网、关页、前端 appendHistory
+        # 重试都不产生重复行或丢失记录。失败不阻断 turn 主链路（记录降级即可）。
+        await self._record_turn_event(
+            project_id,
+            conversation_id,
+            {"role": "user", "content": str(message or ""), "event_id": f"{scope.turn_id}.user"},
+        )
         try:
             with bind_turn_scope(scope):
                 scope.runtime.transition(TurnState.ROUTING)
@@ -90,6 +98,18 @@ class ChatTurnService:
                 else:
                     metric = "writer.turn.success"
                 runtime_metrics.increment(metric)
+                # 权威终态事件（C2）：真实答复与活动状态分开——只记答复摘要与终态，
+                # 不记工具过程（正文/prompt 不进历史，§4 隐私不变量）。
+                await self._record_turn_event(
+                    project_id,
+                    conversation_id,
+                    {
+                        "role": "assistant",
+                        "content": self._terminal_event_summary(result),
+                        "event_id": f"{scope.turn_id}.assistant",
+                        "terminal_state": terminal_state or ("cancelled" if result.get("cancelled") else "completed"),
+                    },
+                )
                 return result
         except asyncio.CancelledError:
             scope.runtime.cancel("task_cancelled")
@@ -106,6 +126,25 @@ class ChatTurnService:
             runtime_metrics.observe("writer.turn.latency_ms", (time.monotonic() - started_at) * 1000.0)
             self.owner._active_turn_scopes.pop(scope.turn_id, None)
 
+    async def _record_turn_event(self, project_id: str, conversation_id: str, message: Dict[str, Any]) -> None:
+        """持久化一条权威 turn 事件；失败降级记录、不阻断主链路（C2）。"""
+        try:
+            await self.owner.application.conversation.append_once(
+                project_id, message, conversation_id=conversation_id or ""
+            )
+        except Exception as exc:
+            record_degradation("chat_turn_authoritative_event", exc)
+
+    @staticmethod
+    def _terminal_event_summary(result: Any) -> str:
+        """终态事件的答复摘要：优先 Writer 消息，其次状态描述；正文全文不进历史。"""
+        message = str(result.get("message") or result.get("summary") or "").strip()
+        if message:
+            return message[:600]
+        action = str(result.get("action") or "")
+        state = str(result.get("terminal_state") or "completed")
+        return f"（本轮{action or '写作'}已完成，终态：{state}）"
+
     async def _run_scoped(
         self,
         project_id: str,
@@ -121,9 +160,9 @@ class ChatTurnService:
         reasoning_level: str,
         selection_text: str = "",
     ) -> ChatTurnResult:
-        # Kept in the API for compatibility; storage and the Writer tool loop
-        # are authoritative.
-        del has_draft, selection_text
+        # has_draft 仅为兼容保留（后端存储为准）；selection_text 自 C3 起贯穿到
+        # Writer 的 user 消息（受预算管理的选区块），不再丢弃。
+        del has_draft
         try:
             self.owner.select_engine.reset_ranking_trace()
         except Exception as exc:
@@ -214,12 +253,25 @@ class ChatTurnService:
             "thinking": thinking,
             "target_word_count": target_word_count,
         }
+        if str(selection_text or "").strip():
+            # 选区合同（C3，报告 §6.2）：选区原文进入 Writer user 消息。
+            writer_options["selection_text"] = selection_text
         if decision.get("scale"):
             writer_options["writing_scale"] = decision["scale"]
         conversation_history = await self.owner.session_history.load(
             project_id,
             conversation_id=conversation_id,
         )
+        # C2 权威事件可能已把本轮 user 消息写入历史（turn 入口持久化）；
+        # Writer 的 user prompt 自带本轮指令，历史注入须剔除本轮消息避免重复。
+        scope = current_turn_scope()
+        current_turn_prefix = f"{scope.turn_id}." if scope is not None else ""
+        if current_turn_prefix:
+            conversation_history = [
+                item
+                for item in conversation_history
+                if not str(item.get("event_id") or "").startswith(current_turn_prefix)
+            ]
         # Preserve compatibility with lightweight WriterService test doubles and
         # custom integrations when there is no persisted history to inject.
         if conversation_history:

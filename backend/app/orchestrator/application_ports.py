@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Dict, List
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from app.error_contract import record_degradation
 
@@ -40,6 +40,15 @@ class ConversationPort:
 
     async def append(self, project_id: str, message: Dict[str, Any], *, conversation_id: str = "") -> Dict[str, Any]:
         return await self.session_history.append(project_id, message, conversation_id=conversation_id)
+
+    async def append_once(
+        self, project_id: str, message: Dict[str, Any], *, conversation_id: str = ""
+    ) -> Optional[Dict[str, Any]]:
+        """幂等追加（C2）：稳定 event_id 去重，重复调用不产生重复行。"""
+        append_once = getattr(self.session_history, "append_once", None)
+        if append_once is None:
+            return await self.session_history.append(project_id, message, conversation_id=conversation_id)
+        return await append_once(project_id, message, conversation_id=conversation_id)
 
     async def load(self, project_id: str, *, limit: int = 0) -> List[Dict[str, Any]]:
         return await self.session_history.load(project_id, limit=limit)

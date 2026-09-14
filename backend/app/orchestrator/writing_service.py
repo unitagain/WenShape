@@ -119,6 +119,7 @@ class WritingService:
         target_word_count: int = 3000,
         conversation_history: Optional[List[Dict[str, Any]]] = None,
         writing_scale: Optional[str] = None,
+        selection_text: str = "",
     ) -> WritingResult:
         current_text, current_path = await self._load_working_text(project_id, chapter)
         try:
@@ -188,6 +189,7 @@ class WritingService:
             outline_enabled=bool(outline_settings.get("enabled", True)),
             clarification_policy=clarification_policy,
             conversation_history=conversation_history,
+            selection_text=str(selection_text or ""),
         )
         if scope is not None and scope.source_closure_required and current_text and current_path is not None:
             try:

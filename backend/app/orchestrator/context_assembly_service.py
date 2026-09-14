@@ -84,6 +84,7 @@ class ContextAssemblyService:
         outline_enabled: bool = True,
         clarification_policy: str = "",
         conversation_history: Optional[List[Dict[str, Any]]] = None,
+        selection_text: str = "",
     ) -> WriterRequest:
         system = self.build_writer_system(
             has_draft=bool(str(current_text or "").strip()),
@@ -146,6 +147,7 @@ class ContextAssemblyService:
             target_word_count=target_word_count,
             draft_budget_tokens=draft_budget,
             existing_chapters=existing_chapters,
+            selection_text=selection_text,
         )
         requested_max = max(4096, int(target_word_count * 2.0))
         if context_plan is not None:
@@ -643,6 +645,7 @@ class ContextAssemblyService:
         target_word_count: int,
         draft_budget_tokens: int,
         existing_chapters: Optional[List[str]] = None,
+        selection_text: str = "",
     ) -> tuple[str, Dict[str, Any]]:
         parts = [f"当前章节 ID：{chapter or '未选择'}"]
         chapters = [str(item) for item in (existing_chapters or []) if str(item).strip()]
@@ -660,8 +663,21 @@ class ContextAssemblyService:
                 parts.append("【上下文完整性】当前正文因预算仅展示首尾；任何续写/修改前必须调用 read_chapter 获取真实最新正文，禁止依据省略段落臆写或覆盖旧内容。")
         else:
             parts.append("【当前正文】（空）")
-        if has_selection:
-            parts.append("（用户在编辑器中有选中片段，优先聚焦该处修改。）")
+        # 选区合同（C3，报告 §6.2）：选区原文进入受预算管理的 user 消息——
+        # 只有 has_selection 布尔值无法唯一定位用户要改的文本范围。
+        selection = str(selection_text or "").strip()
+        if selection:
+            # 选区摘要走固定子预算（draft 预算的一半上限），超长投影为提示。
+            selection_budget = max(256, int(draft_budget_tokens) // 2)
+            projected_selection, selection_projected = ContextAssemblyService.project_draft_to_tokens(
+                selection,
+                budget_tokens=selection_budget,
+            )
+            parts.append(f"【编辑器选区（用户当前选中的原文，修改须落在此范围）】\n{projected_selection}")
+            if selection_projected:
+                parts.append("（选区过长已按预算截断；完整原文以编辑器为准，修改前可用 read_chapter 范围读取核对。）")
+        elif has_selection:
+            parts.append("（用户在编辑器中有选中片段但未提供选区文本；请先用 read_chapter 核对当前正文，不要臆改。）")
         parts.append(f"\n用户指令：{str(message or '').strip()}")
         if not chapter:
             parts.append(

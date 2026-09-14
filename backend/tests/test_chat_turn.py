@@ -584,11 +584,23 @@ def test_chat_turn_passes_only_writing_service_contract_arguments(tmp_path):
     async def fake_decide(*_args, **_kwargs):
         return {"action": "continue"}
 
-    async def exact_service(pid, chapter, message, *, has_selection=False, thinking=False, target_word_count=3000):
+    async def exact_service(
+        pid,
+        chapter,
+        message,
+        *,
+        has_selection=False,
+        thinking=False,
+        target_word_count=3000,
+        conversation_history=None,
+        selection_text="",
+    ):
         assert (pid, chapter, message) == ("p", "V1C001", "continue")
         assert has_selection is False
         assert thinking is False
         assert target_word_count == 180
+        # C3：无选区时不注入 selection_text。
+        assert selection_text == ""
         return {"success": True, "action": "agentic_write"}
 
     orch.decide_writing_action = fake_decide

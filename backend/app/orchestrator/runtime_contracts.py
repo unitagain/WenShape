@@ -164,10 +164,23 @@ class AnalysisPort(Protocol):
     ) -> Dict[str, Any]: ...
 
 
+class ConversationPort(Protocol):
+    """Turn-path conversation persistence seam（C2 权威事件）。"""
+
+    async def append_once(
+        self,
+        project_id: str,
+        message: Dict[str, Any],
+        *,
+        conversation_id: str = "",
+    ) -> Optional[Dict[str, Any]]: ...
+
+
 class ApplicationPort(Protocol):
     plans: PlansPort
     commands: CommandsPort
     analysis: AnalysisPort
+    conversation: ConversationPort
 
 
 class WritingServicePort(Protocol):

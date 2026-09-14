@@ -58,10 +58,14 @@ class OnnxEmbedder(EmbeddingsBackend):
     模型由 build_release/sidecar 随附（离线），或首次联网下载到 cache_dir（见 Phase 4c）。
     """
 
+    # bge-small-zh-v1.5 的输入窗口（含特殊 token）；tokenizer 不可用时用于保守估算。
+    DEFAULT_MAX_TOKENS = 512
+
     def __init__(self, model_name: str = "BAAI/bge-small-zh-v1.5", cache_dir: Optional[str] = None):
         self.model_name = model_name
         self.cache_dir = cache_dir
         self._model = None
+        self._tokenizer = None
         self._unavailable = False  # 一次性短路：缺库/缺模型后不再反复尝试加载（避免每次检索都触发 ImportError）
 
     def _ensure(self):
@@ -76,6 +80,56 @@ class OnnxEmbedder(EmbeddingsBackend):
                 self._unavailable = True  # 标记不可用 → 后续直接短路，select_engine 降级为词法
                 raise
         return self._model
+
+    def _ensure_tokenizer(self):
+        """尽力获取 tokenizer（C1/F09）；不可用时返回 None（调用方保守估算）。"""
+        if self._unavailable:
+            return None
+        if self._tokenizer is None:
+            try:
+                model = self._ensure()
+                # fastembed TextEmbedding 暴露 tokenize（不同版本为方法或属性）。
+                tokenize = getattr(model, "tokenize", None)
+                if callable(tokenize):
+                    self._tokenizer = tokenize
+                elif tokenize is not None:
+                    self._tokenizer = tokenize
+            except Exception:
+                self._tokenizer = None
+        return self._tokenizer
+
+    def count_tokens(self, text: str) -> Optional[int]:
+        """用真实 tokenizer 计数（含特殊 token 占位近似）；不可用返回 None。
+
+        近似规则：tokenizer 产出 input_ids 列表时取长度并加 2（[CLS]/[SEP]）。
+        """
+        tokenize = self._ensure_tokenizer()
+        if tokenize is None:
+            return None
+        try:
+            result = tokenize([str(text or "")])
+            ids = result[0] if isinstance(result, list) and result else None
+            if hasattr(ids, "input_ids"):
+                return int(len(ids.input_ids))
+            if ids is not None and hasattr(ids, "__len__"):
+                return int(len(ids)) + 2
+        except Exception:
+            return None
+        return None
+
+    def max_input_tokens(self) -> int:
+        """模型输入窗口（token，含特殊 token）；未知时返回保守默认。"""
+        return self.DEFAULT_MAX_TOKENS
+
+    def space_fingerprint(self) -> str:
+        """向量空间指纹（C1/F10）：同文本在不同模型/空间下不可复用缓存向量。
+
+        只含模型身份与窗口：同模型重复加载指纹不变（缓存仍命中）；换模型即变。
+        """
+        digest_source = f"{self.model_name}|window={self.max_input_tokens()}"
+        import hashlib
+
+        return hashlib.sha1(digest_source.encode("utf-8")).hexdigest()[:12]
 
     async def embed(self, texts: List[str]) -> List[List[float]]:
         if not texts:

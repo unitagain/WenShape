@@ -42,6 +42,15 @@ class VectorStore:
     def ids(self) -> List[str]:
         return list(self._items.keys())
 
+    def prune_ids(self, item_ids: List[str]) -> int:
+        """删除一组条目；返回实际删除数（C1：旧空间指纹缓存清理）。"""
+        removed = 0
+        for item_id in item_ids:
+            if str(item_id) in self._items:
+                self._items.pop(str(item_id), None)
+                removed += 1
+        return removed
+
     def get(self, item_id: str) -> Optional[Dict]:
         return self._items.get(str(item_id))
 
