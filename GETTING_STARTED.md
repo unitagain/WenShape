@@ -7,8 +7,8 @@
 
 ## 0. 你需要准备什么（最低要求）
 
-- **Python 3.10+**
-- **Node.js 18+**
+- **Python 3.10–3.12**（推荐独立 Python 3.12 环境）
+- **Node.js 22 LTS**（至少 22.12，涵盖前端测试依赖）
 - 推荐：使用终端运行命令（Windows PowerShell / macOS Terminal / Linux Bash）
 
 ---

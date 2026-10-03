@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import time
 from typing import Any, Dict
 
@@ -33,22 +35,37 @@ class ChatTurnService:
         thinking: bool = False,
         reasoning_level: str = "off",
         selection_text: str = "",
+        request_id: str = "",
+        selection: Dict[str, Any] | None = None,
     ) -> ChatTurnResult:
         started_at = time.monotonic()
-        scope = new_turn_scope(project_id=project_id, chapter_id=chapter)
+        conversation_id = conversation_id or self.owner.session_history.active_conversation_id(project_id)
+        turn_id = hashlib.sha256(f"{project_id}/{conversation_id}/{request_id}".encode()).hexdigest() if request_id else None
+        scope = new_turn_scope(project_id=project_id, chapter_id=chapter, turn_id=turn_id)
         # 会话身份入口解析一次：epoch 取请求指定会话（缺省 active），此后不读动态 active（A2）。
         scope.context_epoch = await self.owner.session_history.current_context_epoch(
             project_id, conversation_id=conversation_id
         )
-        self.owner._active_turn_scopes[scope.turn_id] = scope
         # 后端权威会话事件（C2，报告 §6.3）：turn 入口/终态由后端持久化，
         # 稳定 event_id（按 turn_id 派生）幂等去重——断网、关页、前端 appendHistory
-        # 重试都不产生重复行或丢失记录。失败不阻断 turn 主链路（记录降级即可）。
-        await self._record_turn_event(
+        # 重试不重复落盘；入口持久化失败时不开始 Writer，终态保存失败显式报告。
+        recorded = await self._record_turn_event(
             project_id,
             conversation_id,
-            {"role": "user", "content": str(message or ""), "event_id": f"{scope.turn_id}.user"},
+            {
+                "role": "user", "content": str(message or ""), "event_id": f"{scope.turn_id}.user",
+                "request_fingerprint": hashlib.sha256(json.dumps(
+                    [chapter, message, selection_text, selection, has_selection, target_word_count, auto_execute_plan, thinking, reasoning_level],
+                    ensure_ascii=False,
+                ).encode()).hexdigest(),
+            },
         )
+        if recorded is not True:
+            return {
+                "success": False, "terminal_state": "incomplete",
+                "reason": "turn_already_recorded" if recorded is False else "history_unavailable",
+            }
+        self.owner._active_turn_scopes[scope.turn_id] = scope
         try:
             with bind_turn_scope(scope):
                 scope.runtime.transition(TurnState.ROUTING)
@@ -72,9 +89,10 @@ class ChatTurnService:
                     thinking=thinking,
                     reasoning_level=reasoning_level,
                     selection_text=selection_text,
+                    selection=selection,
                 )
                 terminal_state = str(result.get("terminal_state") or "")
-                if result.get("cancelled") or scope.cancelled:
+                if terminal_state == "cancelled" or result.get("cancelled") or scope.cancelled:
                     scope.runtime.cancel()
                 elif terminal_state in {"requires_input", "incomplete"} or result.get(
                     "incomplete"
@@ -85,6 +103,8 @@ class ChatTurnService:
                 else:
                     scope.runtime.complete()
                 result["runtime"] = scope.runtime.to_dict()
+                terminal_state = terminal_state if terminal_state == "requires_input" else scope.runtime.state.value
+                result["terminal_state"] = terminal_state
                 from app.observability.runtime_metrics import runtime_metrics
 
                 if terminal_state == "cancelled" or result.get("cancelled") or scope.cancelled:
@@ -98,27 +118,36 @@ class ChatTurnService:
                 else:
                     metric = "writer.turn.success"
                 runtime_metrics.increment(metric)
-                # 权威终态事件（C2）：真实答复与活动状态分开——只记答复摘要与终态，
-                # 不记工具过程（正文/prompt 不进历史，§4 隐私不变量）。
-                await self._record_turn_event(
+                # 权威终态事件（C2）：保存完整答复或独立活动终态，不混入工具过程。
+                saved = await self._record_turn_event(
                     project_id,
                     conversation_id,
                     {
                         "role": "assistant",
                         "content": self._terminal_event_summary(result),
                         "event_id": f"{scope.turn_id}.assistant",
-                        "terminal_state": terminal_state or ("cancelled" if result.get("cancelled") else "completed"),
+                        "terminal_state": terminal_state,
+                        "type": "activity" if not (result.get("message") or result.get("summary")) else "message",
                     },
                 )
+                result["history_persisted"] = saved is not None
                 return result
         except asyncio.CancelledError:
             scope.runtime.cancel("task_cancelled")
+            await self._record_turn_event(project_id, conversation_id, {
+                "role": "assistant", "content": "本轮已取消。", "type": "activity",
+                "event_id": f"{scope.turn_id}.assistant", "terminal_state": "cancelled",
+            })
             raise
         except Exception as exc:
             scope.runtime.fail(exc)
             from app.observability.runtime_metrics import runtime_metrics
 
             runtime_metrics.increment("writer.turn.failure")
+            await self._record_turn_event(project_id, conversation_id, {
+                "role": "assistant", "content": "本轮执行失败。", "type": "activity",
+                "event_id": f"{scope.turn_id}.assistant", "terminal_state": "failed",
+            })
             raise
         finally:
             from app.observability.runtime_metrics import runtime_metrics
@@ -126,24 +155,26 @@ class ChatTurnService:
             runtime_metrics.observe("writer.turn.latency_ms", (time.monotonic() - started_at) * 1000.0)
             self.owner._active_turn_scopes.pop(scope.turn_id, None)
 
-    async def _record_turn_event(self, project_id: str, conversation_id: str, message: Dict[str, Any]) -> None:
-        """持久化一条权威 turn 事件；失败降级记录、不阻断主链路（C2）。"""
+    async def _record_turn_event(self, project_id: str, conversation_id: str, message: Dict[str, Any]) -> bool | None:
+        """持久化权威事件；区分新记录、重复和失败，由入口/终态分别处理。"""
         try:
-            await self.owner.application.conversation.append_once(
+            item = await self.owner.application.conversation.append_once(
                 project_id, message, conversation_id=conversation_id or ""
             )
+            return item is not None
         except Exception as exc:
             record_degradation("chat_turn_authoritative_event", exc)
+            return None
 
     @staticmethod
     def _terminal_event_summary(result: Any) -> str:
         """终态事件的答复摘要：优先 Writer 消息，其次状态描述；正文全文不进历史。"""
         message = str(result.get("message") or result.get("summary") or "").strip()
         if message:
-            return message[:600]
+            return message
         action = str(result.get("action") or "")
         state = str(result.get("terminal_state") or "completed")
-        return f"（本轮{action or '写作'}已完成，终态：{state}）"
+        return f"（本轮{action or '写作'}终态：{state}）"
 
     async def _run_scoped(
         self,
@@ -159,6 +190,7 @@ class ChatTurnService:
         thinking: bool,
         reasoning_level: str,
         selection_text: str = "",
+        selection: Dict[str, Any] | None = None,
     ) -> ChatTurnResult:
         # has_draft 仅为兼容保留（后端存储为准）；selection_text 自 C3 起贯穿到
         # Writer 的 user 消息（受预算管理的选区块），不再丢弃。
@@ -169,9 +201,23 @@ class ChatTurnService:
             record_degradation("chat_turn_ranking_trace_reset", exc)
         backend_has_draft = False
         current_text = ""
+        selection_path = None
         if chapter:
             current_text, working_path = await self.owner.draft_storage.get_working_text(project_id, chapter)
             backend_has_draft = working_path is not None and bool(current_text.strip())
+        if selection is not None:
+            start, end = int(selection.get("start", -1)), int(selection.get("end", -1))
+            source_hash = hashlib.sha256(current_text.encode("utf-8")).hexdigest()
+            if (
+                not chapter or selection.get("chapter") != chapter
+                or selection.get("source_sha256") != source_hash
+                or not (0 <= start < end <= len(current_text))
+                or current_text[start:end] != selection_text
+            ):
+                return {"success": False, "terminal_state": "failed", "reason": "selection_source_conflict"}
+            selection_path = working_path
+            has_selection = True
+            selection_text = f"章节 {chapter}，字符范围 [{start}, {end})，源 SHA-256 {source_hash}\n{selection_text}"
         decision = await self.owner.decide_writing_action(
             project_id,
             chapter,
@@ -201,6 +247,11 @@ class ChatTurnService:
                 result: Dict[str, Any] = {"success": True, "status": "plan_ready", "plan": plan}
                 if auto_execute_plan:
                     result["execution"] = await self.owner.application.plans.execute_plan(project_id, plan["id"])
+                    execution = result["execution"]
+                    result["success"] = bool(execution.get("success"))
+                    result["terminal_state"] = str((execution.get("plan") or {}).get("status") or "incomplete")
+                    if result["terminal_state"] in {"done", "completed"}:
+                        result["terminal_state"] = "completed"
                 return await self.owner.context_planning_service.attach_chat_context_plan(
                     {
                         **result,
@@ -247,6 +298,13 @@ class ChatTurnService:
                 target_word_count=target_word_count,
             )
             scope.runtime.transition(TurnState.WRITER_RUNNING)
+            if selection_path is not None:
+                scope.register_source_file(
+                    selection_path, source_id=f"selection:{chapter}", asset_type="chapter",
+                    selection_reason="editor_selection", required=True,
+                )
+                if selection_path.read_text(encoding="utf-8") != current_text:
+                    return {"success": False, "terminal_state": "failed", "reason": "selection_source_conflict"}
 
         writer_options: Dict[str, Any] = {
             "has_selection": has_selection,
@@ -272,6 +330,7 @@ class ChatTurnService:
                 for item in conversation_history
                 if not str(item.get("event_id") or "").startswith(current_turn_prefix)
             ]
+        conversation_history = [item for item in conversation_history if item.get("type") != "activity"]
         # Preserve compatibility with lightweight WriterService test doubles and
         # custom integrations when there is no persisted history to inject.
         if conversation_history:

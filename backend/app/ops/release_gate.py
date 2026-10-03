@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
@@ -41,7 +42,7 @@ class ReleaseGate:
             ("diff_check", ["git", "diff", "--check"], self.repo_root),
             (
                 "fault_injection",
-                ["python", "-m", "pytest", "tests/test_p14_production.py"],
+                [sys.executable, "-m", "pytest", "tests/test_p14_production.py"],
                 self.backend,
             ),
         ]

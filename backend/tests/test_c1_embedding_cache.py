@@ -164,3 +164,57 @@ class TestChunkWindow:
         # 同模型重复实例指纹稳定（缓存仍命中）；换模型即变。
         assert OnnxEmbedder(model_name="BAAI/bge-small-zh-v1.5").space_fingerprint() == fp1
         assert OnnxEmbedder(model_name="BAAI/bge-large-zh-v1.5").space_fingerprint() != fp1
+
+
+async def test_real_token_counts_drive_candidate_chunks():
+    class TokenBackend(_ModelBackend):
+        def count_tokens(self, text):
+            return len(text.encode("utf-8")) + 2
+
+        def max_input_tokens(self):
+            return 64
+
+        async def embed(self, texts):
+            assert all(self.count_tokens(text) <= 64 for text in texts)
+            self.segments = texts[1:]
+            return [[1.0, 0.0] for _ in texts]
+
+    backend = TokenBackend("unicode-tokens", None)
+    source = "中英 mixed 😀" * 80
+    await VectorIndexAdapter(backend).scores("查询", [_item(source)])
+    assert "".join(backend.segments) != ""  # cache 会合并相同块，至少应完整切分再编码。
+    from app.context_engine.retrieval_pipeline import _windowed_chunks
+    assert "".join(_windowed_chunks(source, backend)) == source
+
+
+async def test_onnx_counter_uses_untruncated_tokenizer_and_weights_identity(tmp_path):
+    from types import SimpleNamespace
+    from tokenizers import Tokenizer, models, pre_tokenizers, processors
+    from app.context_engine.embeddings import OnnxEmbedder
+
+    tokenizer = Tokenizer(models.WordLevel({"[UNK]": 0, "x": 1, "[CLS]": 2, "[SEP]": 3}, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+    tokenizer.post_processor = processors.TemplateProcessing(
+        single="[CLS] $A [SEP]", special_tokens=[("[CLS]", 2), ("[SEP]", 3)]
+    )
+    tokenizer.enable_truncation(max_length=8)
+    weights = tmp_path / "model.onnx"
+    weights.write_bytes(b"model revision one")
+
+    def embedder():
+        result = OnnxEmbedder()
+        result._model = SimpleNamespace(model=SimpleNamespace(tokenizer=tokenizer, _model_dir=tmp_path), embedding_size=2)
+        return result
+
+    first = embedder()
+    await first.prepare()
+    assert first.count_tokens("x " * 20) == 22
+    assert first.max_input_tokens() == 8
+    assert len(tokenizer.encode("x " * 20).ids) == 8  # 不修改推理 tokenizer。
+    second = embedder()
+    await second.prepare()
+    assert first.space_fingerprint() == second.space_fingerprint()
+    weights.write_bytes(b"model revision two")
+    third = embedder()
+    await third.prepare()
+    assert first.space_fingerprint() != third.space_fingerprint()

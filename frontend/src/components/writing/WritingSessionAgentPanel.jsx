@@ -92,9 +92,7 @@ export default function WritingSessionAgentPanel({ vm }) {
         onAttachSelection={() => {
           if (!selectionInfo?.text?.trim()) return;
           setAttachedSelection({
-            start: selectionInfo.start,
-            end: selectionInfo.end,
-            text: selectionInfo.text,
+            ...selectionInfo,
           });
           setEditScope('selection');
         }}

@@ -25,7 +25,8 @@ def test_ci_matrix_and_release_gate_share_engineering_checks():
     assert "workflow_dispatch:" in workflow
     assert 'python-version: ["3.10", "3.11", "3.12"]' in workflow
     assert "backend-windows-critical" in workflow
-    assert "frontend:" not in workflow
+    assert "frontend:" in workflow
+    assert "npm run check" in workflow
     assert "python scripts/engineering_gate.py" in workflow
     assert 'filterwarnings = [' in pytest_config
     assert '"error"' in pytest_config

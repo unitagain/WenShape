@@ -58,10 +58,12 @@ export function useWritingSessionRealtime({
 }) {
   useEffect(() => {
     if (!projectId) return;
+    let disposed = false;
 
     const wsController = createWebSocket(
       projectId,
       (data) => {
+        if (disposed || (data?.project_id && String(data.project_id) !== String(projectId))) return;
         const wsChapterKey = data?.chapter ? String(data.chapter) : noChapterKey;
         if (data.type === 'start_ack') {
           appendProgressEvent({ stage: 'session_start', message: t('writingSession.sessionStarted') }, wsChapterKey);
@@ -326,6 +328,7 @@ export function useWritingSessionRealtime({
       },
       {
         onStatus: (status) => {
+          if (disposed) return;
           // 仅内部记录连接状态，不再向对话栏推送「重连中/已恢复」提示（WS 自动重连，提示无实际意义）。
           wsStatusRef.current = status;
         },
@@ -339,6 +342,7 @@ export function useWritingSessionRealtime({
     const traceWs = new WebSocket(`${wsProtocol}://${wsHost}/ws/trace`);
 
     traceWs.onmessage = (event) => {
+      if (disposed) return;
       let data;
       try {
         data = JSON.parse(event.data);
@@ -370,6 +374,7 @@ export function useWritingSessionRealtime({
     traceWsRef.current = traceWs;
 
     return () => {
+      disposed = true;
       if (wsController) wsController.close();
       if (traceWs) traceWs.close();
       wsRef.current = null;

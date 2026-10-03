@@ -316,6 +316,9 @@ class _CountingEmbedder:
     def __init__(self):
         self.batches = []
 
+    def space_fingerprint(self):
+        return "counting-fear-v1-dim3"
+
     @staticmethod
     def _vec(text):
         t = str(text)

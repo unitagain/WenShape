@@ -194,6 +194,12 @@ export const sessionAPI = {
   ): Promise<AxiosResponse> => llmApi.post(`${API_BASE}/projects/${projectId}/session/apply-turn-effect`, data),
   applyChangeSet: (projectId: string, data: { changes: Record<string, unknown>[]; language?: string }): Promise<AxiosResponse> =>
     llmApi.post(`${API_BASE}/projects/${projectId}/session/apply-change-set`, data),
+  pendingChangeSets: (projectId: string): Promise<AxiosResponse> =>
+    api.get(`${API_BASE}/projects/${projectId}/session/change-set/pending`),
+  resumeChangeSet: (projectId: string, journalId: string): Promise<AxiosResponse> =>
+    api.post(`${API_BASE}/projects/${projectId}/session/change-set/${encodeURIComponent(journalId)}/resume`),
+  discardChangeSet: (projectId: string, journalId: string): Promise<AxiosResponse> =>
+    api.post(`${API_BASE}/projects/${projectId}/session/change-set/${encodeURIComponent(journalId)}/discard`),
   analyzeBatch: (projectId: string, data: Record<string, unknown>): Promise<AxiosResponse> =>
     llmApi.post(`${API_BASE}/projects/${projectId}/session/analyze-batch`, data, { timeout: LLM_SYNC_TIMEOUT }),
   saveAnalysisBatch: (projectId: string, data: Record<string, unknown>): Promise<AxiosResponse> =>

@@ -21,7 +21,7 @@ RRF_K = 60
 # 按行/句边界分块，候选语义分取各块与 query 的最大 cosine（max-over-chunks）。
 _CHUNK_CHAR_LIMIT = 600
 # 分块器版本（C1/F10）：分块策略变化时缓存键失效重建。
-_CHUNKING_VERSION = 2
+_CHUNKING_VERSION = 3
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？；!?;])")
 
@@ -35,9 +35,10 @@ def _embedding_space_fingerprint(embeddings: Any) -> str:
     if callable(getter):
         try:
             return str(getter() or "")
-        except Exception:
-            return ""
-    return "nospace"
+        except Exception as exc:
+            raise ValueError("embedding_space_unavailable") from exc
+    # 未声明空间身份的自定义后端只在本实例内复用，不跨实例读取持久旧向量。
+    return f"instance-{type(embeddings).__module__}.{type(embeddings).__qualname__}-{id(embeddings)}"
 
 
 def _chunk_char_limit(embeddings: Any) -> int:
@@ -96,6 +97,31 @@ def _chunk_text(text: str, *, limit: int = _CHUNK_CHAR_LIMIT) -> List[str]:
     if current:
         chunks.append("\n".join(current))
     return [chunk for chunk in chunks if chunk.strip()]
+
+
+def _windowed_chunks(text: str, embeddings: Any) -> List[str]:
+    """在真实编码窗口内分块，保持所有原始字符（含中英混合及特殊 token）。"""
+    counter = getattr(embeddings, "count_tokens", None)
+    window_getter = getattr(embeddings, "max_input_tokens", None)
+    if not callable(counter) or not callable(window_getter) or counter("") is None:
+        return _chunk_text(text, limit=_chunk_char_limit(embeddings))
+    window = int(window_getter())
+    pending = [text] if text else []
+    chunks: List[str] = []
+    while pending:
+        segment = pending.pop()
+        count = counter(segment)
+        if count is None:
+            raise ValueError("embedding_token_count_unavailable")
+        if count <= window:
+            chunks.append(segment)
+        elif len(segment) <= 1:
+            raise ValueError("embedding_input_window_too_small")
+        else:
+            # 不假设 token 数随字符前缀严格单调；二分后逐块实测，保证不越窗。
+            midpoint = len(segment) // 2
+            pending.extend([segment[midpoint:], segment[:midpoint]])
+    return chunks
 
 
 class StorageCandidateSource:
@@ -199,15 +225,14 @@ class VectorIndexAdapter:
     async def scores(
         self, query: str, candidates: List[ContextItem], *, project_id: str = "", storage: Any = None
     ) -> List[float]:
+        prepare = getattr(self.embeddings, "prepare", None)
+        if callable(prepare):
+            await prepare()
         space = _embedding_space_fingerprint(self.embeddings)
-        char_limit = _chunk_char_limit(self.embeddings)
         segment_lists: List[List[str]] = []
         for item in candidates:
             text = str(item.metadata.get("_index_text") or item.content or "")
-            if 0 < len(text) <= char_limit:
-                segments = [text]
-            else:
-                segments = _chunk_text(text, limit=char_limit)
+            segments = _windowed_chunks(text, self.embeddings)
             segment_lists.append(segments)
         store = self._get_store(project_id, storage)
         # 旧版本缓存键（无空间指纹前缀）：与旧键全量混存会让换模型后的缓存膨胀，

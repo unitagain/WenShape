@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
 def main() -> int:
     backend = Path(__file__).resolve().parents[1]
-    executable = shutil.which("mypy")
-    if not executable:
-        print("mypy executable not found; install the development type-check dependency")
-        return 2
-    completed = subprocess.run([executable], cwd=backend, check=False)
+    completed = subprocess.run([sys.executable, "-m", "mypy"], cwd=backend, check=False)
     return int(completed.returncode)
 
 

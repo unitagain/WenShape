@@ -199,7 +199,7 @@ class SessionHistoryStorage(BaseStorage):
         mtype = message.get("type")
         if mtype:
             item["type"] = str(mtype)
-        for key in ("turn_id", "tool_call_id", "name"):
+        for key in ("turn_id", "tool_call_id", "name", "terminal_state", "request_fingerprint"):
             if message.get(key):
                 item[key] = str(message[key])
         if isinstance(message.get("tool_calls"), list):
@@ -224,7 +224,7 @@ class SessionHistoryStorage(BaseStorage):
                         row["title"] = item["content"].strip().replace("\n", " ")[:32]
                 await self._atomic_write(
                     self._index_path(project_id),
-                    json.dumps({"active_id": cid, "items": items}, ensure_ascii=False, indent=2) + "\n",
+                    json.dumps({**index, "items": items}, ensure_ascii=False, indent=2) + "\n",
                 )
         return item
 
@@ -241,19 +241,22 @@ class SessionHistoryStorage(BaseStorage):
         if not event_id:
             return await self.append(project_id, message, conversation_id=conversation_id)
         cid = self._conversation_id(project_id, conversation_id)
-        async with self.content_transaction(project_id):
+        # content_transaction 跟踪 generation，不是互斥锁；去重检查和追加必须同锁。
+        async with get_file_lock().lock(self._event_path(project_id, cid).with_suffix(".append.lock")):
             for path in (self._event_path(project_id, cid), self._path(project_id, cid)):
                 existing = await self.read_jsonl(path)
-                if any(str(row.get("event_id") or "") == event_id for row in existing):
-                    return None
-            await self.append_jsonl(self._event_path(project_id, cid), item)
-            await self.append_jsonl(self._path(project_id, cid), item)
-        return item
+                for row in existing:
+                    if str(row.get("event_id") or "") == event_id:
+                        if any(row.get(key) != item.get(key) for key in ("role", "content", "request_fingerprint")):
+                            raise ValueError("event_id_conflict")
+                        return None
+            return await self.append(project_id, item, conversation_id=cid)
 
     async def load(self, project_id: str, *, limit: int = 0, conversation_id: str = "") -> List[Dict[str, Any]]:
         """读取对话历史；limit>0 时只返回最近 limit 条。"""
-        path = self._path(project_id, conversation_id)
-        await self._repair_projection_from_archive(project_id, conversation_id=conversation_id)
+        cid = self._conversation_id(project_id, conversation_id)
+        path = self._path(project_id, cid)
+        await self._repair_projection_from_archive(project_id, conversation_id=cid)
         items = await self.read_jsonl(path)
         if limit and limit > 0:
             return items[-limit:]

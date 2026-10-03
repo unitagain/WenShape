@@ -48,10 +48,7 @@ class OutlineStorage(BaseStorage):
         path = self._outline_path(project_id)
         content = ""
         if path.is_file():
-            try:
-                content = await self.read_text(path)
-            except (OSError, UnicodeError):
-                content = ""
+            content = await self.read_text(path)
         revision = self.control_store.get_revision(_OUTLINE_NAMESPACE, self._revision_key(project_id))
         return {
             "content": content,
@@ -67,6 +64,7 @@ class OutlineStorage(BaseStorage):
         content: str,
         *,
         expected_revision: Optional[int] = None,
+        expected_content: Optional[str] = None,
     ) -> Dict[str, Any]:
         """覆盖写大纲正文（用户/AI 编辑统一入口），支持 expected_revision 乐观并发。"""
         payload = str(content or "")
@@ -80,9 +78,12 @@ class OutlineStorage(BaseStorage):
         async with self.content_transaction(project_id):
             async with file_lock.lock(outline_dir / ".outline_transaction"):
                 revision = self.control_store.get_revision(_OUTLINE_NAMESPACE, revision_key)
+                current = await self.read_text(outline_path) if outline_path.is_file() else ""
+                if expected_content is not None and current != expected_content:
+                    raise RevisionConflict("content_conflict")
                 if expected_revision is not None and int(revision["revision"]) != int(expected_revision):
                     raise RevisionConflict(f"revision_conflict:{revision['revision']}!={int(expected_revision)}")
-                if revision["fingerprint"] == fingerprint and outline_path.is_file():
+                if revision["fingerprint"] == fingerprint and outline_path.is_file() and current == payload:
                     return {
                         "content": payload,
                         "word_count": len(payload),

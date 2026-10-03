@@ -245,7 +245,7 @@ class BaseStorage:
             path = path / segment
         # 纵深防御：所有段均已拒绝式校验，仍对最终路径做一次归属复核，
         # 覆盖符号链接等文件系统层面的逃逸。
-        validate_path_within(path, self.data_dir)
+        validate_path_within(path, self.get_project_path(project_id))
         return path
 
     def ensure_dir(self, path: Path) -> None:

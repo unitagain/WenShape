@@ -18,6 +18,7 @@ import { useIDE } from '../context/IDEContext';
 import AnalysisReviewDialog from '../components/writing/AnalysisReviewDialog';
 import WritingSessionAgentPanel from '../components/writing/WritingSessionAgentPanel';
 import WritingSessionMainContent from '../components/writing/WritingSessionMainContent';
+import ChangeSetRecovery from '../components/writing/ChangeSetRecovery';
 import { buildLineDiff, applyDiffOpsWithDecisions, mergeChangeSets } from '../lib/diffUtils';
 import SaveMenu from '../components/writing/SaveMenu';
 import logger from '../utils/logger';
@@ -36,6 +37,7 @@ import { appendAgentProgressEvent } from '../lib/agentProgress';
 import { createLatestTaskQueue } from '../lib/latestTaskQueue';
 import { documentOf, tabKeyOf } from '../lib/editorTabs';
 import { projectAcceptedChapterContents } from '../lib/acceptedChangeSet';
+import { buildChatSelection } from '../lib/chatSelection';
 import {
   chapterBaselineEntries,
   isKnownBaseline,
@@ -495,18 +497,7 @@ function WritingSessionContent() {
           ),
         );
       }
-      // 只有真实对话进入会话历史。system/error 是本地 activity，不能污染模型上下文；
-      // 这也让旧的“系统卡片”兼容显示，但不会继续产生新的历史噪声。
-      if (type === 'user' || type === 'assistant') {
-        sessionAPI
-          .appendHistory(key, {
-            role: type,
-            content: String(content ?? ''),
-            ts: Date.now(),
-            conversation_id: activeConversationId || undefined,
-          })
-          .catch(() => {});
-      }
+      // chat 入口负责权威持久事件；这里只更新展示，避免前后端双写。
     },
     [projectChatKey, activeConversationId],
   );
@@ -550,7 +541,7 @@ function WritingSessionContent() {
         const resp = await sessionAPI.getHistory(key, 0, activeId);
         const list = Array.isArray(resp?.data?.messages) ? resp.data.messages : [];
         serverMsgs = list.map((m) => ({
-          type: m?.type === 'error' ? 'error' : m?.role || 'system',
+          type: m?.type === 'activity' ? 'system' : m?.type === 'error' ? 'error' : m?.role || 'system',
           content: String(m?.content ?? ''),
           time: m?.ts ? new Date(m.ts) : new Date(),
         }));
@@ -1681,7 +1672,10 @@ function WritingSessionContent() {
         changes: acceptedChanges,
       });
       const result = response?.data || {};
-      if (!result.success) throw new Error(result.reason || 'revision_conflict');
+      if (!result.success) {
+        await mutateSWR(['change-set-recovery', projectId]);
+        throw new Error(result.journal_id ? '写入中断，请在恢复预览中核对已写入内容并选择续做。' : result.reason || 'revision_conflict');
+      }
 
       const chapterChanges = acceptedChanges.filter((item) => item.asset_type === 'chapter' && item.asset_id);
       const outlineChanged = acceptedChanges.some((item) => item.asset_type === 'outline');
@@ -2267,6 +2261,8 @@ function WritingSessionContent() {
         start: stats.selectionStart,
         end: stats.selectionEnd,
         text: stats.selectionText || '',
+        chapter: chapterInfo.chapter,
+        sourceText: value,
       });
       const lines = stats.cursorText.split('\n');
       dispatch({
@@ -2279,7 +2275,7 @@ function WritingSessionContent() {
       // 持续记录位置：切到大纲/卡片不经过 handleChapterSelect，靠这里兜住。
       captureEditorViewState();
     },
-    [captureEditorViewState, dispatch, writingLanguage],
+    [captureEditorViewState, chapterInfo.chapter, dispatch, writingLanguage],
   );
 
   const handleManualContentChange = useCallback(
@@ -2380,16 +2376,24 @@ function WritingSessionContent() {
       chapterKey ? (manualContentByChapterRef.current?.[chapterKey] ?? manualContent) : '',
     );
     try {
+      const selectionPayload = await buildChatSelection(
+        attachedSelection?.text ? attachedSelection : selectionInfo,
+        chapterKey,
+        manualContent,
+      );
       const resp = await sessionAPI.chat(projectId, {
+        request_id: crypto.randomUUID(),
         chapter: chapterKey,
         conversation_id: activeConversationId || undefined,
         message: text,
-        has_selection: Boolean(attachedSelection?.text?.trim() || selectionInfo?.text?.trim()),
-        selection_text: String(attachedSelection?.text || selectionInfo?.text || '').trim().slice(0, 6000),
+        ...selectionPayload,
         has_draft: Boolean(chapterKey) && !canUseWriter,
         reasoning_level: reasoningLevel,
       });
       const data = resp?.data || {};
+      if (data.history_persisted === false) {
+        addMessage('error', '本轮答复已生成，但历史保存失败，请保留当前页面中的答复。');
+      }
       const chapterTarget = data.chapter_target || null;
       const resultChapter = String(chapterTarget?.chapter || chapterKey || '');
       if (data.writing_memory) {
@@ -2517,7 +2521,7 @@ function WritingSessionContent() {
     setMessagesByChapter((prev) => ({
       ...(prev || {}),
       [projectChatKey]: list.map((message) => ({
-        type: message?.type === 'error' ? 'error' : message?.role || 'system',
+        type: message?.type === 'activity' ? 'system' : message?.type === 'error' ? 'error' : message?.role || 'system',
         content: String(message?.content ?? ''),
         time: message?.ts ? new Date(message.ts) : new Date(),
       })),
@@ -2540,7 +2544,7 @@ function WritingSessionContent() {
       setMessagesByChapter((prev) => ({
         ...(prev || {}),
         [projectChatKey]: list.map((message) => ({
-          type: message?.type === 'error' ? 'error' : message?.role || 'system',
+          type: message?.type === 'activity' ? 'system' : message?.type === 'error' ? 'error' : message?.role || 'system',
           content: String(message?.content ?? ''),
           time: message?.ts ? new Date(message.ts) : new Date(),
         })),
@@ -2687,9 +2691,34 @@ function WritingSessionContent() {
     aiHint: null,
   };
 
+  const refreshRecoveredAssets = async (assets) => {
+    const chapters = assets.filter((asset) => asset.asset_type === 'chapter');
+    const entries = await Promise.all(chapters.map(async (asset) => {
+      const key = ['chapter', projectId, asset.asset_id];
+      const content = await fetchChapterContent(key);
+      await mutateSWR(key, content, false);
+      return [asset.asset_id, content];
+    }));
+    const contentByChapter = Object.fromEntries(entries);
+    if (prevProjectIdRef.current !== projectId) return;
+    setManualContentByChapter((prev) => ({ ...prev, ...contentByChapter }));
+    if (Object.hasOwn(contentByChapter, activeChapterKeyRef.current)) {
+      setManualContent(contentByChapter[activeChapterKeyRef.current]);
+      dispatch({ type: 'SET_SAVED' });
+    }
+    if (assets.some((asset) => asset.asset_type === 'outline')) {
+      window.dispatchEvent(new CustomEvent('wenshape:outline-updated', { detail: { projectId } }));
+    }
+    clearDiffReview();
+    await loadChapters();
+  };
+
   return (
     <IDELayout rightPanelContent={rightPanelContent} titleBarProps={titleBarProps}>
-      <div className="h-full w-full">
+      <div className="flex h-full w-full flex-col">
+        <ChangeSetRecovery key={projectId} projectId={projectId} disabled={isGenerating || state.unsavedChanges}
+          onRecovered={refreshRecoveredAssets} />
+        <div className="min-h-0 flex-1">
         <WritingSessionMainContent
           vm={{
             activeActivity: state.activeActivity,
@@ -2729,6 +2758,7 @@ function WritingSessionContent() {
             onManualSelectionChange: handleManualSelectionChange,
           }}
         />
+        </div>
       </div>
 
       {notice ? (

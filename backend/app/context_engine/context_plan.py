@@ -273,12 +273,9 @@ def build_context_plan_v2(
         "snapshot": snapshot,
         "budget": {
             "context_limit_tokens": context_limit,
-            # 总窗口（C4，报告 §6.1）：输入 + 请求输出的硬边界。当前以上下文窗口
-            # 近似（多数 Provider 输入输出共享窗口）；provider 能力表区分输入/输出
-            # 窗口时优先取其总和。
-            "total_window_tokens": int(
-                profile.get("total_window") or (int(profile.get("input_window") or 0) + int(profile.get("output_window") or 0)) or context_limit
-            ),
+            # input/output 上限是各自约束，不能相加扩大共享 context window。
+            # 独立输入/输出窗口的 Provider 应显式声明 total_window。
+            "total_window_tokens": int(profile.get("total_window") or context_limit),
             "input_tokens": max(1024, context_limit - output_reserve),
             "output_reserve_tokens": output_reserve,
             "tool_schema_tokens": sum(int(item.get("context_cost") or 0) for item in loadout),

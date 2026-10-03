@@ -8,10 +8,12 @@ export type AgentTerminalState =
 export interface ChatTurnRequest {
   chapter?: string;
   conversation_id?: string;
+  request_id?: string;
   message: string;
   has_selection?: boolean;
-  /** 当前选区的有限文本，随本轮 Writer 上下文注入，用于确定修改范围。 */
+  /** 完整选区原文；范围使用 Unicode 字符位置。 */
   selection_text?: string;
+  selection?: { chapter: string; source_sha256: string; start: number; end: number };
   has_draft?: boolean;
   target_word_count?: number;
   auto_execute_plan?: boolean;
@@ -20,6 +22,7 @@ export interface ChatTurnRequest {
 }
 
 export interface ChatTurnResponse {
+  history_persisted?: boolean;
   success?: boolean;
   action?: string;
   message?: string;
@@ -118,6 +121,12 @@ export function normalizeChatTurnResponse(data: ChatTurnResponse | null | undefi
 }
 
 export function terminalStateMessage(view: AgentTurnView): string {
+  const reasons: Record<string, string> = {
+    selection_source_conflict: '选区对应的正文已变化或尚未保存，请保存正文并重新选择。',
+    history_unavailable: '历史保存失败，本轮尚未开始，请稍后重试。',
+    turn_already_recorded: '该请求已接收，请查看会话历史与任务状态。',
+  };
+  if (reasons[view.reason]) return reasons[view.reason];
   switch (view.terminalState) {
     case 'requires_input':
       return '需要补充信息后才能继续。';

@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from app.llm_gateway import get_gateway
+from app.control_plane.store import RevisionConflict
+from app.storage.file_lock import get_file_lock
 from app.error_contract import error_envelope, record_degradation, safe_error_code
 from app.storage import (
     CardStorage,
@@ -224,18 +226,20 @@ class Orchestrator(AnalysisMixin):
         self.writing_service.progress_callback = callback
 
     async def apply_change_set(self, project_id: str, changes: List[Dict[str, Any]]) -> Dict[str, Any]:
+        async with get_file_lock().lock(self.draft_storage.get_project_path(project_id) / ".change_set_transaction"):
+            return await self._apply_change_set_locked(project_id, changes)
+
+    async def _apply_change_set_locked(self, project_id: str, changes: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Preflight and apply a multi-asset Agent proposal.
 
         All revisions are checked before the first write. This prevents a stale
         proposal from partially overwriting newer user edits; writes themselves
         use the storage optimistic-concurrency contracts.
         """
-        from app.control_plane.store import RevisionConflict
-
         normalized = [item for item in (changes or []) if isinstance(item, dict)]
         if not normalized:
             return {"success": True, "applied": [], "count": 0}
-        identities = [(str(item.get("asset_type") or ""), str(item.get("asset_id") or "")) for item in normalized]
+        identities = [(str(item.get("asset_type") or "").strip(), str(item.get("asset_id") or "").strip()) for item in normalized]
         if len(set(identities)) != len(identities):
             return {"success": False, "reason": "duplicate_change_set_asset"}
         outline = getattr(self.storage_adapter, "outline", None)
@@ -247,13 +251,15 @@ class Orchestrator(AnalysisMixin):
             revised = str(item.get("revised") or "")
             base_revision = int(item.get("base_revision") or 0)
             if asset_type == "outline":
+                if asset_id != "outline":
+                    return {"success": False, "reason": "invalid_change_set_asset"}
                 if outline is None:
                     return {"success": False, "reason": "outline_unavailable"}
                 current = await outline.get_outline(project_id)
                 if int(current.get("revision") or 0) != base_revision or str(current.get("content") or "") != original:
                     return {"success": False, "reason": "revision_conflict", "asset": "outline"}
             elif asset_type == "chapter" and asset_id:
-                current, _ = await self.draft_storage.get_working_text(project_id, asset_id)
+                current, _ = await self.draft_storage.get_working_text(project_id, asset_id, strict=True)
                 revision = self.draft_storage.get_draft_revision(project_id, asset_id)
                 if int((revision or {}).get("revision") or 0) != base_revision or str(current or "") != original:
                     return {"success": False, "reason": "revision_conflict", "asset": asset_id}
@@ -262,11 +268,16 @@ class Orchestrator(AnalysisMixin):
             checks.append({"asset_type": asset_type, "asset_id": asset_id, "original": original, "revised": revised, "base_revision": base_revision, "chapter_target": item.get("chapter_target")})
 
         applied: List[Dict[str, Any]] = []
-        # 写入意图日志（评估 P7）：preflight 原子、写入不是——第二个资产写失败时
-        # 第一个已落盘。journal 先记录全部意图，逐资产标记终态，使部分应用可查询、
-        # 可审计。记录失败只降级不阻断（观测设施不得破坏写入主路径）。
+        # 写入意图日志（评估 P7 + D1 恢复协议）：preflight 原子、写入不是——
+        # 第二个资产写失败时第一个已落盘。journal 先记录全部意图（含恢复材料：
+        # 目标全文 + 基线原文，与意图同事务），逐资产标记终态，使部分应用可查询、
+        # 可审计、可经 resume 协议续做。
+        # D1 严格语义：journal 配置可用但记录失败 → 不开始该批写入（材料未落盘
+        # 就开工意味着部分成功后无法恢复）。初始化失败同样拒绝写入。
         journal_id = ""
         store = self._control_store_for_change_set()
+        if store is None:
+            return {"success": False, "reason": "write_journal_unavailable", "applied": []}
         if store is not None:
             journal_id = uuid.uuid4().hex
             try:
@@ -281,17 +292,22 @@ class Orchestrator(AnalysisMixin):
                             "asset_id": item["asset_id"],
                             "base_revision": item["base_revision"],
                             "content_sha256": hashlib.sha256(str(item["revised"] or "").encode("utf-8")).hexdigest(),
+                            "revised_content": str(item["revised"] or ""),
+                            "original_content": str(item["original"] or ""),
+                            "chapter_target": item.get("chapter_target") or {},
                         }
                         for item in checks
                     ],
                 )
             except Exception as exc:
-                record_degradation("change_set_write_journal", exc)
-                journal_id = ""
+                logger.error("change set journal intent failed; refusing to start writes: %s", safe_error_code(exc))
+                return {"success": False, "reason": "write_journal_unavailable", "detail": safe_error_code(exc)}
         try:
             for item in checks:
                 if item["asset_type"] == "outline":
-                    saved = await outline.save_outline(project_id, item["revised"], expected_revision=item["base_revision"])
+                    saved = await outline.save_outline(
+                        project_id, item["revised"], expected_revision=item["base_revision"], expected_content=item["original"]
+                    )
                     applied.append({"asset_type": "outline", "asset_id": "outline", "revision": int(saved.get("revision") or 0)})
                 else:
                     chapter = item["asset_id"]
@@ -302,6 +318,7 @@ class Orchestrator(AnalysisMixin):
                         word_count=len(item["revised"]),
                         create_prev_backup=True,
                         expected_revision=item["base_revision"],
+                        expected_content=item["original"],
                     )
                     target = item.get("chapter_target") or {}
                     summary = await self.draft_storage.get_chapter_summary(project_id, chapter)
@@ -329,12 +346,52 @@ class Orchestrator(AnalysisMixin):
                         record_degradation("change_set_write_journal", exc)
         except RevisionConflict:
             self._journal_remaining_failed(store, journal_id, checks, applied, "revision_conflict")
-            return {"success": False, "reason": "revision_conflict", "applied": applied, "journal_id": journal_id}
+            applied = await self._reconcile_written_assets(project_id, checks, applied)
+            return {
+                "success": False,
+                "reason": "revision_conflict",
+                "applied": applied,
+                "journal_id": journal_id,
+                "journalless": journal_id == "",
+            }
         except Exception as exc:
             logger.warning("change set apply failed: %s", safe_error_code(exc), exc_info=True)
             self._journal_remaining_failed(store, journal_id, checks, applied, safe_error_code(exc))
-            return {"success": False, "reason": safe_error_code(exc), "applied": applied, "journal_id": journal_id}
-        return {"success": True, "applied": applied, "count": len(applied), "journal_id": journal_id}
+            applied = await self._reconcile_written_assets(project_id, checks, applied)
+            return {
+                "success": False,
+                "reason": safe_error_code(exc),
+                "applied": applied,
+                "journal_id": journal_id,
+                "journalless": journal_id == "",
+            }
+        return {
+            "success": True,
+            "applied": applied,
+            "count": len(applied),
+            "journal_id": journal_id,
+            "journalless": journal_id == "",
+        }
+
+    async def _reconcile_written_assets(self, project_id, checks, completed):
+        """失败后按实际文件报告已落盘正文；元数据或 journal 仍可能需要恢复。"""
+        written = list(completed)
+        done = {(item["asset_type"], item["asset_id"]) for item in written}
+        for item in checks:
+            if (item["asset_type"], item["asset_id"]) in done:
+                continue
+            revised = str(item.get("revised", item.get("revised_content", "")) or "")
+            row = {
+                **item, "revised_content": revised,
+                "content_sha256": hashlib.sha256(revised.encode("utf-8")).hexdigest(),
+            }
+            verification = await self._verify_journal_asset(project_id, row)
+            if verification.get("result") == "already_applied":
+                written.append({
+                    "asset_type": item["asset_type"], "asset_id": item["asset_id"],
+                    "revision": verification["disk_revision"], "recovery_pending": True,
+                })
+        return written
 
     def _control_store_for_change_set(self):
         """Change set journal 的控制平面 store；不可用时降级为 None（journal 关闭）。
@@ -362,8 +419,11 @@ class Orchestrator(AnalysisMixin):
             return store
         except Exception as exc:
             record_degradation("change_set_write_journal", exc)
-            self._change_set_journal_store = False
             return None
+
+    def change_set_journal_store(self):
+        """journal store 的公有只读入口（D1）：供治理/诊断路径读取，不绕过恢复协议。"""
+        return self._control_store_for_change_set()
 
     def _journal_remaining_failed(self, store, journal_id: str, checks: List[Dict[str, Any]], applied: List[Dict[str, Any]], error: str) -> None:
         """把未写完的资产在 journal 中标记为 failed（标记失败本身也只降级）。"""
@@ -379,6 +439,229 @@ class Orchestrator(AnalysisMixin):
             except Exception as exc:
                 record_degradation("change_set_write_journal", exc)
                 return
+
+    # ------------------------------------------------- D1 多资产恢复协议 ----
+
+    async def inspect_change_set_journal(self, project_id: str) -> Dict[str, Any]:
+        """恢复预览（D1）：列出未完成 journal 行，逐资产核对磁盘实际状态。
+
+        不写任何内容。每行附核对结论：
+        - already_applied：磁盘内容已等于目标（崩溃前实际写成功、journal 未及标记）→ 续做时幂等跳过
+        - conflict：磁盘 revision ≠ base_revision（用户中途编辑）→ 续做时停止
+        - pending：磁盘仍是基线原文 → 续做时正常写入
+        - row_status：journal 自身状态（pending/failed/applied/superseded）
+        """
+        store = self._control_store_for_change_set()
+        if store is None:
+            return {"success": True, "journals": [], "journalless": True}
+        # 恢复预览展示存在未完成行的 journal 的**全部**资产行（含已应用项）——
+        # 用户需要完整图景判断续做影响；全完成的 journal 不出现在入口。
+        all_rows = store.journal_rows(project_id)
+        journals: Dict[str, Dict[str, Any]] = {}
+        unfinished: set = set()
+        for row in all_rows:
+            journal_id = str(row.get("journal_id") or "")
+            if str(row.get("status") or "") in {"pending", "failed"}:
+                unfinished.add(journal_id)
+        for row in all_rows:
+            journal_id = str(row.get("journal_id") or "")
+            if journal_id not in unfinished:
+                continue
+            entry = journals.setdefault(
+                journal_id,
+                {"journal_id": journal_id, "turn_id": str(row.get("turn_id") or ""), "assets": []},
+            )
+            verification = await self._verify_journal_asset(project_id, row)
+            entry["assets"].append(
+                {
+                    "asset_type": str(row.get("asset_type") or ""),
+                    "asset_id": str(row.get("asset_id") or ""),
+                    "status": str(row.get("status") or ""),
+                    "error": str(row.get("error") or ""),
+                    "base_revision": int(row.get("base_revision") or 0),
+                    "original": str(row.get("original_content") or ""),
+                    "revised": str(row.get("revised_content") or ""),
+                    "check": verification,
+                }
+            )
+        return {"success": True, "journals": list(journals.values()), "journalless": False}
+
+    async def _verify_journal_asset(self, project_id: str, row: Dict[str, Any]) -> Dict[str, Any]:
+        """核对一行 journal 与磁盘实际内容/revision 的关系（只读）。"""
+        asset_type = str(row.get("asset_type") or "")
+        asset_id = str(row.get("asset_id") or "")
+        revised = str(row.get("revised_content") or "")
+        base_revision = int(row.get("base_revision") or 0)
+        target_sha = str(row.get("content_sha256") or "")
+        if not target_sha or hashlib.sha256(revised.encode("utf-8")).hexdigest() != target_sha:
+            return {"result": "error", "reason": "recovery_material_invalid"}
+        try:
+            if asset_type == "outline":
+                outline = getattr(self.storage_adapter, "outline", None)
+                if outline is None:
+                    return {"result": "error", "reason": "outline_unavailable"}
+                current = await outline.get_outline(project_id)
+                disk_content = str(current.get("content") or "")
+                disk_revision = int(current.get("revision") or 0)
+            elif asset_type == "chapter":
+                disk_content, _ = await self.draft_storage.get_working_text(project_id, asset_id, strict=True)
+                disk_content = str(disk_content or "")
+                disk_revision = int((self.draft_storage.get_draft_revision(project_id, asset_id) or {}).get("revision") or 0)
+            else:
+                return {"result": "error", "reason": "invalid_asset_type"}
+        except Exception as exc:
+            return {"result": "error", "reason": safe_error_code(exc)}
+        if target_sha and hashlib.sha256(disk_content.encode("utf-8")).hexdigest() == target_sha:
+            # 磁盘已是目标内容：上次写入实际成功（journal 标记失败或崩溃在标记前）。
+            return {"result": "already_applied", "disk_revision": disk_revision}
+        if disk_revision != base_revision or disk_content != str(row.get("original_content") or ""):
+            # 基线已漂移：用户（或其他 turn）在本批写入后改过该资产 → 续做冲突。
+            return {"result": "conflict", "disk_revision": disk_revision, "base_revision": base_revision}
+        return {"result": "pending", "disk_revision": disk_revision, "base_revision": base_revision}
+
+    async def resume_change_set(self, project_id: str, journal_id: str) -> Dict[str, Any]:
+        # 与首次应用、放弃共用跨进程锁；等待中的旧请求必须重读最新 journal 状态。
+        async with get_file_lock().lock(self.draft_storage.get_project_path(project_id) / ".change_set_transaction"):
+            return await self._resume_change_set_locked(project_id, journal_id)
+
+    async def _resume_change_set_locked(self, project_id: str, journal_id: str) -> Dict[str, Any]:
+        """续做协议（D1）：幂等恢复一个 journal 的未完成资产。
+
+        逐资产语义（显式部分成功，不承诺跨文件原子性、不自动回滚）：
+        - journal 行 applied / 磁盘已等于目标 → 幂等跳过
+        - 磁盘 revision ≠ base_revision → 该资产冲突，**停止**（不继续后续资产）
+        - 否则按 journal 材料写入（expected_revision 乐观锁），标记 applied
+        - journal 不存在 / 无未完成行 → 明确报告 no_pending
+        """
+        store = self._control_store_for_change_set()
+        if store is None:
+            return {"success": False, "reason": "write_journal_unavailable"}
+        if not journal_id:
+            return {"success": False, "reason": "journal_not_found"}
+        rows = store.journal_rows(project_id, journal_id=journal_id)
+        if not rows:
+            return {"success": False, "reason": "journal_not_found"}
+        if any(row["status"] == "superseded" for row in rows):
+            return {"success": False, "reason": "journal_superseded"}
+        pending_rows = [row for row in rows if row["status"] in {"pending", "failed"}]
+        if not pending_rows:
+            return {"success": True, "resumed": [], "skipped": len(rows), "reason": "all_applied"}
+        resumed: List[Dict[str, Any]] = []
+        skipped = len(rows) - len(pending_rows)
+        # 先核对全部资产（含已完成项）；作者修改任一资产后不部分续做旧提案。
+        for row in rows:
+            verification = await self._verify_journal_asset(project_id, row)
+            if verification.get("result") in {"conflict", "error"}:
+                reason = "resume_revision_conflict" if verification["result"] == "conflict" else verification["reason"]
+                return {"success": False, "reason": reason, "asset": row["asset_id"], "resumed": [], "skipped": skipped}
+        for row in pending_rows:
+            asset_type = str(row.get("asset_type") or "")
+            asset_id = str(row.get("asset_id") or "")
+            revised = str(row.get("revised_content") or "")
+            base_revision = int(row.get("base_revision") or 0)
+            verification = await self._verify_journal_asset(project_id, row)
+            if verification.get("result") == "conflict":
+                self._journal_remaining_failed(store, journal_id, [row], [], "resume_revision_conflict")
+                return {
+                    "success": False,
+                    "reason": "resume_revision_conflict",
+                    "asset": asset_id,
+                    "resumed": resumed,
+                    "skipped": skipped,
+                    "disk_revision": verification.get("disk_revision"),
+                    "base_revision": base_revision,
+                }
+            if verification.get("result") == "error":
+                self._journal_remaining_failed(store, journal_id, [row], [], str(verification.get("reason") or "verify_error"))
+                return {
+                    "success": False,
+                    "reason": str(verification.get("reason") or "verify_error"),
+                    "asset": asset_id,
+                    "resumed": resumed,
+                    "skipped": skipped,
+                }
+            # pending：按材料写入（乐观锁；写入与 journal 标记之间崩溃时重恢复可幂等收敛）。
+            try:
+                already_written = verification.get("result") == "already_applied"
+                expected_content = revised if already_written else str(row.get("original_content") or "")
+                expected_revision = int(verification["disk_revision"]) if already_written else base_revision
+                if asset_type == "outline":
+                    outline = getattr(self.storage_adapter, "outline", None)
+                    if outline is None:
+                        raise ValueError("outline_unavailable")
+                    saved = await outline.save_outline(
+                        project_id, revised, expected_revision=expected_revision, expected_content=expected_content
+                    )
+                    revision = int(saved.get("revision") or 0)
+                elif asset_type == "chapter":
+                    await self.draft_storage.save_current_draft(
+                        project_id=project_id,
+                        chapter=asset_id,
+                        content=revised,
+                        word_count=len(revised),
+                        create_prev_backup=True,
+                        expected_revision=expected_revision,
+                        expected_content=expected_content,
+                    )
+                    revision = int((self.draft_storage.get_draft_revision(project_id, asset_id) or {}).get("revision") or 0)
+                    from app.schemas.draft import ChapterSummary
+                    from app.utils.chapter_id import ChapterIDValidator
+
+                    target = json.loads(row.get("chapter_target_json") or "{}")
+                    summary = await self.draft_storage.get_chapter_summary(project_id, asset_id)
+                    if summary is None:
+                        summary = ChapterSummary(
+                            chapter=asset_id, volume_id=ChapterIDValidator.extract_volume_id(asset_id) or "V1",
+                            title=str(target.get("title") or asset_id), word_count=len(revised),
+                        )
+                    else:
+                        if target.get("title"):
+                            summary.title = str(target["title"])
+                        summary.word_count = len(revised)
+                    await self.draft_storage.save_chapter_summary(project_id, summary)
+                else:
+                    raise ValueError("invalid_asset_type")
+                if already_written:
+                    skipped += 1
+                else:
+                    resumed.append({"asset_type": asset_type, "asset_id": asset_id, "revision": revision})
+                store.mark_write_applied(journal_id, asset_type, asset_id)
+            except RevisionConflict:
+                self._journal_remaining_failed(store, journal_id, [row], [], "resume_revision_conflict")
+                resumed = await self._reconcile_written_assets(project_id, [row], resumed)
+                return {
+                    "success": False,
+                    "reason": "resume_revision_conflict",
+                    "asset": asset_id,
+                    "resumed": resumed,
+                    "skipped": skipped,
+                }
+            except Exception as exc:
+                self._journal_remaining_failed(store, journal_id, [row], [], safe_error_code(exc))
+                resumed = await self._reconcile_written_assets(project_id, [row], resumed)
+                return {
+                    "success": False,
+                    "reason": safe_error_code(exc),
+                    "asset": asset_id,
+                    "resumed": resumed,
+                    "skipped": skipped,
+                }
+        return {"success": True, "resumed": resumed, "skipped": skipped, "count": len(resumed)}
+
+    async def discard_change_set_journal(self, project_id: str, journal_id: str) -> Dict[str, Any]:
+        async with get_file_lock().lock(self.draft_storage.get_project_path(project_id) / ".change_set_transaction"):
+            return self._discard_change_set_journal_locked(project_id, journal_id)
+
+    def _discard_change_set_journal_locked(self, project_id: str, journal_id: str) -> Dict[str, Any]:
+        """放弃续做（D1）：未完成行标记 superseded（材料保留审计，不再参与恢复入口）。"""
+        store = self._control_store_for_change_set()
+        if store is None:
+            return {"success": False, "reason": "write_journal_unavailable"}
+        rows = store.journal_rows(project_id, journal_id=journal_id)
+        if not rows:
+            return {"success": False, "reason": "journal_not_found"}
+        superseded = store.mark_journal_superseded(journal_id)
+        return {"success": True, "superseded": superseded}
 
     def _p(self, zh: str, en: str) -> str:
         return en if self.language == "en" else zh
@@ -696,6 +979,8 @@ class Orchestrator(AnalysisMixin):
         thinking: bool = False,
         reasoning_level: str = "auto",
         selection_text: str = "",
+        request_id: str = "",
+        selection: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Delegate the main route to ChatTurnService."""
 
@@ -711,6 +996,8 @@ class Orchestrator(AnalysisMixin):
             thinking=thinking,
             reasoning_level=reasoning_level,
             selection_text=selection_text,
+            request_id=request_id,
+            selection=selection,
         )
 
     def _cancel_active_turns(self) -> int:

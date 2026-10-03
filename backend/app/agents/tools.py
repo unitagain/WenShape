@@ -299,10 +299,12 @@ class WriterToolset:
     async def execute(self, name: str, arguments: Any) -> str:
         """根据工具名分发执行；任何异常都转为可读的工具结果文本，避免中断 agentic 循环。"""
         args = self._parse_args(arguments)
-        self._ensure_source_snapshot()
+        if name != "read_tool_artifact":
+            self._ensure_source_snapshot()
         result = f"[未知工具：{name}]"
         try:
             if name == "lookup_card":
+                self._register_jit_source_file(self._card_file_paths(str(args.get("name") or "").strip()), source_id_prefix="tool.lookup_card", asset_type="cards")
                 result = await self._lookup_card(str(args.get("name") or "").strip())
                 self._register_jit_source_file(
                     self._card_file_paths(str(args.get("name") or "").strip()),
@@ -310,6 +312,7 @@ class WriterToolset:
                     asset_type="cards",
                 )
             elif name == "query_canon":
+                self._register_jit_source_file(self._canon_facts_path(), source_id_prefix="tool.query_canon", asset_type="canon")
                 result = await self._query_canon(
                     str(args.get("query") or "").strip(), self._as_int(args.get("top_k"), 8)
                 )
@@ -328,6 +331,9 @@ class WriterToolset:
                     asset_type="relations",
                 )
             elif name == "query_memory":
+                memory_index = self._memory_index_path()
+                if memory_index is not None:
+                    self._register_jit_source_files(list(memory_index.parent.glob("*.md")), source_id_prefix="tool.query_memory", asset_type="memory")
                 result = await self._query_memory(
                     str(args.get("query") or "").strip(), self._as_int(args.get("top_k"), 5)
                 )
@@ -353,6 +359,7 @@ class WriterToolset:
                     str(args.get("query") or "").strip(), self._as_int(args.get("top_k"), 5)
                 )
             elif name == "read_outline":
+                self._register_jit_source_file(self._outline_paths(), source_id_prefix="tool.read_outline", asset_type="outline")
                 result = await self._read_outline()
                 self._register_jit_source_file(
                     self._outline_paths(),
@@ -371,8 +378,28 @@ class WriterToolset:
             logger.warning("Tool %s failed: %s", name, exc)
             result = tool_error_text(name, exc)
         self._register_tool_source(name, args, result)
-        self._ensure_source_snapshot()
+        if name != "read_tool_artifact":
+            self._ensure_source_snapshot()
         return result
+
+    def _preview(self, output: str, name: str, limit: int = _MAX_TOOL_RESULT_CHARS) -> str:
+        """先持久化完整快照再投影，原文不能在 artifact 生成前丢失。"""
+        if len(output) <= limit:
+            return output
+        from app.context_engine.tool_artifact import safe_output_preview
+
+        artifact = self._persist_output(output, name)
+        return safe_output_preview(output, artifact_ref=artifact.artifact_ref, limit=limit)
+
+    def _persist_output(self, output: str, name: str):
+        from app.context_engine.tool_artifact import ToolArtifactStore
+        from app.context_engine.turn_scope import current_turn_scope
+
+        scope = current_turn_scope()
+        return ToolArtifactStore(project_root=scope.source_registry.project_root if scope and scope.source_registry else None).persist(
+            output, project_id=self.project_id, turn_id=scope.turn_id if scope else "",
+            tool_call_id="preview", tool_name=name, status="succeeded",
+        )
 
     @staticmethod
     def _ensure_source_snapshot() -> None:
@@ -427,8 +454,8 @@ class WriterToolset:
     def _register_jit_source_files(self, paths, *, source_id_prefix: str, asset_type: str) -> None:
         """把 JIT 读取触达的磁盘资产登记为带路径/版本的 mutable source（B1，F03）。
 
-        只在真实读取成功后调用（调用点在工具主体执行之后）；路径解析失败或文件
-        缺失时静默跳过——源登记是可观测性增强，不阻断工具结果交付。scope 的
+        读取前后登记实际文件；已有源版本由 registry 保留，读取期间发生变化会
+        在交付结果前被检出。不存在的候选路径跳过，实际文件登记失败则拒绝交付。
         project_root 由 ContextPlan 激活时设置，未激活（无计划/独立调用）时不登记。
         """
         from app.context_engine.turn_scope import current_turn_scope
@@ -448,12 +475,13 @@ class WriterToolset:
                     source_id=f"{source_id_prefix}.{resolved.name}",
                     asset_type=asset_type,
                     selection_reason=source_id_prefix.replace("tool.", "jit_tool:"),
+                    required=True,
                 )
             except (OSError, ValueError, RuntimeError) as exc:
-                logger.debug("JIT source registration skipped (%s): %s", source_id_prefix, safe_error_code(exc))
+                raise RuntimeError("jit_source_registration_failed") from exc
 
     def _card_file_paths(self, name: str) -> List[Path]:
-        """lookup_card 触达的卡片文件（角色卡命中则不再有世界卡）。"""
+        """lookup_card 的角色卡与世界卡候选路径。"""
         if not name:
             return []
         card_storage = getattr(self.adapter, "card", None)
@@ -464,7 +492,8 @@ class WriterToolset:
         except (OSError, ValueError) as exc:
             logger.debug("lookup_card source path unresolved: %s", safe_error_code(exc))
             return []
-        return [base]
+        world = card_storage.asset_path(self.project_id, "cards", "world", f"{name}.yaml", field="card_name")
+        return [base, world]
 
     def _canon_facts_path(self) -> Path:
         canon_storage = getattr(self.adapter, "canon", None)
@@ -574,7 +603,7 @@ class WriterToolset:
             kind = "世界观"
         if not card:
             return f"未找到名为『{name}』的设定卡（可先用 query_canon 检索近似名称）。"
-        return f"【{kind}设定卡：{name}】\n" + _truncate(_format_card(card))
+        return self._preview(f"【{kind}设定卡：{name}】\n" + _format_card(card), "lookup_card")
 
     async def _query_canon(self, query: str, top_k: int) -> str:
         if not query:
@@ -596,9 +625,12 @@ class WriterToolset:
             return f"未检索到与『{query}』相关的已确立事实/设定。"
         lines = [f"【与『{query}』相关的 canon（按相关度）】"]
         for it in items:
+            metadata = getattr(it, "metadata", {}) or {}
+            if metadata.get("source_type") in {"character_card", "world_card"}:
+                self._register_jit_source_files(self._card_file_paths(str(metadata.get("name") or "")), source_id_prefix="tool.query_canon", asset_type="cards")
             tag = getattr(getattr(it, "type", None), "value", "") or ""
             lines.append(f"- [{tag}] {str(getattr(it, 'content', '')).strip()}")
-        return _truncate("\n".join(lines))
+        return self._preview("\n".join(lines), "query_canon")
 
     async def _query_relations(self, entity: str, other: str) -> str:
         if not entity:
@@ -626,7 +658,7 @@ class WriterToolset:
         except Exception as exc:
             logger.warning("query_relations load failed: %s", exc)
             return f"[relation_graph_error code={safe_error_code(exc)}]"
-        return _truncate(graph.describe(entity, other or None))
+        return self._preview(graph.describe(entity, other or None), "query_relations")
 
     async def _card_relation_edges(self, relation_cls) -> List[Any]:
         """读取卡片层设定关系边并转为 Relation；存储不支持时返回空列表。"""
@@ -674,7 +706,7 @@ class WriterToolset:
             if body and body != description:
                 line += f"\n  {body}"
             lines.append(line)
-        return _truncate("\n".join(lines))
+        return self._preview("\n".join(lines), "query_memory")
 
     async def _read_tool_artifact(self, artifact_ref: str, offset: int = 0, length: int = 0) -> str:
         """读取此前工具调用的完整输出（B2/F02 的折叠结果恢复入口）。
@@ -685,10 +717,14 @@ class WriterToolset:
         if not artifact_ref:
             return "[read_tool_artifact 需要 artifact_ref 参数]"
         from app.context_engine.tool_artifact import ToolArtifactStore
+        from app.context_engine.turn_scope import current_turn_scope
 
-        store = ToolArtifactStore()
+        scope = current_turn_scope()
+        store = ToolArtifactStore(project_root=scope.source_registry.project_root if scope and scope.source_registry else None)
         try:
-            payload = await asyncio.to_thread(store.read, artifact_ref)
+            payload = await asyncio.to_thread(
+                store.read, artifact_ref, project_id=self.project_id, turn_id=scope.turn_id if scope else None,
+            )
         except FileNotFoundError:
             return f"[artifact_expired] 引用 {artifact_ref} 已过期或不存在，无法恢复。"
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
@@ -704,10 +740,11 @@ class WriterToolset:
             if start >= total:
                 return f"该工具输出共 {total} 字符，offset={offset} 超出范围。"
             body = output[start:end]
-            header = f"【工具 {tool_name} 完整输出（第 {start}–{end} 字符，共 {total} 字符）】\n"
+            header = f"【工具 {tool_name} 固定版本快照（第 {start}–{end} 字符，共 {total} 字符，hash={payload['output_hash']}；不代表最新源）】\n"
             return header + body
-        header = f"【工具 {tool_name} 完整输出（共 {total} 字符）】\n"
-        return header + _truncate(output, 4800)
+        header = f"【工具 {tool_name} 固定版本快照（共 {total} 字符，hash={payload['output_hash']}；不代表最新源）】\n"
+        from app.context_engine.tool_artifact import safe_output_preview
+        return header + safe_output_preview(output, artifact_ref=artifact_ref, limit=4800)
 
     async def _read_outline(self) -> str:
         if not self.outline_enabled:
@@ -726,7 +763,7 @@ class WriterToolset:
             content = str(data.get("content") or "").strip()
         if not content:
             return "大纲暂为空白。可在资源管理器顶部的「大纲」中规划全文结构、走向与伏笔。"
-        return _truncate(f"【全文规划大纲】\n{content}", 6000)
+        return self._preview(f"【全文规划大纲】\n{content}", "read_outline", 6000)
 
     async def _edit_outline(self, args: Dict[str, Any]) -> str:
         """修改大纲（作者规划资产）。写入即落盘，语义与正文编辑工具一致。
@@ -837,7 +874,10 @@ class WriterToolset:
         content = None
         if draft is not None:
             try:
-                content = await draft.get_final_draft(self.project_id, chapter_id)
+                if callable(getattr(draft, "get_working_text", None)):
+                    content, _ = await draft.get_working_text(self.project_id, chapter_id, strict=True)
+                else:
+                    content = await draft.get_final_draft(self.project_id, chapter_id)
             except Exception:
                 content = None
             if content is None:
@@ -863,7 +903,7 @@ class WriterToolset:
                 )
             body = text[start:end]
             scope_note = f"（第 {start}–{end} 字符，共 {total} 字符）"
-            return f"【章节 {chapter_id} 正文范围{scope_note}】\n" + _truncate(body, 4800)
+            return f"【章节 {chapter_id} 正文范围{scope_note}】\n" + self._preview(body, "read_chapter", 4800)
         if len(text) <= 3200:
             body = text
         else:
@@ -871,6 +911,7 @@ class WriterToolset:
                 text[:1600].rstrip()
                 + f"\n…(中略 {len(text) - 3200} 字符；中段可用 offset/length 范围读取恢复，全文共 {len(text)} 字符)…\n"
                 + text[-1600:].lstrip()
+                + f"\n完整原文已保存：{self._persist_output(text, 'read_chapter').artifact_ref}"
             )
         return f"【章节 {chapter_id} 正文（首尾片段）】\n" + body
 

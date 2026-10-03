@@ -35,8 +35,8 @@ The frontend provides a clear and stable writing workspace, while the backend or
 
 Requirements:
 
-- Python 3.10+
-- Node.js 18+
+- Python 3.10–3.12 (an isolated Python 3.12 environment is recommended)
+- Node.js 22 LTS (at least 22.12, including frontend test dependencies)
 
 Start directly from the project root:
 

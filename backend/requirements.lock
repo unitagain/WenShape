@@ -1,5 +1,7 @@
 # Core Web Framework
 fastapi==0.109.2
+# Starlette 0.36 TestClient uses aliases deprecated by AnyIO 4.15.
+anyio==4.13.0
 uvicorn[standard]==0.27.1
 python-multipart==0.0.31
 pydantic==2.5.3
@@ -45,6 +47,9 @@ httpx==0.27.0
 
 # Lint
 ruff==0.12.12
+mypy==1.10.0
+types-PyYAML==6.0.12.20260906
+types-aiofiles==25.1.0.20260518
 
 # Supply-chain audit
 pip-audit==2.9.0

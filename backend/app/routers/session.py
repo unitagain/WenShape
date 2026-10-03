@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.orchestrator import Orchestrator, SessionStatus
-from app.error_contract import error_envelope
+from app.error_contract import error_envelope, record_degradation
 from app.agents.agent_task import MergePolicy
 from app.routers.websocket import broadcast_progress
 from app.schemas.draft import ChapterSummary
@@ -70,6 +70,9 @@ def get_orchestrator(project_id: str, request_language: Optional[str] = None) ->
         编排器实例 / Orchestrator instance for the project.
     """
 
+    from app.utils.path_safety import validate_identifier
+    validate_identifier(project_id, field="project_id")
+
     async def _progress_callback(payload: dict) -> None:
         proj = payload.get("project_id")
         if not proj:
@@ -115,10 +118,18 @@ class PlanRequest(BaseModel):
     context_hint: str = Field("", max_length=4000, description="Optional context hint")
 
 
+class EditorSelection(BaseModel):
+    chapter: str = Field(..., max_length=50)
+    source_sha256: str = Field(..., pattern=r"^[a-f0-9]{64}$")
+    start: int = Field(..., ge=0)
+    end: int = Field(..., ge=0)
+
+
 class ChatTurnRequest(BaseModel):
     """Request for Phase 12 unified chat-turn entry（单 Writer 主循环统一对话入口）。"""
 
     chapter: Optional[str] = Field(None, max_length=50, description="Chapter ID")
+    request_id: str = Field("", max_length=80, pattern=r"^[A-Za-z0-9_-]*$")
     conversation_id: Optional[str] = Field(
         None,
         max_length=80,
@@ -127,6 +138,7 @@ class ChatTurnRequest(BaseModel):
     )
     message: str = Field(..., min_length=1, max_length=6000, description="User chat message")
     has_selection: bool = Field(False, description="Editor has a selection")
+    selection: Optional[EditorSelection] = None
     has_draft: bool = Field(
         False,
         description="Compatibility hint only; unified chat routing verifies draft state in backend storage",
@@ -141,8 +153,8 @@ class ChatTurnRequest(BaseModel):
     )
     selection_text: str = Field(
         "",
-        max_length=6000,
-        description="编辑器当前选区的有限文本摘要，供编辑意图理解",
+        max_length=200000,
+        description="编辑器选区原文；超限显式拒绝，投影由后端预算管理",
     )
 
 
@@ -150,6 +162,7 @@ class AppendMessageRequest(BaseModel):
     """追加一条对话消息到持久历史（Git-Native sessions/conversation.jsonl）。"""
 
     role: str = Field("user", description="user | assistant | system")
+    event_id: Optional[str] = Field(None, max_length=160)
     content: str = Field("", max_length=200000, description="Message content")
     type: Optional[str] = Field(None, max_length=40, description="Optional message kind, e.g. summary")
     ts: Optional[int] = Field(None, description="Client timestamp in ms; server fills if absent")
@@ -239,11 +252,14 @@ async def chat_turn(project_id: str, request: ChatTurnRequest):
     前端单输入框只调用本端点；正文变更通过 diff 交付作者采纳。
     """
     orchestrator = get_orchestrator(project_id)
-    return await orchestrator.run_chat_turn(
+    conversation_id = request.conversation_id or orchestrator.session_history.active_conversation_id(project_id)
+    result = await orchestrator.run_chat_turn(
         project_id,
         request.chapter or "",
         request.message,
-        conversation_id=request.conversation_id or "",
+        request_id=request.request_id,
+        selection=request.selection.model_dump() if request.selection else None,
+        conversation_id=conversation_id,
         has_selection=request.has_selection,
         has_draft=request.has_draft,
         target_word_count=request.target_word_count,
@@ -252,6 +268,11 @@ async def chat_turn(project_id: str, request: ChatTurnRequest):
         reasoning_level=request.reasoning_level or ("high" if request.thinking else "off"),
         selection_text=request.selection_text,
     )
+    try:
+        await _queue_history_compact(orchestrator, project_id, conversation_id)
+    except Exception as exc:
+        record_degradation("chat_history_compact_enqueue", exc)
+    return result
 
 
 class ClarifySettingsRequest(BaseModel):
@@ -321,15 +342,21 @@ async def append_session_history(project_id: str, request: AppendMessageRequest)
     """
     orchestrator = get_orchestrator(project_id)
     conversation_id = request.conversation_id or orchestrator.session_history.active_conversation_id(project_id)
-    item = await orchestrator.application.conversation.append(
+    item = await orchestrator.application.conversation.append_once(
         project_id,
-        {"role": request.role, "content": request.content, "type": request.type, "ts": request.ts},
+        {"role": request.role, "content": request.content, "type": request.type, "ts": request.ts, "event_id": request.event_id},
         conversation_id=conversation_id,
     )
-    count = await orchestrator.session_history.count(project_id, conversation_id=conversation_id)
+    status = await _queue_history_compact(orchestrator, project_id, conversation_id)
+    return {"success": True, "item": item, **status}
+
+
+async def _queue_history_compact(orchestrator: Orchestrator, project_id: str, conversation_id: str) -> dict:
+    """聊天权威事件和旧 append 通道共享同一压缩触发策略。"""
     # B3（F08）：消息数与 token 压力双触发——少量超长消息（约束长文、粘贴资料）
     # 不因条数少而逃过压缩，近期 tail 的 token 预算在 compact 内部执行。
     history_items = await orchestrator.session_history.load(project_id, conversation_id=conversation_id)
+    count = len(history_items)
     total_chars = sum(len(str(item.get("content") or "")) for item in history_items)
     should_compact = count > _HISTORY_COMPACT_TRIGGER or total_chars > _HISTORY_COMPACT_TRIGGER_CHARS
     queued_job = None
@@ -338,8 +365,6 @@ async def append_session_history(project_id: str, request: AppendMessageRequest)
             project_id, history_count=count, conversation_id=conversation_id
         )
     return {
-        "success": True,
-        "item": item,
         "count": count,
         "compacting": should_compact,
         "compact_job_id": (queued_job or {}).get("id"),
@@ -618,6 +643,30 @@ async def apply_change_set(project_id: str, request: ApplyChangeSetRequest):
     """Apply accepted multi-asset Agent changes after revision preflight."""
     orchestrator = get_orchestrator(project_id, request.language)
     return await orchestrator.apply_change_set(project_id, [dict(item) for item in request.changes])
+
+
+# ------------------------------------------------- D1 多资产恢复协议 ----
+
+
+@router.get("/projects/{project_id}/session/change-set/pending")
+async def inspect_change_set_journal(project_id: str):
+    """恢复预览：列出未完成的 change set journal 及逐资产磁盘核对结果（只读）。"""
+    orchestrator = get_orchestrator(project_id)
+    return await orchestrator.inspect_change_set_journal(project_id)
+
+
+@router.post("/projects/{project_id}/session/change-set/{journal_id}/resume")
+async def resume_change_set(project_id: str, journal_id: str):
+    """续做未完成的 change set：已完成项幂等跳过、冲突停止、材料来自 journal。"""
+    orchestrator = get_orchestrator(project_id)
+    return await orchestrator.resume_change_set(project_id, journal_id)
+
+
+@router.post("/projects/{project_id}/session/change-set/{journal_id}/discard")
+async def discard_change_set_journal(project_id: str, journal_id: str):
+    """放弃续做：未完成行标记 superseded（材料保留审计，不再参与恢复）。"""
+    orchestrator = get_orchestrator(project_id)
+    return await orchestrator.discard_change_set_journal(project_id, journal_id)
 
 
 @router.post("/projects/{project_id}/session/analyze-batch")

@@ -49,6 +49,7 @@ class WritingResult(TypedDict, total=False):
 
 
 class ChatTurnResult(TypedDict, total=False):
+    history_persisted: bool
     success: bool
     status: object
     action: str
@@ -118,6 +119,8 @@ class ContextPlanPort(Protocol):
 
 
 class SessionHistoryPort(Protocol):
+    def active_conversation_id(self, project_id: str) -> str: ...
+
     async def current_context_epoch(self, project_id: str, *, conversation_id: str = "") -> int: ...
 
     async def load(

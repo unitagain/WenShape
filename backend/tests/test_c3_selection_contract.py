@@ -17,6 +17,9 @@ License: PolyForm Noncommercial License 1.0.0
 """
 
 import asyncio
+import hashlib
+
+import pytest
 
 from app.orchestrator.context_assembly_service import ContextAssemblyService
 
@@ -26,8 +29,12 @@ class _CaptureWriterService:
 
     def __init__(self):
         self.calls = []
+        self.scope = None
 
     async def run(self, project_id, chapter, message, **options):
+        from app.context_engine.turn_scope import current_turn_scope
+
+        self.scope = current_turn_scope()
         self.calls.append({"project_id": project_id, "chapter": chapter, "message": message, **options})
         return {"success": True, "terminal_state": "completed", "changed": False}
 
@@ -56,6 +63,35 @@ def _service(tmp_path):
 
     capture = _CaptureWriterService()
     return ChatTurnService(_StubOwner(capture, tmp_path)), capture
+
+
+@pytest.mark.parametrize("invalid", ["chapter", "hash", "range", "text", "valid"])
+async def test_selection_identity_checked_at_chat_entry(tmp_path, invalid):
+    service, capture = _service(tmp_path)
+    original = "重复段落。😀重复段落。"
+    await service.owner.draft_storage.save_current_draft("p1", "V1C001", original)
+    selection = {"chapter": "V1C001", "source_sha256": hashlib.sha256(original.encode()).hexdigest(), "start": 6, "end": 11}
+    text = "重复段落。"
+    if invalid == "chapter":
+        selection["chapter"] = "V1C002"
+    elif invalid == "hash":
+        selection["source_sha256"] = "0" * 64
+    elif invalid == "range":
+        selection["start"] = 0
+    elif invalid == "text":
+        text = "其他段落。"
+    result = await service.run("p1", "V1C001", "润色选区", selection=selection, selection_text=text)
+    if invalid == "valid":
+        assert capture.calls
+        assert "[6, 11)" in capture.calls[0]["selection_text"]
+        assert text in capture.calls[0]["selection_text"]
+        assert capture.scope.source_registry.verify_mutable_sources()["checked"] >= 1
+        _, path = await service.owner.draft_storage.get_working_text("p1", "V1C001")
+        path.write_text("选区读取之后修改正文", encoding="utf-8")
+        assert capture.scope.source_registry.verify_mutable_sources()["valid"] is False
+    else:
+        assert result["reason"] == "selection_source_conflict"
+        assert not capture.calls
 
 
 class TestSelectionTextContract:

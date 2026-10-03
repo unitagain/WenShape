@@ -17,6 +17,8 @@ License: PolyForm Noncommercial License 1.0.0
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import math
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -66,6 +68,8 @@ class OnnxEmbedder(EmbeddingsBackend):
         self.cache_dir = cache_dir
         self._model = None
         self._tokenizer = None
+        self._space_identity = ""
+        self._max_tokens = self.DEFAULT_MAX_TOKENS
         self._unavailable = False  # 一次性短路：缺库/缺模型后不再反复尝试加载（避免每次检索都触发 ImportError）
 
     def _ensure(self):
@@ -82,58 +86,80 @@ class OnnxEmbedder(EmbeddingsBackend):
         return self._model
 
     def _ensure_tokenizer(self):
-        """尽力获取 tokenizer（C1/F09）；不可用时返回 None（调用方保守估算）。"""
+        """获取关闭截断和填充的 tokenizer 副本；不可用时由 prepare 拒绝嵌入。"""
         if self._unavailable:
             return None
         if self._tokenizer is None:
             try:
                 model = self._ensure()
-                # fastembed TextEmbedding 暴露 tokenize（不同版本为方法或属性）。
-                tokenize = getattr(model, "tokenize", None)
-                if callable(tokenize):
-                    self._tokenizer = tokenize
-                elif tokenize is not None:
-                    self._tokenizer = tokenize
+                from tokenizers import Tokenizer
+
+                # TextEmbedding 是包装器；tokenizer 位于 model.model。复制后关闭
+                # 截断/填充，不能用已被截成 512 的编码结果证明输入没有越窗。
+                tokenizer = model.model.tokenizer
+                truncation = tokenizer.truncation or {}
+                self._max_tokens = int(truncation.get("max_length") or self.DEFAULT_MAX_TOKENS)
+                self._tokenizer = Tokenizer.from_str(tokenizer.to_str())
+                self._tokenizer.no_truncation()
+                self._tokenizer.no_padding()
             except Exception:
                 self._tokenizer = None
         return self._tokenizer
 
     def count_tokens(self, text: str) -> Optional[int]:
-        """用真实 tokenizer 计数（含特殊 token 占位近似）；不可用返回 None。
-
-        近似规则：tokenizer 产出 input_ids 列表时取长度并加 2（[CLS]/[SEP]）。
-        """
-        tokenize = self._ensure_tokenizer()
-        if tokenize is None:
+        """用真实 tokenizer 计数（包含模型特殊 token）；不可用返回 None。"""
+        tokenizer = self._ensure_tokenizer()
+        if tokenizer is None:
             return None
-        try:
-            result = tokenize([str(text or "")])
-            ids = result[0] if isinstance(result, list) and result else None
-            if hasattr(ids, "input_ids"):
-                return int(len(ids.input_ids))
-            if ids is not None and hasattr(ids, "__len__"):
-                return int(len(ids)) + 2
-        except Exception:
-            return None
-        return None
+        return len(tokenizer.encode(str(text or ""), add_special_tokens=True).ids)
 
     def max_input_tokens(self) -> int:
         """模型输入窗口（token，含特殊 token）；未知时返回保守默认。"""
-        return self.DEFAULT_MAX_TOKENS
+        return self._max_tokens
 
     def space_fingerprint(self) -> str:
         """向量空间指纹（C1/F10）：同文本在不同模型/空间下不可复用缓存向量。
 
-        只含模型身份与窗口：同模型重复加载指纹不变（缓存仍命中）；换模型即变。
+        prepare 固定权重、tokenizer、维度及编码策略身份后，才允许查询持久缓存。
         """
-        digest_source = f"{self.model_name}|window={self.max_input_tokens()}"
-        import hashlib
+        digest_source = f"{self.model_name}|window={self.max_input_tokens()}|{self._space_identity}"
+        return hashlib.sha256(digest_source.encode("utf-8")).hexdigest()
 
-        return hashlib.sha1(digest_source.encode("utf-8")).hexdigest()[:12]
+    async def prepare(self) -> None:
+        """缓存查找前固定模型文件、tokenizer 和维度身份；每个实例只计算一次。"""
+        if self._space_identity:
+            return
+
+        def initialize() -> None:
+            model = self._ensure()
+            tokenizer = self._ensure_tokenizer()
+            if tokenizer is None:
+                raise RuntimeError("embedding_tokenizer_unavailable")
+            inner = model.model
+            digest = hashlib.sha256(tokenizer.to_str().encode("utf-8"))
+            digest.update(str(model.embedding_size).encode())
+            # 本地模型文件的内容指纹区分同名模型的新 revision；缓存可重建，
+            # 不依赖可能变化的目录名或仅模型名称。
+            model_dir = Path(inner._model_dir)
+            files = sorted(path for path in model_dir.rglob("*") if path.is_file())
+            for path in files:
+                if path.suffix not in {".onnx", ".json", ".data"} and "onnx" not in path.name:
+                    continue
+                digest.update(str(path.relative_to(model_dir)).encode())
+                with path.open("rb") as handle:
+                    for block in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(block)
+            digest.update(json.dumps({"encoding": "fastembed.embed", "special_tokens": True}).encode())
+            self._space_identity = digest.hexdigest()
+
+        await asyncio.to_thread(initialize)
 
     async def embed(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             return []
+        await self.prepare()
+        if any(self.count_tokens(text) > self.max_input_tokens() for text in texts):
+            raise ValueError("embedding_input_window_exceeded")
         model = self._ensure()
 
         def _run() -> List[List[float]]:

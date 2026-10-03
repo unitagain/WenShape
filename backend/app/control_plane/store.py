@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class RevisionConflict(RuntimeError):
@@ -145,6 +145,21 @@ class SQLiteControlStore:
                     ON asset_write_journal(project_id, status);
                 """
             )
+            # D1：journal 行承载恢复材料（目标全文 + 基线原文）——不能只存 hash，
+            # 恢复预览与续做需要完整可写的材料，且与意图同事务落盘。
+            journal_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(asset_write_journal)")}
+            if "revised_content" not in journal_columns:
+                connection.execute(
+                    "ALTER TABLE asset_write_journal ADD COLUMN revised_content TEXT NOT NULL DEFAULT ''"
+                )
+            if "original_content" not in journal_columns:
+                connection.execute(
+                    "ALTER TABLE asset_write_journal ADD COLUMN original_content TEXT NOT NULL DEFAULT ''"
+                )
+            if "chapter_target_json" not in journal_columns:
+                connection.execute(
+                    "ALTER TABLE asset_write_journal ADD COLUMN chapter_target_json TEXT NOT NULL DEFAULT '{}'"
+                )
             connection.execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                 (SCHEMA_VERSION, time.time()),
@@ -316,16 +331,21 @@ class SQLiteControlStore:
         turn_id: str,
         items: list[Dict[str, Any]],
     ) -> None:
-        """Record one pending row per asset before the sequential write loop."""
+        """Record one pending row per asset before the sequential write loop.
+
+        D1：每行携带恢复材料（revised_content 目标全文、original_content 基线
+        原文）——与意图同一事务落盘，保证「意图在则材料在」。
+        """
         now = time.time()
         with self.transaction() as connection:
             for item in items or []:
                 connection.execute(
                     """
-                    INSERT OR REPLACE INTO asset_write_journal(
+                    INSERT INTO asset_write_journal(
                         journal_id, project_id, turn_id, asset_type, asset_id,
-                        base_revision, content_sha256, status, error, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', '', ?, ?)
+                        base_revision, content_sha256, revised_content, original_content, chapter_target_json,
+                        status, error, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', ?, ?)
                     """,
                     (
                         str(journal_id),
@@ -335,6 +355,9 @@ class SQLiteControlStore:
                         str(item.get("asset_id") or ""),
                         int(item.get("base_revision") or 0),
                         str(item.get("content_sha256") or ""),
+                        str(item.get("revised_content") or ""),
+                        str(item.get("original_content") or ""),
+                        json.dumps(item.get("chapter_target") or {}, ensure_ascii=False),
                         now,
                         now,
                     ),
@@ -347,6 +370,7 @@ class SQLiteControlStore:
                 UPDATE asset_write_journal
                 SET status = 'applied', error = '', updated_at = ?
                 WHERE journal_id = ? AND asset_type = ? AND asset_id = ?
+                  AND status IN ('pending', 'failed')
                 """,
                 (time.time(), str(journal_id), str(asset_type), str(asset_id)),
             )
@@ -358,24 +382,62 @@ class SQLiteControlStore:
                 UPDATE asset_write_journal
                 SET status = 'failed', error = ?, updated_at = ?
                 WHERE journal_id = ? AND asset_type = ? AND asset_id = ?
+                  AND status IN ('pending', 'failed')
                 """,
                 (str(error or "")[:500], time.time(), str(journal_id), str(asset_type), str(asset_id)),
             )
 
     def pending_writes(self, project_id: str) -> list[Dict[str, Any]]:
         """Unfinished write intents for a project (pending or failed rows)."""
+
+        return self._journal_rows(project_id, unfinished_only=True)
+
+    def journal_rows(self, project_id: str, journal_id: str = "") -> list[Dict[str, Any]]:
+        """Journal rows for a project (all statuses), optionally one journal only."""
+
+        return self._journal_rows(project_id, journal_id=journal_id)
+
+    def _journal_rows(
+        self,
+        project_id: str,
+        *,
+        journal_id: str = "",
+        unfinished_only: bool = False,
+    ) -> list[Dict[str, Any]]:
+        query = """
+            SELECT project_id, journal_id, turn_id, asset_type, asset_id, base_revision,
+                   content_sha256, revised_content, original_content, chapter_target_json, status, error,
+                   created_at, updated_at
+            FROM asset_write_journal
+            WHERE project_id = ?
+        """
+        params: list = [str(project_id)]
+        if journal_id:
+            query += " AND journal_id = ?"
+            params.append(str(journal_id))
+        if unfinished_only:
+            query += " AND status IN ('pending', 'failed')"
+        query += " ORDER BY created_at, journal_id, rowid"
         with self.connection() as connection:
-            rows = connection.execute(
-                """
-                SELECT project_id, journal_id, turn_id, asset_type, asset_id, base_revision,
-                       content_sha256, status, error, created_at, updated_at
-                FROM asset_write_journal
-                WHERE project_id = ? AND status != 'applied'
-                ORDER BY created_at, journal_id
-                """,
-                (str(project_id),),
-            ).fetchall()
+            rows = connection.execute(query, params).fetchall()
         return [dict(row) for row in rows]
+
+    def mark_journal_superseded(self, journal_id: str) -> int:
+        """D1：把一个 journal 的未完成行标记为 superseded（用户放弃续做/重新提交）。
+
+        材料不删除（保留审计），状态不再参与恢复入口。
+        """
+
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE asset_write_journal
+                SET status = 'superseded', updated_at = ?
+                WHERE journal_id = ? AND status IN ('pending', 'failed')
+                """,
+                (time.time(), str(journal_id)),
+            )
+        return int(cursor.rowcount or 0)
 
     def migration_completed(self, name: str) -> bool:
         with self.connection() as connection:

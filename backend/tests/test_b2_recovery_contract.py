@@ -15,6 +15,9 @@ License: PolyForm Noncommercial License 1.0.0
 """
 
 import asyncio
+import re
+
+import pytest
 
 from app.agents.tools import WriterToolset
 from app.context_engine.tool_artifact import ToolArtifactStore
@@ -24,6 +27,11 @@ from app.storage.canon import CanonStorage
 from app.storage.cards import CardStorage
 from app.storage.drafts import DraftStorage
 from app.storage.outline import OutlineStorage
+
+
+@pytest.fixture(autouse=True)
+def isolated_artifacts(tmp_path, monkeypatch):
+    monkeypatch.setattr(ToolArtifactStore, "default_root", staticmethod(lambda: tmp_path / "artifacts"))
 
 
 class _FakeSelect:
@@ -80,7 +88,7 @@ class TestArtifactRecovery:
         store = ToolArtifactStore()
         full_output = "完整工具输出。\n" + "中间大量内容。" * 500 + "\n尾部哨兵TAIL_SENTINEL。"
         artifact = store.persist(
-            full_output, turn_id="t1", tool_call_id="c1", tool_name="query_canon", status="succeeded"
+            full_output, project_id="p1", turn_id="t1", tool_call_id="c1", tool_name="query_canon", status="succeeded"
         )
 
         card, draft, toolset = _toolset(tmp_path)
@@ -94,7 +102,7 @@ class TestArtifactRecovery:
     def test_artifact_range_read(self, tmp_path):
         store = ToolArtifactStore()
         full = "A" * 3000 + "NEEDLE_IN_MIDDLE" + "B" * 3000
-        artifact = store.persist(full, turn_id="t1", tool_call_id="c1", tool_name="search_prose", status="succeeded")
+        artifact = store.persist(full, project_id="p1", turn_id="t1", tool_call_id="c1", tool_name="search_prose", status="succeeded")
         card, draft, toolset = _toolset(tmp_path)
         result = asyncio.run(
             toolset.execute(
@@ -151,3 +159,33 @@ class TestToolRegistration:
         first = asyncio.run(toolset.execute("read_chapter", {"chapter_id": "V1C001"}))
         assert "中略" in first
         assert "offset" in first, "省略标记须指向范围读取恢复方式"
+
+
+async def test_real_long_card_tail_recovers_from_pretruncation_snapshot(tmp_path):
+    from app.schemas.card import CharacterCard
+
+    card, _, toolset = _toolset(tmp_path)
+    text = "人物完整背景。" * 1800 + "真正尾部哨兵"
+    await card.save_character_card("p1", CharacterCard(name="千逸", description=text))
+    preview = await toolset.execute("lookup_card", {"name": "千逸"})
+    assert "真正尾部哨兵" not in preview
+    ref = re.search(r"tool-artifact://[a-f0-9]{32}", preview).group()
+    recovered = await toolset.execute("read_tool_artifact", {"artifact_ref": ref, "offset": len(text) - 100, "length": 2000})
+    assert "真正尾部哨兵" in recovered
+
+
+async def test_artifact_reader_rejects_other_project_and_turn(tmp_path):
+    from app.context_engine.turn_scope import bind_turn_scope, new_turn_scope
+
+    artifact = ToolArtifactStore().persist(
+        "私有原文", project_id="p2", turn_id="t1", tool_call_id="c", tool_name="lookup_card", status="succeeded",
+    )
+    _, _, toolset = _toolset(tmp_path)
+    result = await toolset.execute("read_tool_artifact", {"artifact_ref": artifact.artifact_ref})
+    assert "artifact_error" in result and "私有原文" not in result
+    artifact = ToolArtifactStore().persist(
+        "另一个 turn 的原文", project_id="p1", turn_id="t1", tool_call_id="c", tool_name="lookup_card", status="succeeded",
+    )
+    with bind_turn_scope(new_turn_scope(project_id="p1", turn_id="t2")):
+        result = await toolset.execute("read_tool_artifact", {"artifact_ref": artifact.artifact_ref})
+    assert "artifact_error" in result and "另一个 turn 的原文" not in result

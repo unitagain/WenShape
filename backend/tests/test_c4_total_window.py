@@ -17,7 +17,7 @@ License: PolyForm Noncommercial License 1.0.0
 
 import pytest
 
-from app.context_engine.context_plan import ContextPlanV2
+from app.context_engine.context_plan import ContextPlanV2, build_context_plan_v2
 
 
 def _plan(*, context_limit: int, total_window: int, input_tokens: int, output_reserve: int):
@@ -58,6 +58,16 @@ def _validate(plan, *, input_tokens: int, max_tokens: int, exact: bool = True):
 
 class TestTotalWindowContract:
     """§6.1 探针：4096 窗口、input 3500 + 输出 1024。"""
+
+    def test_factory_does_not_add_individual_limits_to_shared_window(self, tmp_path):
+        plan = build_context_plan_v2(
+            turn_id="t1", project_id="p1", chapter_id="V1C001", intent="write",
+            route_path="agentic_writer", project_root=tmp_path / "p1",
+            provider_profile={"context_window": 4096, "input_window": 4096, "output_window": 1024},
+        )
+        assert plan.budget["total_window_tokens"] == 4096
+        with pytest.raises(ValueError, match="context_total_window_exceeded"):
+            _validate(plan, input_tokens=3500, max_tokens=1024)
 
     def test_exact_counting_over_total_window_rejected(self):
         """精确计数下 input+output > 总窗口必须拒绝（旧实现只查输入、被接受）。"""

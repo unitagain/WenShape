@@ -105,8 +105,8 @@ class TestAuthoritativeTurnEvents:
         history = asyncio.run(store.load("p1"))
         assert len(history) == 1
 
-    def test_turn_event_failure_does_not_block_turn(self, tmp_path):
-        """事件持久化失败只降级，不阻断 turn 主链路。"""
+    def test_unrecorded_user_request_does_not_start_writer(self, tmp_path):
+        """未能持久化用户请求时明确失败，不执行无法追溯的 turn。"""
         service, capture, orch = _service(tmp_path)
 
         async def _broken_append_once(*args, **kwargs):
@@ -114,5 +114,57 @@ class TestAuthoritativeTurnEvents:
 
         orch.application.conversation.append_once = _broken_append_once
         result = asyncio.run(service.run("p1", "V1C001", "正常指令"))
-        assert result is not None, "事件失败不得让 turn 失败"
-        assert capture.calls, "Writer 主链路照常执行"
+        assert result["reason"] == "history_unavailable"
+        assert not capture.calls
+
+
+async def test_concurrent_event_retries_are_deduplicated(tmp_path):
+    store = SessionHistoryStorage(str(tmp_path))
+    event = {"role": "user", "content": "同一消息", "event_id": "same_event"}
+    await asyncio.gather(*(store.append_once("p1", event) for _ in range(8)))
+    assert len(await store.load("p1")) == 1
+
+
+async def test_request_id_retry_does_not_rerun_writer(tmp_path):
+    service, capture, orch = _service(tmp_path)
+    await service.run("p1", "V1C001", "写开头", request_id="request_1")
+    retried = await service.run("p1", "V1C001", "写开头", request_id="request_1")
+    assert retried["reason"] == "turn_already_recorded"
+    assert len(capture.calls) == 1
+    assert len(await orch.session_history.load("p1")) == 2
+
+
+async def test_active_conversation_switch_does_not_redirect_terminal_event(tmp_path):
+    service, capture, orch = _service(tmp_path)
+    first = await orch.session_history.create_conversation("p1")
+    second = await orch.session_history.create_conversation("p1")
+    await orch.session_history.activate_conversation("p1", first["id"])
+
+    async def switch(*args, **kwargs):
+        await orch.session_history.activate_conversation("p1", second["id"])
+        return {"success": True, "message": "完整答复" * 500}
+
+    capture.run = switch
+    await service.run("p1", "V1C001", "写一段")
+    history = await orch.session_history.load("p1", conversation_id=first["id"])
+    assert [item["role"] for item in history] == ["user", "assistant"]
+    assert history[-1]["content"] == "完整答复" * 500
+    assert history[-1]["terminal_state"] == "completed"
+    assert await orch.session_history.load("p1", conversation_id=second["id"]) == []
+    assert orch.session_history.active_conversation_id("p1") == second["id"]
+
+
+async def test_writer_exception_records_failed_activity(tmp_path):
+    import pytest
+
+    service, capture, orch = _service(tmp_path)
+
+    async def fail(*args, **kwargs):
+        raise RuntimeError("synthetic failure")
+
+    capture.run = fail
+    with pytest.raises(RuntimeError):
+        await service.run("p1", "V1C001", "写开头")
+    history = await orch.session_history.load("p1")
+    assert history[-1]["terminal_state"] == "failed"
+    assert history[-1]["type"] == "activity"

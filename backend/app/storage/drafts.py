@@ -116,7 +116,7 @@ class DraftStorage(BaseStorage):
             return None
         return max(candidates, key=lambda path: path.stat().st_mtime)
 
-    async def get_working_text(self, project_id: str, chapter: str) -> Tuple[str, Optional[Path]]:
+    async def get_working_text(self, project_id: str, chapter: str, *, strict: bool = False) -> Tuple[str, Optional[Path]]:
         """Return the newest chapter prose the user currently sees, with its file.
 
         中文说明：写作/编辑/分析的「当前正文」唯一 owner。在 final.md（用户在编辑器
@@ -147,6 +147,8 @@ class DraftStorage(BaseStorage):
                 return "", None
             return await self.read_text(chosen), chosen
         except (OSError, UnicodeError, ValueError):
+            if strict:
+                raise
             return "", None
 
     def _final_paths(self, project_id: str, chapter: str) -> Tuple[Path, Path]:
@@ -188,6 +190,7 @@ class DraftStorage(BaseStorage):
         pending_confirmations: Optional[List[str]] = None,
         create_prev_backup: bool = True,
         expected_revision: Optional[int] = None,
+        expected_content: Optional[str] = None,
     ) -> Draft:
         """Save the current draft (single-version) to final.md.
 
@@ -221,6 +224,7 @@ class DraftStorage(BaseStorage):
                     pending_confirmations=pending_confirmations,
                     create_prev_backup=create_prev_backup,
                     expected_revision=expected_revision,
+                    expected_content=expected_content,
                 )
 
     async def _save_current_draft_unlocked(
@@ -235,6 +239,7 @@ class DraftStorage(BaseStorage):
         pending_confirmations: Optional[List[str]],
         create_prev_backup: bool,
         expected_revision: Optional[int],
+        expected_content: Optional[str] = None,
     ) -> Draft:
         """Save draft content and metadata while the chapter transaction is held."""
 
@@ -243,12 +248,15 @@ class DraftStorage(BaseStorage):
         revision_key = f"{project_id}/{canonical}/final.md"
         fingerprint = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         revision = self.control_store.get_revision("draft", revision_key)
+        current, _ = await self.get_working_text(project_id, canonical, strict=True)
+        if expected_content is not None and current != expected_content:
+            raise RevisionConflict("content_conflict")
         if expected_revision is not None and int(revision["revision"]) != int(expected_revision):
             from app.observability.runtime_metrics import runtime_metrics
 
             runtime_metrics.increment("commit.conflict")
             raise RevisionConflict(f"revision_conflict:{revision['revision']}!={int(expected_revision)}")
-        if revision["fingerprint"] == fingerprint and final_path.exists():
+        if revision["fingerprint"] == fingerprint and final_path.exists() and current == payload:
             return Draft(
                 chapter=canonical,
                 version="current",

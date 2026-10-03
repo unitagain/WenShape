@@ -22,7 +22,7 @@ from pathlib import Path
 from app.agents.tools import WriterToolset
 from app.context_engine.turn_scope import bind_turn_scope, new_turn_scope
 from app.orchestrator.storage_adapter import UnifiedStorageAdapter
-from app.schemas.card import CharacterCard
+from app.schemas.card import CharacterCard, WorldCard
 from app.storage.canon import CanonStorage
 from app.storage.cards import CardStorage
 from app.storage.drafts import DraftStorage
@@ -83,10 +83,32 @@ class TestJitReadsRegisterMutableSources:
         asyncio.run(card.save_character_card("p1", CharacterCard(name="千逸", description="新设定NEW")))
         verification2 = scope.source_registry.verify_mutable_sources()
         assert verification2["valid"] is False
-        assert any(
-            "content_sha256_mismatch" == str(f.get("reason") or "")
-            for f in verification2["failures"]
-        ), "源变化必须被检出，不得继续携带旧内容"
+        assert any(f.get("reason") == "content_sha256_mismatch" for f in verification2["failures"])
+
+    def test_world_card_version_is_registered(self, tmp_path):
+        card, _, _, _, toolset = _assemble(tmp_path)
+        asyncio.run(card.save_world_card("p1", WorldCard(name="古城", description="旧世界设定")))
+        scope = _scope_with_plan(tmp_path / "p1")
+        with bind_turn_scope(scope):
+            assert "旧世界设定" in asyncio.run(toolset.execute("lookup_card", {"name": "古城"}))
+        asyncio.run(card.save_world_card("p1", WorldCard(name="古城", description="新世界设定")))
+        assert scope.source_registry.verify_mutable_sources()["valid"] is False
+
+    def test_memory_body_change_is_detected_even_with_unchanged_index(self, tmp_path):
+        from app.storage.creative_memory import CreativeMemoryStorage
+
+        _, _, _, _, toolset = _assemble(tmp_path)
+        memory = CreativeMemoryStorage(str(tmp_path))
+        toolset.memory_storage = memory
+        asyncio.run(memory.write_memory("p1", "tone", "文风偏好", "旧正文约束"))
+        scope = _scope_with_plan(tmp_path / "p1")
+        with bind_turn_scope(scope):
+            assert "旧正文约束" in asyncio.run(toolset.execute("query_memory", {"query": "文风"}))
+        path = tmp_path / "p1" / "memory" / "tone.md"
+        path.write_text(path.read_text(encoding="utf-8").replace("旧正文约束", "新正文约束"), encoding="utf-8")
+        verification = scope.source_registry.verify_mutable_sources()
+        assert verification["valid"] is False
+        assert any(f.get("reason") == "content_sha256_mismatch" for f in verification["failures"])
 
     def test_outline_source_change_detected_after_read(self, tmp_path):
         _, _, outline, adapter, toolset = _assemble(tmp_path)

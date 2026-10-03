@@ -99,10 +99,13 @@ class ToolArtifactStore:
         self,
         root: str | Path | None = None,
         *,
+        project_root: str | Path | None = None,
         retention_seconds: int = _DEFAULT_RETENTION_SECONDS,
         max_artifact_bytes: int = _DEFAULT_MAX_ARTIFACT_BYTES,
         max_total_bytes: int = _DEFAULT_MAX_TOTAL_BYTES,
     ) -> None:
+        if root is None and project_root is not None:
+            root = Path(project_root).resolve().parent / "_system" / "tool_artifacts"
         self.root = Path(root).expanduser().resolve() if root is not None else self.default_root()
         self.retention_seconds = max(60, int(retention_seconds))
         self.max_artifact_bytes = max(1024, int(max_artifact_bytes))
@@ -111,7 +114,6 @@ class ToolArtifactStore:
     @staticmethod
     def default_root() -> Path:
         from app.config import get_settings
-
         return (Path(get_settings().data_dir).expanduser().resolve() / "_system" / "tool_artifacts").resolve()
 
     def persist(
@@ -122,6 +124,7 @@ class ToolArtifactStore:
         tool_call_id: str,
         tool_name: str,
         status: str,
+        project_id: str = "",
         now: Optional[float] = None,
     ) -> ToolArtifact:
         text = str(output or "")
@@ -137,6 +140,7 @@ class ToolArtifactStore:
             "schema_version": 1,
             "artifact_id": artifact_id,
             "turn_id": str(turn_id or ""),
+            "project_id": str(project_id or ""),
             "tool_call_id": str(tool_call_id or ""),
             "tool_name": str(tool_name or ""),
             "status": str(status or ""),
@@ -177,13 +181,20 @@ class ToolArtifactStore:
             expires_at=expires_at,
         )
 
-    def read(self, artifact_ref: str, *, now: Optional[float] = None) -> Dict[str, Any]:
+    def read(
+        self, artifact_ref: str, *, now: Optional[float] = None,
+        project_id: Optional[str] = None, turn_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         path = self._path_for_ref(artifact_ref)
         payload = json.loads(path.read_text(encoding="utf-8"))
         if str(payload.get("artifact_id") or "") != path.stem:
             raise ValueError("tool_artifact_identity_mismatch")
         if float(payload.get("expires_at") or 0) <= float(now if now is not None else time.time()):
             raise FileNotFoundError("tool_artifact_expired")
+        if project_id is not None and payload.get("project_id") != project_id:
+            raise ValueError("tool_artifact_project_mismatch")
+        if turn_id is not None and payload.get("turn_id") != turn_id:
+            raise ValueError("tool_artifact_turn_mismatch")
         output = str(payload.get("output") or "")
         if output_sha256(output) != str(payload.get("output_hash") or ""):
             raise ValueError("tool_artifact_hash_mismatch")

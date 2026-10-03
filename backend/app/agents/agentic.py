@@ -188,7 +188,7 @@ async def run_agentic_chat(
         )
     store = artifact_store
     if store is None and scope is not None:
-        store = ToolArtifactStore()
+        store = ToolArtifactStore(project_root=scope.source_registry.project_root if scope.source_registry else None)
     tool_results: List[ToolExecutionResult] = []
     degradations: List[Dict[str, Any]] = []
     last_response: Dict[str, Any] = {}
@@ -594,6 +594,7 @@ async def run_agentic_chat(
                         tool_call_id=tool_call_id,
                         tool_name=name,
                         status=status,
+                        project_id=scope.project_id if scope is not None else "",
                     )
                     artifact_ref = artifact.artifact_ref
                     output_hash = artifact.output_hash

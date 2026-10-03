@@ -1,4 +1,5 @@
 fastapi==0.109.2
+anyio==4.13.0
 uvicorn[standard]==0.27.1
 python-multipart==0.0.31
 pydantic==2.5.3
